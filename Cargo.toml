@@ -1,0 +1,31 @@
+[package]
+name = "TackyBorders"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winapi = { version = "0.3.9", features = ["winuser", "dwmapi", "wincon", "shellapi", "errhandlingapi", "winerror", "impl-debug", "impl-default"] }
+
+[dependencies.windows]
+version = "0.58.0"
+features = [
+    "implement",
+    "Win32_System_Com",
+    "Win32_UI_Shell_Common", # for IObjectArray
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_SystemServices",
+    "Win32_System_WindowsProgramming",
+    "Media",
+    "Media_Control"
+]
