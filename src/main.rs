@@ -36,6 +36,7 @@ use winapi::um::winuser::MB_OK;
 use winapi::um::winuser::GetWindowLongW;*/
 
 mod border;
+mod drawer;
 
 const DWMWA_COLOR_DEFAULT: u32 = 0xFFFFFFFF;
 const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;

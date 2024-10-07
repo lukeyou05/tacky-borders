@@ -5,20 +5,6 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::prelude::OsStringExt;
 use core::ffi::c_void;
 use core::ffi::c_int;
-/*use winapi::ctypes::c_int;
-use winapi::ctypes::c_void;
-use winapi::shared::minwindef::{BOOL, LPARAM};
-use winapi::shared::windef::HWND;
-use winapi::um::shellapi::ShellExecuteExW;
-use winapi::um::shellapi::SEE_MASK_NOASYNC;
-use winapi::um::shellapi::SEE_MASK_NOCLOSEPROCESS;
-use winapi::um::shellapi::SHELLEXECUTEINFOW;*/
-
-/*use winapi::shared::winerror::SUCCEEDED;
-use winapi::um::winnt::*;
-*use winapi::um::winuser::*;
-use winapi::um::dwmapi::*;*/
-
 use windows::{
     core::*,
     Win32::Foundation::*,
@@ -88,10 +74,11 @@ impl WindowBorder {
         match window_rect_opt {
             Some(val) => window_rect = val,
             /*None => return Err(),*/
-            None => println!("Error at window_rect_opt!"),
+            None => return Ok(()),
         };
 
-        let window_class = w!("wide_border");
+        let window_class = w!("tacky-border");
+        println!("creating window_class");
         unsafe {
             let mut wcex = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -103,35 +90,81 @@ impl WindowBorder {
             };
             RegisterClassExW(&wcex);
             println!("wcex.hCursor: {:?}", wcex.hCursor);
+
+
+            let m_window = CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                window_class,
+                w!("tacky-border"),
+                WS_POPUP | WS_DISABLED,
+                window_rect.left,
+                window_rect.top,
+                window_rect.right - window_rect.left,
+                window_rect.bottom - window_rect.top,
+                None,
+                None,
+                hinstance,
+                None);
+
+            /*CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                window_class,
+                w!("This is a sample window"),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                800,
+                600,
+                None,
+                None,
+                hinstance,
+                None,
+            );
+
+            let mut message = MSG::default();
+
+
+            while GetMessageW(&mut message, HWND(std::ptr::null_mut()), 0, 0).into() {
+                DispatchMessageA(&message);
+            }*/
+            
+            if m_window.is_err() {
+                println!("m_window is error!");
+            }
+            
+            let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
         }
-
-        
-
-        /*let m_window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            "Border",
-            "",
-            WS_POPUP | WS_DISABLED,
-            window_rect.left,
-            window_rect.top,
-            window_rect.right - window_rect.left,
-            window_rect.bottom - window_rect.top,
-            std::ptr::null,
-            std::ptr::null,
-            hinstance,
-            self);*/
 
         return Ok(());
     }
 
     unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let this_ref = std::mem::transmute(GetWindowLongPtrW(window, GWLP_USERDATA));
-        /*println!("is this a magic cookie or not?: {:?}", GetLongWindowPtrW(window, GWLP_USERDATA));*/
-        return this_ref;
+        let mut this_ref: *mut WindowBorder = std::mem::transmute(GetWindowLongPtrW(window, GWLP_USERDATA));
+        println!("is this a magic cookie or not?: {:?}", this_ref);
+        
+        if this_ref == std::ptr::null_mut() && message == WM_CREATE {
+            let create_struct: *mut CREATESTRUCTW = std::mem::transmute(lparam.0);
+            println!("create_struct: {:?}", create_struct);
+            this_ref = std::mem::transmute((*create_struct).lpCreateParams);
+            SetWindowLongPtrW(window, GWLP_USERDATA, std::mem::transmute(this_ref));
+        }
+        match this_ref != std::ptr::null_mut() {
+            true => return WindowBorder::wnd_proc(message, wparam, lparam),
+            false => return DefWindowProcW(window, message, wparam, lparam),
+        }                                          
     }
 
-    /*pub fn WndProc(message: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-
-    }*/
+    pub fn wnd_proc(message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        /*match message {
+            WM_TIMER => {
+                match wparam {
+                    REFRESH_BORDER_TIMER_ID => {
+                    },
+                }
+            },
+        }*/
+        return LRESULT(10);
+    }
 }
 
 
