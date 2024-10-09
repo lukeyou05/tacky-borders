@@ -33,7 +33,11 @@ pub struct FrameDrawer {
 }
 
 impl FrameDrawer {
-    /*pub fn create(window: HWND) {
-        let mut drawer: Box<FrameDrawer> = Box::new(FrameDrawer {m_window: HWND(std::ptr::null_mut()), m_tracking_window: window});
+    /*pub fn create(window: HWND) -> Box<WindowDrawer> {
+        let mut drawer: Box<FrameDrawer> = Box::new(FrameDrawer {m_window: window,
+                                                                 m_render_target_size_hash: 0,
+                                                                 m_render_target: 0,
+                                                                 m_border_brush: 0
+                                                                 m_scene_rect: 0});
     }*/
 }

@@ -6,34 +6,8 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::prelude::OsStringExt;
-/*use winapi::ctypes::c_int;*/
-/*use winapi::ctypes::c_void;*/
 use core::ffi::c_void;
 use core::ffi::c_int;
-/*use winapi::shared::minwindef::{BOOL, LPARAM};
-use winapi::shared::windef::HWND;
-use winapi::um::dwmapi::DwmSetWindowAttribute;
-use winapi::um::shellapi::ShellExecuteExW;
-use winapi::um::shellapi::SEE_MASK_NOASYNC;
-use winapi::um::shellapi::SEE_MASK_NOCLOSEPROCESS;
-use winapi::um::shellapi::SHELLEXECUTEINFOW;
-use winapi::um::winuser::EnumWindows;
-use winapi::um::winuser::GetClassNameW;
-use winapi::um::winuser::GetWindowTextLengthW;
-use winapi::um::winuser::GetWindowTextW;
-use winapi::um::winuser::WS_EX_TOOLWINDOW;
-use winapi::um::winuser::{
-  DispatchMessageW, GetForegroundWindow, GetMessageW, IsWindowVisible, TranslateMessage,
-  GWL_EXSTYLE,
-};
-
-use winapi::shared::winerror::SUCCEEDED;
-use winapi::um::dwmapi::DwmGetColorizationColor;
-use winapi::um::winnt::{KEY_READ, KEY_WRITE};
-use winapi::um::winuser::MessageBoxA;
-use winapi::um::winuser::MB_ICONERROR;
-use winapi::um::winuser::MB_OK;
-use winapi::um::winuser::GetWindowLongW;*/
 
 mod border;
 mod drawer;
