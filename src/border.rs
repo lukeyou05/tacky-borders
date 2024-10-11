@@ -39,15 +39,22 @@ pub struct WindowBorder {
     m_tracking_window: HWND,
     window_rect: RECT,
     border_size: i32,
+    border_offset: i32
 }
 
 impl WindowBorder {
     pub fn create(window: HWND, hinstance: HINSTANCE) -> WindowBorder {
         // let mut border: Box<WindowBorder> = Box::new(WindowBorder { m_window: HWND::default(), m_tracking_window: window } );
-        let mut border = WindowBorder { m_window: HWND::default(), m_tracking_window: window, window_rect: RECT::default(), border_size: 4 };
-        println!("hinstance: {:?}", hinstance);
-        println!("border.m_window: {:?}", border.m_window);
-        println!("border.m_tracking_window: {:?}", border.m_tracking_window);
+        let mut border = WindowBorder { 
+            m_window: HWND::default(), 
+            m_tracking_window: window, 
+            window_rect: RECT::default(), 
+            border_size: 4, 
+            border_offset: 1
+        };
+        //println!("hinstance: {:?}", hinstance);
+        //println!("border.m_window: {:?}", border.m_window);
+        //println!("border.m_tracking_window: {:?}", border.m_tracking_window);
 
         match WindowBorder::init(&mut border, hinstance) {
             Ok(val) => return border,
@@ -103,7 +110,7 @@ impl WindowBorder {
           
             // make window transparent
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
-            println!("pos: {:?}", pos);
+            //println!("pos: {:?}", pos);
             let hrgn = CreateRectRgn(pos, 0, (pos + 1), 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
             if !hrgn.is_invalid() {
@@ -126,25 +133,29 @@ impl WindowBorder {
 
             // set position of the border-window behind the tracking window
             // helps to prevent border overlapping (happens after turning borders off and on)
-            SetWindowPos(self.m_tracking_window,
+            let set_pos = SetWindowPos(self.m_tracking_window,
                 open_window,
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
                 self.window_rect.bottom - self.window_rect.top,
                 SWP_NOMOVE | SWP_NOSIZE);
+
+            if set_pos.is_err() {
+                println!("Error with SetWindowPos!");
+            }
             
             let val: BOOL = TRUE;
 
             // I doubt the code below is functioning properly (the std::mem::transmute(&val))
             DwmSetWindowAttribute(open_window, DWMWA_EXCLUDED_FROM_PEEK, std::mem::transmute(&val), size_of::<BOOL>() as u32);
-            println!("pointer to BOOL: {:?} {:?}", &val, std::mem::transmute::<&BOOL, isize>(&val));
+            //println!("pointer to BOOL: {:?} {:?}", &val, std::mem::transmute::<&BOOL, isize>(&val));
 
             ShowWindow(open_window, SHOW_WINDOW_CMD(SW_SHOWNA));
 
             UpdateWindow(open_window);
 
-            println!("open_window (from init): {:?}", open_window);
+           // println!("open_window (from init): {:?}", open_window);
 
             WindowBorder::render(&self, open_window);
 
@@ -178,7 +189,7 @@ impl WindowBorder {
     pub fn render(&self, open_window: HWND) -> Result<()> {
         let hr: HRESULT;
 
-        println!("open_window (from render): {:?}", open_window);
+        //println!("open_window (from render): {:?}", open_window);
 
         let dpi: f32 = 96.0;
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
@@ -193,17 +204,17 @@ impl WindowBorder {
 
         /*let render_target_size = D2D_SIZE_U { width: (client_rect.right - client_rect.left) as u32, height: (client_rect.bottom - client_rect.top) as u32 };*/
         let render_target_size = D2D_SIZE_U { 
-            width: self.window_rect.right as u32 - self.window_rect.left as u32,
-            height: self.window_rect.bottom as u32 - self.window_rect.top as u32
+            width: (self.window_rect.right - self.window_rect.left) as u32,
+            height: (self.window_rect.bottom - self.window_rect.top) as u32
         };
-        println!("render_target_size: {:?}", render_target_size);
+        //println!("render_target_size: {:?}", render_target_size);
 
         let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
             hwnd: open_window, 
             pixelSize: render_target_size, 
             presentOptions: D2D1_PRESENT_OPTIONS_NONE 
         };
-        println!("hwnd_render_target_properties: {:?}", hwnd_render_target_properties);
+        //println!("hwnd_render_target_properties: {:?}", hwnd_render_target_properties);
 
         unsafe {
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_FACTORY_OPTIONS::default()))?;
@@ -222,27 +233,29 @@ impl WindowBorder {
                 transform: std::mem::zeroed() 
             };
             let m_brush = m_render_target.CreateSolidColorBrush(&color, Some(&m_border_brush))?;
-            println!("m_brush: {:?}", color);
+            //println!("m_brush: {:?}", color);
 
+            // Yes, the size calculations below are confusing, but they work, and that's all that
+            // really matters.
             let rect = D2D_RECT_F { 
-                left: 3.0, 
-                top: 3.0, 
-                right: self.window_rect.right as f32 - self.window_rect.left as f32 - self.border_size as f32, 
-                bottom: self.window_rect.bottom as f32 - self.window_rect.top as f32 - self.border_size as f32
+                left: (self.border_size/2 + self.border_offset) as f32, 
+                top: (self.border_size/2 + self.border_offset) as f32, 
+                right: (self.window_rect.right - self.window_rect.left - self.border_size/2 - self.border_offset) as f32, 
+                bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 - self.border_offset) as f32
             };
             let rounded_rect = D2D1_ROUNDED_RECT { 
                 rect: rect, 
-                radiusX: 8.0, 
-                radiusY: 8.0 
+                radiusX: 6.0 + ((self.border_size/2) as f32), 
+                radiusY: 6.0 + ((self.border_size/2) as f32)
             };
 
-            println!("m_render_target: {:?}", m_render_target);
+            //println!("m_render_target: {:?}", m_render_target);
 
             m_render_target.BeginDraw();
             m_render_target.DrawRoundedRectangle(
                 &rounded_rect,
                 &m_brush,
-                4.0,
+                self.border_size as f32,
                 None
             );
             m_render_target.EndDraw(None, None);
@@ -252,7 +265,7 @@ impl WindowBorder {
             // when finished with the program.
             let mut testrect: RECT = RECT { top: 0, left: 0, right: 0, bottom: 0 };
             DwmGetWindowAttribute(open_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut testrect as *mut _ as *mut c_void, size_of::<RECT>() as u32);
-            println!("{:?}", testrect);
+            //println!("{:?}", testrect);
         }
 
         Ok(())

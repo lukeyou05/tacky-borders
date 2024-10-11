@@ -113,7 +113,6 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     // Exclude certain window styles like WS_EX_TOOLWINDOW
     if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 {
       let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam);
-      println!("window in vector: {:?}", hwnd);
       visible_windows.push(hwnd);
     }
   }
