@@ -26,6 +26,7 @@ const SW_SHOWNA: i32 = 8;
 
 
 #[derive(Debug)]
+#[derive(Default)]
 pub struct RECT {
     left: i32,
     top: i32,
@@ -33,35 +34,22 @@ pub struct RECT {
     bottom: i32,
 }
 
-pub fn get_frame_rect(window: HWND) -> Option<RECT> {
-    let mut rect: RECT = RECT { top: 0, left: 0, right: 0, bottom: 0 };
-
-    if unsafe { DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
-        return None;
-    }
-
-    let border: i32 = 4;
-    rect.top -= border;
-    rect.left -= border;
-    rect.right += border;
-    rect.bottom += border;
-    
-    return Some(rect);
-}
-
 pub struct WindowBorder {
     m_window: HWND,
     m_tracking_window: HWND,
+    window_rect: RECT,
+    border_size: i32,
 }
 
 impl WindowBorder {
-    pub fn create(window: HWND, hinstance: HINSTANCE) -> Box<WindowBorder> {
-        let mut border: Box<WindowBorder> = Box::new(WindowBorder { m_window: HWND(std::ptr::null_mut()), m_tracking_window: window } );
+    pub fn create(window: HWND, hinstance: HINSTANCE) -> WindowBorder {
+        // let mut border: Box<WindowBorder> = Box::new(WindowBorder { m_window: HWND::default(), m_tracking_window: window } );
+        let mut border = WindowBorder { m_window: HWND::default(), m_tracking_window: window, window_rect: RECT::default(), border_size: 4 };
         println!("hinstance: {:?}", hinstance);
         println!("border.m_window: {:?}", border.m_window);
         println!("border.m_tracking_window: {:?}", border.m_tracking_window);
 
-        match WindowBorder::init(&border, hinstance) {
+        match WindowBorder::init(&mut border, hinstance) {
             Ok(val) => return border,
             Err(err) => println!("Error! {}", err),
         }
@@ -69,7 +57,7 @@ impl WindowBorder {
         return border;
     }
 
-    pub fn init(&self, hinstance: HINSTANCE) -> Result<()> {
+    pub fn init(&mut self, hinstance: HINSTANCE) -> Result<()> {
         /*let window_rect_opt: Option<RECT> = match self.m_tracking_window {
             Some(x) => get_frame_rect(x),
             None => return false,
@@ -80,54 +68,38 @@ impl WindowBorder {
             println!("Error at m_tracking_window!");
         }
 
-        let mut window_rect_opt: Option<RECT> = get_frame_rect(self.m_tracking_window);
+        self.get_frame_rect(self.m_tracking_window)?;
 
-        let window_rect: RECT;
+        /*let window_rect: RECT;
         match window_rect_opt {
             Some(val) => window_rect = val,
             /*None => return Err(),*/
             None => return Ok(()),
-        };
+        };*/
 
-        println!("window_rect: {:?}", window_rect);
+        // println!("window_rect: {:?}", window_rect);
 
-        let window_class = w!("tacky-border");
-        println!("creating window_class");
         unsafe {
-            let mut wcex = WNDCLASSEXW {
-                cbSize: size_of::<WNDCLASSEXW>() as u32,
-                lpfnWndProc: Some(DefWindowProcW),
-                hInstance: hinstance,
-                lpszClassName: window_class,
-                hCursor: LoadCursorW(None, IDC_ARROW)?,
-                ..Default::default()
-            };
-            let atom = RegisterClassExW(&wcex);
-            println!("wcex.hCursor: {:?}", wcex.hCursor);
-            
-            if atom == 0 {
-                let last_error = GetLastError();
-                println!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
-            }
-
             // I need to change this line below so that it changes self's variables. I looked up
             // online and couldn't find much on how to do that. I may have to use somthing other
             // than Box.
             let open_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                 /*WS_EX_TOPMOST | WS_EX_TOOLWINDOW,*/
-                window_class,
+                w!("tacky-border"),
                 w!("tacky-border"),
                 WS_POPUP | WS_DISABLED,
-                window_rect.left,
-                window_rect.top,
-                window_rect.right - window_rect.left,
-                window_rect.bottom - window_rect.top,
+                self.window_rect.left,
+                self.window_rect.top,
+                self.window_rect.right - self.window_rect.left,
+                self.window_rect.bottom - self.window_rect.top,
                 None,
                 None,
                 hinstance,
                 None
             )?;
+
+            self.m_window = open_window;
           
             // make window transparent
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
@@ -156,10 +128,10 @@ impl WindowBorder {
             // helps to prevent border overlapping (happens after turning borders off and on)
             SetWindowPos(self.m_tracking_window,
                 open_window,
-                window_rect.left,
-                window_rect.top,
-                window_rect.right - window_rect.left,
-                window_rect.bottom - window_rect.top,
+                self.window_rect.left,
+                self.window_rect.top,
+                self.window_rect.right - self.window_rect.left,
+                self.window_rect.bottom - self.window_rect.top,
                 SWP_NOMOVE | SWP_NOSIZE);
             
             let val: BOOL = TRUE;
@@ -168,31 +140,15 @@ impl WindowBorder {
             DwmSetWindowAttribute(open_window, DWMWA_EXCLUDED_FROM_PEEK, std::mem::transmute(&val), size_of::<BOOL>() as u32);
             println!("pointer to BOOL: {:?} {:?}", &val, std::mem::transmute::<&BOOL, isize>(&val));
 
-            ShowWindow(open_window, SW_SHOWNA);
+            ShowWindow(open_window, SHOW_WINDOW_CMD(SW_SHOWNA));
 
             UpdateWindow(open_window);
 
-            /*let open_window = CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
-                window_class,
-                w!("This is a sample window"),
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                800,
-                600,
-                None,
-                None,
-                hinstance,
-                None,
-            )?;*/
-
             println!("open_window (from init): {:?}", open_window);
 
+            WindowBorder::render(&self, open_window);
+
             let mut message = MSG::default();
-
-            WindowBorder::render(&self, window_rect, open_window);
-
             while GetMessageW(&mut message, HWND(std::ptr::null_mut()), 0, 0).into() {
                 DispatchMessageA(&message);
             }
@@ -206,7 +162,20 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn render(&self, client_rect: RECT, open_window: HWND) -> Result<()> {
+    pub fn get_frame_rect(&mut self, window: HWND) -> Result<()> {
+        if unsafe { DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
+            println!("Error getting frame rect!");
+        }
+
+        self.window_rect.top -= self.border_size;
+        self.window_rect.left -= self.border_size;
+        self.window_rect.right += self.border_size;
+        self.window_rect.bottom += self.border_size;
+
+        return Ok(());
+    }
+
+    pub fn render(&self, open_window: HWND) -> Result<()> {
         let hr: HRESULT;
 
         println!("open_window (from render): {:?}", open_window);
@@ -224,8 +193,8 @@ impl WindowBorder {
 
         /*let render_target_size = D2D_SIZE_U { width: (client_rect.right - client_rect.left) as u32, height: (client_rect.bottom - client_rect.top) as u32 };*/
         let render_target_size = D2D_SIZE_U { 
-            width: 1918,
-            height: 1078
+            width: self.window_rect.right as u32 - self.window_rect.left as u32,
+            height: self.window_rect.bottom as u32 - self.window_rect.top as u32
         };
         println!("render_target_size: {:?}", render_target_size);
 
@@ -258,8 +227,8 @@ impl WindowBorder {
             let rect = D2D_RECT_F { 
                 left: 3.0, 
                 top: 3.0, 
-                right: 1915.0, 
-                bottom: 1075.0 
+                right: self.window_rect.right as f32 - self.window_rect.left as f32 - self.border_size as f32, 
+                bottom: self.window_rect.bottom as f32 - self.window_rect.top as f32 - self.border_size as f32
             };
             let rounded_rect = D2D1_ROUNDED_RECT { 
                 rect: rect, 
@@ -277,7 +246,10 @@ impl WindowBorder {
                 None
             );
             m_render_target.EndDraw(None, None);
+            
 
+            // testrect below is only used to get the coordinates of the border. can delete later
+            // when finished with the program.
             let mut testrect: RECT = RECT { top: 0, left: 0, right: 0, bottom: 0 };
             DwmGetWindowAttribute(open_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut testrect as *mut _ as *mut c_void, size_of::<RECT>() as u32);
             println!("{:?}", testrect);
@@ -286,13 +258,6 @@ impl WindowBorder {
         Ok(())
     }
 }
-
-    #[link(name = "User32")]
-    extern "system" {
-        /// [`DefWindowProcW`](https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-defwindowprocw)
-        pub fn DefWindowProcW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
-        pub fn ShowWindow(hWnd: HWND, nCmdShow: i32) -> BOOL;
-    }
 
 
     unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
