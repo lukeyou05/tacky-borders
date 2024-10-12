@@ -140,7 +140,7 @@ pub unsafe fn register_window_class() -> Result<()> {
 
     let mut wcex = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
-        lpfnWndProc: Some(DefWindowProcW),
+        lpfnWndProc: Some(border::WindowBorder::s_wnd_proc),
         hInstance: hinstance,
         lpszClassName: window_class,
         hCursor: LoadCursorW(None, IDC_ARROW)?,
@@ -168,6 +168,11 @@ pub fn assign_border(window: SendHWND) -> bool {
     }
     return true;
 }
+
+/*pub fn window_process(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    border::WindowBorder::window_process(hwnd, msg, wparam, lparam);
+    LRESULT(0)
+}*/
 
     #[link(name = "User32")]
     extern "system" {

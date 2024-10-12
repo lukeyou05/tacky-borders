@@ -34,6 +34,7 @@ pub struct RECT {
     bottom: i32,
 }
 
+#[derive(Debug)]
 pub struct WindowBorder {
     m_window: HWND,
     m_tracking_window: HWND,
@@ -90,8 +91,8 @@ impl WindowBorder {
             // I need to change this line below so that it changes self's variables. I looked up
             // online and couldn't find much on how to do that. I may have to use somthing other
             // than Box.
-            let open_window = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            self.m_window = CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 /*WS_EX_TOPMOST | WS_EX_TOOLWINDOW,*/
                 w!("tacky-border"),
                 w!("tacky-border"),
@@ -103,11 +104,11 @@ impl WindowBorder {
                 None,
                 None,
                 hinstance,
-                None
+                Some(std::mem::transmute(&mut *self))
             )?;
 
-            self.m_window = open_window;
-          
+            println!("self: {:?}", self);
+
             // make window transparent
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
             //println!("pos: {:?}", pos);
@@ -122,19 +123,19 @@ impl WindowBorder {
                 };
             }
 
-            DwmEnableBlurBehindWindow(open_window, &bh);
+            DwmEnableBlurBehindWindow(self.m_window, &bh);
 
-            if SetLayeredWindowAttributes(open_window, COLORREF(0x00000000), 0, LWA_COLORKEY).is_err() {
+            if SetLayeredWindowAttributes(self.m_window, COLORREF(0x00000000), 0, LWA_COLORKEY).is_err() {
                 println!("Error Setting Layered Window Attributes!");
             }
-            if SetLayeredWindowAttributes(open_window, COLORREF(0x00000000), 255, LWA_ALPHA).is_err() {
+            if SetLayeredWindowAttributes(self.m_window, COLORREF(0x00000000), 255, LWA_ALPHA).is_err() {
                 println!("Error Setting Layered Window Attributes!");
             }
 
             // set position of the border-window behind the tracking window
             // helps to prevent border overlapping (happens after turning borders off and on)
             let set_pos = SetWindowPos(self.m_tracking_window,
-                open_window,
+                self.m_window,
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
@@ -148,20 +149,21 @@ impl WindowBorder {
             let val: BOOL = TRUE;
 
             // I doubt the code below is functioning properly (the std::mem::transmute(&val))
-            DwmSetWindowAttribute(open_window, DWMWA_EXCLUDED_FROM_PEEK, std::mem::transmute(&val), size_of::<BOOL>() as u32);
+            DwmSetWindowAttribute(self.m_window, DWMWA_EXCLUDED_FROM_PEEK, std::mem::transmute(&val), size_of::<BOOL>() as u32);
             //println!("pointer to BOOL: {:?} {:?}", &val, std::mem::transmute::<&BOOL, isize>(&val));
 
-            ShowWindow(open_window, SHOW_WINDOW_CMD(SW_SHOWNA));
+            ShowWindow(self.m_window, SHOW_WINDOW_CMD(SW_SHOWNA));
 
-            UpdateWindow(open_window);
+            UpdateWindow(self.m_window);
 
-           // println!("open_window (from init): {:?}", open_window);
+           // println!("self.m_window (from init): {:?}", self.m_window);
 
-            WindowBorder::render(&self, open_window);
+            Self::render(&self);
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND(std::ptr::null_mut()), 0, 0).into() {
                 DispatchMessageA(&message);
+                std::thread::sleep(std::time::Duration::from_millis(100))
             }
             
             if self.m_window.is_invalid() {
@@ -186,10 +188,10 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn render(&self, open_window: HWND) -> Result<()> {
+    pub fn render(&self) -> Result<()> {
         let hr: HRESULT;
 
-        //println!("open_window (from render): {:?}", open_window);
+        //println!("self.m_window (from render): {:?}", self.m_window);
 
         let dpi: f32 = 96.0;
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
@@ -210,7 +212,7 @@ impl WindowBorder {
         //println!("render_target_size: {:?}", render_target_size);
 
         let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
-            hwnd: open_window, 
+            hwnd: self.m_window, 
             pixelSize: render_target_size, 
             presentOptions: D2D1_PRESENT_OPTIONS_NONE 
         };
@@ -259,44 +261,60 @@ impl WindowBorder {
                 None
             );
             m_render_target.EndDraw(None, None);
-            
-
-            // testrect below is only used to get the coordinates of the border. can delete later
-            // when finished with the program.
-            let mut testrect: RECT = RECT { top: 0, left: 0, right: 0, bottom: 0 };
-            DwmGetWindowAttribute(open_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut testrect as *mut _ as *mut c_void, size_of::<RECT>() as u32);
-            //println!("{:?}", testrect);
         }
 
         Ok(())
     }
-}
 
-
-    unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let mut this_ref: *mut WindowBorder = std::mem::transmute(GetWindowLongPtrW(window, GWLP_USERDATA));
-        println!("is this a magic cookie or not?: {:?}", this_ref);
+    // When CreateWindowExW is called, we can optinally pass a value to its last field which will
+    // get sent to the window process on creation. In our code, we've passed a pointer to the border 
+    // structure, and here we are getting that pointer and assigning it to the window using SetWindowLongPtrW.
+    pub unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let mut this_ref: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
         
         if this_ref == std::ptr::null_mut() && message == WM_CREATE {
-            let create_struct: *mut CREATESTRUCTW = std::mem::transmute(lparam.0);
-            println!("create_struct: {:?}", create_struct);
-            this_ref = std::mem::transmute((*create_struct).lpCreateParams);
-            SetWindowLongPtrW(window, GWLP_USERDATA, std::mem::transmute(this_ref));
+            let create_struct: *mut CREATESTRUCTW = lparam.0 as *mut _;
+            this_ref = (*create_struct).lpCreateParams as *mut _;
+            println!("this_ref: {:?}", *this_ref);
+            SetWindowLongPtrW(window, GWLP_USERDATA, this_ref as _);
         }
         match this_ref != std::ptr::null_mut() {
-            true => return wnd_proc(message, wparam, lparam),
+            true => return Self::wnd_proc(&mut *this_ref, window, message, wparam, lparam),
             false => return DefWindowProcW(window, message, wparam, lparam),
         }                                          
     }
 
-    pub fn wnd_proc(message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        /*match message {
-            WM_TIMER => {
-                match wparam {
-                    REFRESH_BORDER_TIMER_ID => {
-                    },
-                }
+    // TODO these messages are the border window itself, which do nothing. I need to somehow get
+    // messages from the tracking window. Alternatively I can just put everything on a timer lol.
+    pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        match message {
+            WM_MOVING => {
+                println!("Re-rendering!"); 
+                Self::render(self);
             },
-        }*/
-        return LRESULT(10);
+            WM_WINDOWPOSCHANGED => {
+                println!("Re-ordering window z order!");
+                SetWindowPos(self.m_tracking_window,
+                    self.m_window,
+                    self.window_rect.left,
+                    self.window_rect.top,
+                    self.window_rect.right - self.window_rect.left,
+                    self.window_rect.bottom - self.window_rect.top,
+                    SWP_NOMOVE | SWP_NOSIZE
+                );
+            },
+            WM_DESTROY => {
+                let ptr = GetWindowLongPtrW(window, GWLP_USERDATA) as *mut i32;
+                // Converting to a box like below means it will automatically clean up when it goes
+                // out of scope (I think).
+                Box::from_raw(ptr);
+                println!("Cleaned up the box.");
+                PostQuitMessage(0);
+            },
+            _ => {}
+        }
+        LRESULT(0)
     }
+}
+
+
