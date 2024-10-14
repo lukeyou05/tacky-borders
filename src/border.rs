@@ -17,6 +17,7 @@ use windows::{
     Win32::System::LibraryLoader::GetModuleHandleA,
     Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::UI::WindowsAndMessaging::*,
+    Win32::UI::Accessibility::*,
 };
 
 // Can I use mod drawer here somehow?
@@ -36,8 +37,8 @@ pub struct RECT {
 
 #[derive(Debug)]
 pub struct WindowBorder {
-    m_window: HWND,
-    m_tracking_window: HWND,
+    pub m_window: HWND,
+    pub m_tracking_window: HWND,
     window_rect: RECT,
     border_size: i32,
     border_offset: i32
@@ -57,6 +58,8 @@ impl WindowBorder {
         //println!("border.m_window: {:?}", border.m_window);
         //println!("border.m_tracking_window: {:?}", border.m_tracking_window);
 
+        // The lines below are currently useless because if a WindowBorder is successfully
+        // initialized, it will be in a message loop and will never reach this part of the code.
         match WindowBorder::init(&mut border, hinstance) {
             Ok(val) => return border,
             Err(err) => println!("Error! {}", err),
@@ -76,7 +79,7 @@ impl WindowBorder {
             println!("Error at m_tracking_window!");
         }
 
-        self.get_frame_rect(self.m_tracking_window)?;
+        self.get_frame_rect()?;
 
         /*let window_rect: RECT;
         match window_rect_opt {
@@ -88,9 +91,6 @@ impl WindowBorder {
         // println!("window_rect: {:?}", window_rect);
 
         unsafe {
-            // I need to change this line below so that it changes self's variables. I looked up
-            // online and couldn't find much on how to do that. I may have to use somthing other
-            // than Box.
             self.m_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 /*WS_EX_TOPMOST | WS_EX_TOOLWINDOW,*/
@@ -107,7 +107,7 @@ impl WindowBorder {
                 Some(std::mem::transmute(&mut *self))
             )?;
 
-            println!("self: {:?}", self);
+            // println!("self: {:?}", self);
 
             // make window transparent
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
@@ -156,27 +156,39 @@ impl WindowBorder {
 
             UpdateWindow(self.m_window);
 
-           // println!("self.m_window (from init): {:?}", self.m_window);
+            // println!("self.m_window (from init): {:?}", self.m_window);
 
-            Self::render(&self);
+            self.render();
+            loop {
+                self.get_frame_rect();
+                self.render();
+                SetWindowPos(self.m_window,
+                    self.m_tracking_window,
+                    self.window_rect.left,
+                    self.window_rect.top,
+                    self.window_rect.right - self.window_rect.left,
+                    self.window_rect.bottom - self.window_rect.top,
+                SWP_NOREDRAW | SWP_NOACTIVATE
+                );
+                std::thread::sleep(std::time::Duration::from_millis(16))
+            }
+
+            //Self::set_windows_hook(&self);
 
             let mut message = MSG::default();
-            while GetMessageW(&mut message, HWND(std::ptr::null_mut()), 0, 0).into() {
-                DispatchMessageA(&message);
-                std::thread::sleep(std::time::Duration::from_millis(100))
+            while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+                std::thread::sleep(std::time::Duration::from_millis(1000))
             }
-            
-            if self.m_window.is_invalid() {
-                println!("m_window is invalid!");
-            }
-
+            println!("Potential error with message loop, exiting!");
         }
 
         return Ok(());
     }
 
-    pub fn get_frame_rect(&mut self, window: HWND) -> Result<()> {
-        if unsafe { DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
+    pub fn get_frame_rect(&mut self) -> Result<()> {
+        if unsafe { DwmGetWindowAttribute(self.m_tracking_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
             println!("Error getting frame rect!");
         }
 
@@ -209,7 +221,7 @@ impl WindowBorder {
             width: (self.window_rect.right - self.window_rect.left) as u32,
             height: (self.window_rect.bottom - self.window_rect.top) as u32
         };
-        //println!("render_target_size: {:?}", render_target_size);
+        println!("render_target_size: {:?}", render_target_size);
 
         let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
             hwnd: self.m_window, 
@@ -224,9 +236,9 @@ impl WindowBorder {
 
             m_render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             let color = D2D1_COLOR_F { 
-                r: 90.0/255.0, 
-                g: 194.0/255.0, 
-                b: 247.0/255.0, 
+                r: 107.0/255.0, 
+                g: 145.0/255.0, 
+                b: 241.0/255.0, 
                 a: 1.0 
             };
 
@@ -266,16 +278,35 @@ impl WindowBorder {
         Ok(())
     }
 
+    pub fn set_windows_hook(&self) {
+        unsafe {
+            let thread = GetWindowThreadProcessId(self.m_tracking_window, None);
+            let error = GetLastError();
+            println!("Is there an error from getting window thread? Last Error: {:?} Thread: {:?} (note that the error may be from elsewhere in the program)", error, thread);
+            SetWindowsHookExW(
+                WH_CALLWNDPROC,
+                Some(Self::win_hook),
+                HINSTANCE::default(),
+                thread,
+            );
+        }
+    }
+
+    pub unsafe extern "system" fn win_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+    }
+
     // When CreateWindowExW is called, we can optinally pass a value to its last field which will
     // get sent to the window process on creation. In our code, we've passed a pointer to the border 
     // structure, and here we are getting that pointer and assigning it to the window using SetWindowLongPtrW.
     pub unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        println!("Window Message: {:?}", message);
         let mut this_ref: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
         
         if this_ref == std::ptr::null_mut() && message == WM_CREATE {
             let create_struct: *mut CREATESTRUCTW = lparam.0 as *mut _;
             this_ref = (*create_struct).lpCreateParams as *mut _;
-            println!("this_ref: {:?}", *this_ref);
+            // println!("this_ref: {:?}", *this_ref);
             SetWindowLongPtrW(window, GWLP_USERDATA, this_ref as _);
         }
         match this_ref != std::ptr::null_mut() {
@@ -289,11 +320,11 @@ impl WindowBorder {
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
             WM_MOVING => {
-                println!("Re-rendering!"); 
+                // println!("Re-rendering!"); 
                 Self::render(self);
             },
             WM_WINDOWPOSCHANGED => {
-                println!("Re-ordering window z order!");
+                // println!("Re-ordering window z order!");
                 SetWindowPos(self.m_tracking_window,
                     self.m_window,
                     self.window_rect.left,

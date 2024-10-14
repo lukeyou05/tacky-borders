@@ -24,6 +24,7 @@ use windows::{
     Win32::System::LibraryLoader::GetModuleHandleA,
     Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::UI::WindowsAndMessaging::*,
+    Win32::UI::Accessibility::*,
 };
 
 extern "C" {
@@ -45,27 +46,43 @@ fn main() {
     });*/
     print!("applying colors\n");
     let m_tracking_window: Option<HWND> = None; 
-    apply_colors(true);
     print!("finished applying\n");
+    register_window_class();
 
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    let mut visible_borders = apply_colors();
+    /*loop {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        println!("Destroying borders!");
+        if destroy_borders(visible_borders).is_err() {
+            println!("Error destroying borders!");
+        }
+        let new_visible_borders = apply_colors();
+        visible_borders = new_visible_borders;
+    }*/
+    unsafe {
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+            std::thread::sleep(std::time::Duration::from_millis(100))
+        }
+        println!("Potential error with message loop, exiting!");
     }
 }
 
-fn apply_colors(reset: bool) {
+fn apply_colors() -> Vec<HWND> {
     let mut visible_windows: Vec<HWND> = Vec::new();
+    let mut visible_borders: Vec<HWND> = Vec::new();
     unsafe {
         EnumWindows(
             Some(enum_windows_callback),
             LPARAM(&mut visible_windows as *mut _ as isize),
         );
-
-        register_window_class();
     }
 
     for hwnd in visible_windows {
         unsafe {
+            println!("creating hwnd: {:?}", hwnd);
             /*let active = GetForegroundWindow();
             let string = "#FF0000";
             let rgb_red = hex_to_colorref(&string);
@@ -85,8 +102,8 @@ fn apply_colors(reset: bool) {
             if IsWindowVisible(hwnd).as_bool() {
                 let send = SendHWND(hwnd);
                 let thread = std::thread::spawn(move || {
-                    println!("Spawning thread! {:?}", send.0);
-                    assign_border(send);
+                    // println!("Spawning thread! {:?}", send.0);
+                    let border = assign_border(send).unwrap();
                     println!("Exiting thread! Possibly panicked?");
                     std::thread::sleep(std::time::Duration::from_millis(100))
                 });
@@ -102,6 +119,18 @@ fn apply_colors(reset: bool) {
     });
 
     let res = thread.join().expect("The thread has panicked");*/
+    return visible_borders;
+}
+
+pub fn destroy_borders(mut visible_windows: Vec<HWND>) -> Result<()> {
+    for hwnd in visible_windows {
+        println!("destrying hwnd: {:?}", hwnd);
+        unsafe { 
+            let result = DestroyWindow(hwnd);
+            return result;
+        }
+    }
+    return Ok(());
 }
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -133,31 +162,33 @@ pub fn hex_to_colorref(hex: &str) -> u32 {
   }
 }
 
-pub unsafe fn register_window_class() -> Result<()> {
-    let window_class = w!("tacky-border");
-    println!("creating window_class");
-    let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
+pub fn register_window_class() -> Result<()> {
+    unsafe {
+        let window_class = w!("tacky-border");
+        // println!("creating window_class");
+        let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
 
-    let mut wcex = WNDCLASSEXW {
-        cbSize: size_of::<WNDCLASSEXW>() as u32,
-        lpfnWndProc: Some(border::WindowBorder::s_wnd_proc),
-        hInstance: hinstance,
-        lpszClassName: window_class,
-        hCursor: LoadCursorW(None, IDC_ARROW)?,
-        ..Default::default()
-    };
-    let atom = RegisterClassExW(&wcex);
-    println!("wcex.hCursor: {:?}", wcex.hCursor);
+        let mut wcex = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(border::WindowBorder::s_wnd_proc),
+            hInstance: hinstance,
+            lpszClassName: window_class,
+            hCursor: LoadCursorW(None, IDC_ARROW)?,
+            ..Default::default()
+        };
+        let atom = RegisterClassExW(&wcex);
+        // println!("wcex.hCursor: {:?}", wcex.hCursor);
             
-    if atom == 0 {
-        let last_error = GetLastError();
-        println!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
+        if atom == 0 {
+            let last_error = GetLastError();
+            println!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
+        }
     }
 
     return Ok(());
 }
 
-pub fn assign_border(window: SendHWND) -> bool {
+pub fn assign_border(window: SendHWND) -> Option<border::WindowBorder> {
     unsafe {
         /*if window.0 == GetForegroundWindow() {
             let m_hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
@@ -165,8 +196,9 @@ pub fn assign_border(window: SendHWND) -> bool {
         }*/
         let m_hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
         let border = border::WindowBorder::create(window.0, m_hinstance);
+        return Some(border);
     }
-    return true;
+    return None;
 }
 
 /*pub fn window_process(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -180,5 +212,31 @@ pub fn assign_border(window: SendHWND) -> bool {
         pub fn DefWindowProcW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
         pub fn ShowWindow(hWnd: HWND, nCmdShow: i32) -> BOOL;
     }
+
+pub fn set_windows_event_hook() {
+    unsafe {
+        SetWinEventHook(
+            EVENT_MIN,
+            EVENT_MAX,
+            None,
+            Some(win_event_hook),
+            0,
+            0,
+            0
+        );
+    }
+}
+
+pub extern "system" fn win_event_hook(
+    _h_win_event_hook: HWINEVENTHOOK,
+    event: u32,
+    hwnd: HWND,
+    id_object: i32,
+    _id_child: i32,
+    _id_event_thread: u32,
+    _dwms_event_time: u32,
+) {
+
+}
 
 
