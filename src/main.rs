@@ -10,7 +10,7 @@ use core::ffi::c_void;
 use core::ffi::c_int;
 
 mod border;
-mod drawer;
+mod event_hook;
 
 const DWMWA_COLOR_DEFAULT: u32 = 0xFFFFFFFF;
 const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;

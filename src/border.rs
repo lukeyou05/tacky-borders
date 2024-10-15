@@ -36,12 +36,19 @@ pub struct RECT {
 }
 
 #[derive(Debug)]
+#[derive(Default)]
 pub struct WindowBorder {
     pub m_window: HWND,
     pub m_tracking_window: HWND,
     window_rect: RECT,
     border_size: i32,
-    border_offset: i32
+    border_offset: i32,
+    dpi: f32,
+    render_target_properties: D2D1_RENDER_TARGET_PROPERTIES,
+    hwnd_render_target_properties: D2D1_HWND_RENDER_TARGET_PROPERTIES,
+    m_border_brush: D2D1_BRUSH_PROPERTIES,
+    rounded_rect: D2D1_ROUNDED_RECT,
+    color: D2D1_COLOR_F,
 }
 
 impl WindowBorder {
@@ -52,7 +59,8 @@ impl WindowBorder {
             m_tracking_window: window, 
             window_rect: RECT::default(), 
             border_size: 4, 
-            border_offset: 1
+            border_offset: 1,
+            ..Default::default()
         };
         //println!("hinstance: {:?}", hinstance);
         //println!("border.m_window: {:?}", border.m_window);
@@ -157,11 +165,13 @@ impl WindowBorder {
             UpdateWindow(self.m_window);
 
             // println!("self.m_window (from init): {:?}", self.m_window);
-
-            self.render();
+            self.create_render_targets();
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_FACTORY_OPTIONS::default()))?;
+            self.render(&factory);
             loop {
+                std::thread::sleep(std::time::Duration::from_millis(16));
                 self.get_frame_rect();
-                self.render();
+                self.render(&factory);
                 SetWindowPos(self.m_window,
                     self.m_tracking_window,
                     self.window_rect.left,
@@ -170,7 +180,6 @@ impl WindowBorder {
                     self.window_rect.bottom - self.window_rect.top,
                 SWP_NOREDRAW | SWP_NOACTIVATE
                 );
-                std::thread::sleep(std::time::Duration::from_millis(16))
             }
 
             //Self::set_windows_hook(&self);
@@ -200,74 +209,83 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn render(&self) -> Result<()> {
-        let hr: HRESULT;
 
-        //println!("self.m_window (from render): {:?}", self.m_window);
-
-        let dpi: f32 = 96.0;
-        let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
+    pub fn create_render_targets(&mut self) {
+        self.dpi = 96.0;
+        self.render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT { 
                 format: DXGI_FORMAT_UNKNOWN, 
                 alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED 
             },
-            dpiX: dpi,
-            dpiY: dpi,
+            dpiX: self.dpi,
+            dpiY: self.dpi,
             ..Default::default() };
 
+        self.hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
+            hwnd: self.m_window, 
+            pixelSize: Default::default(), 
+            presentOptions: D2D1_PRESENT_OPTIONS_NONE 
+        };
+
+        self.m_border_brush = D2D1_BRUSH_PROPERTIES { 
+            opacity: 1.0 as f32, 
+            transform: unsafe { std::mem::zeroed() }
+        };
+
+        self.rounded_rect = D2D1_ROUNDED_RECT { 
+            rect: Default::default(), 
+            radiusX: 6.0 + ((self.border_size/2) as f32), 
+            radiusY: 6.0 + ((self.border_size/2) as f32)
+        };
+
+        self.color = D2D1_COLOR_F { 
+            r: 107.0/255.0, 
+            g: 145.0/255.0, 
+            b: 241.0/255.0, 
+            a: 1.0 
+        };
+    }
+
+    // TODO Another optimization I could do is to only change
+    // self.hwnd_render_target_properties.pixelSize whenever the size of the tracking window is
+    // actually changed. Additionally, above in the code, I could only call get_frame_rect when the
+    // window size is changed by listening to window events. Alternatively, I could just make the
+    // window take up the whole screen but only draw on relevants parts (I think this one is
+    // definitely worth a try as it has the potential for most performance gains).
+    pub fn render(&mut self, factory: &ID2D1Factory) -> Result<()> {
         /*let render_target_size = D2D_SIZE_U { width: (client_rect.right - client_rect.left) as u32, height: (client_rect.bottom - client_rect.top) as u32 };*/
-        let render_target_size = D2D_SIZE_U { 
+        self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U { 
             width: (self.window_rect.right - self.window_rect.left) as u32,
             height: (self.window_rect.bottom - self.window_rect.top) as u32
         };
-        println!("render_target_size: {:?}", render_target_size);
 
-        let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
-            hwnd: self.m_window, 
-            pixelSize: render_target_size, 
-            presentOptions: D2D1_PRESENT_OPTIONS_NONE 
-        };
         //println!("hwnd_render_target_properties: {:?}", hwnd_render_target_properties);
 
         unsafe {
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_FACTORY_OPTIONS::default()))?;
-            let m_render_target = factory.CreateHwndRenderTarget(&render_target_properties, &hwnd_render_target_properties)?;
+            let m_render_target = factory.CreateHwndRenderTarget(&self.render_target_properties, &self.hwnd_render_target_properties)?;
+            // I'm not even sure what SetAntiAliasMode does because without the line, the corners are still anti-aliased.
+            // Maybe there's an ever so slight bit more anti-aliasing with it but I could just be crazy. 
+            //m_render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-            m_render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            let color = D2D1_COLOR_F { 
-                r: 107.0/255.0, 
-                g: 145.0/255.0, 
-                b: 241.0/255.0, 
-                a: 1.0 
-            };
-
-            let m_border_brush = D2D1_BRUSH_PROPERTIES { 
-                opacity: 1.0 as f32, 
-                transform: std::mem::zeroed() 
-            };
-            let m_brush = m_render_target.CreateSolidColorBrush(&color, Some(&m_border_brush))?;
+            let m_brush = m_render_target.CreateSolidColorBrush(&self.color, Some(&self.m_border_brush))?;
             //println!("m_brush: {:?}", color);
 
             // Yes, the size calculations below are confusing, but they work, and that's all that
             // really matters.
-            let rect = D2D_RECT_F { 
+            self.rounded_rect.rect = D2D_RECT_F { 
                 left: (self.border_size/2 + self.border_offset) as f32, 
                 top: (self.border_size/2 + self.border_offset) as f32, 
                 right: (self.window_rect.right - self.window_rect.left - self.border_size/2 - self.border_offset) as f32, 
                 bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 - self.border_offset) as f32
             };
-            let rounded_rect = D2D1_ROUNDED_RECT { 
-                rect: rect, 
-                radiusX: 6.0 + ((self.border_size/2) as f32), 
-                radiusY: 6.0 + ((self.border_size/2) as f32)
-            };
 
             //println!("m_render_target: {:?}", m_render_target);
 
             m_render_target.BeginDraw();
+            m_render_target.Clear(None);
             m_render_target.DrawRoundedRectangle(
-                &rounded_rect,
+                &self.rounded_rect,
                 &m_brush,
                 self.border_size as f32,
                 None
@@ -318,7 +336,7 @@ impl WindowBorder {
     // TODO these messages are the border window itself, which do nothing. I need to somehow get
     // messages from the tracking window. Alternatively I can just put everything on a timer lol.
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        match message {
+        /*match message {
             WM_MOVING => {
                 // println!("Re-rendering!"); 
                 Self::render(self);
@@ -343,7 +361,7 @@ impl WindowBorder {
                 PostQuitMessage(0);
             },
             _ => {}
-        }
+        }*/
         LRESULT(0)
     }
 }
