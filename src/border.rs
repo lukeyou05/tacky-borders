@@ -19,36 +19,42 @@ use windows::{
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
 };
+use std::cell::Cell;
 
 // Can I use mod drawer here somehow?
 /*use crate::drawer::*;*/
+use crate::event_hook;
+
+thread_local! {
+    pub static BORDER_POINTER: Cell<Option<*mut WindowBorder>> = Cell::new(None);
+    pub static FACTORY_POINTER: Cell<Option<*const ID2D1Factory>> = Cell::new(None);
+}
 
 const SW_SHOWNA: i32 = 8;
 
 
-#[derive(Debug)]
-#[derive(Default)]
+/*#[derive(Debug, Default, Copy, Clone)]
 pub struct RECT {
     left: i32,
     top: i32,
     right: i32,
     bottom: i32,
-}
+}*/
 
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct WindowBorder {
     pub m_window: HWND,
     pub m_tracking_window: HWND,
-    window_rect: RECT,
-    border_size: i32,
-    border_offset: i32,
-    dpi: f32,
-    render_target_properties: D2D1_RENDER_TARGET_PROPERTIES,
-    hwnd_render_target_properties: D2D1_HWND_RENDER_TARGET_PROPERTIES,
-    m_border_brush: D2D1_BRUSH_PROPERTIES,
-    rounded_rect: D2D1_ROUNDED_RECT,
-    color: D2D1_COLOR_F,
+    pub window_rect: RECT,
+    pub border_size: i32,
+    pub border_offset: i32,
+    pub win_event_hook: HWINEVENTHOOK,
+    pub dpi: f32,
+    pub render_target_properties: D2D1_RENDER_TARGET_PROPERTIES,
+    pub hwnd_render_target_properties: D2D1_HWND_RENDER_TARGET_PROPERTIES,
+    pub m_border_brush: D2D1_BRUSH_PROPERTIES,
+    pub rounded_rect: D2D1_ROUNDED_RECT,
+    pub color: D2D1_COLOR_F,
 }
 
 impl WindowBorder {
@@ -62,16 +68,18 @@ impl WindowBorder {
             border_offset: 1,
             ..Default::default()
         };
+        BORDER_POINTER.replace(Some(std::ptr::addr_of_mut!(border))); 
+
         //println!("hinstance: {:?}", hinstance);
         //println!("border.m_window: {:?}", border.m_window);
         //println!("border.m_tracking_window: {:?}", border.m_tracking_window);
 
         // The lines below are currently useless because if a WindowBorder is successfully
         // initialized, it will be in a message loop and will never reach this part of the code.
-        match WindowBorder::init(&mut border, hinstance) {
+        /*match WindowBorder::init(&mut border, hinstance) {
             Ok(val) => return border,
             Err(err) => println!("Error! {}", err),
-        }
+        }*/
 
         return border;
     }
@@ -164,13 +172,24 @@ impl WindowBorder {
 
             UpdateWindow(self.m_window);
 
+            /*self.win_event_hook = SetWinEventHook(
+                EVENT_MIN,
+                EVENT_MAX,
+                None,
+                Some(event_hook::handle_win_event),
+                0,
+                GetWindowThreadProcessId(self.m_tracking_window, None),
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+            );*/
+
             // println!("self.m_window (from init): {:?}", self.m_window);
             self.create_render_targets();
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_FACTORY_OPTIONS::default()))?;
+            FACTORY_POINTER.replace(Some(std::ptr::addr_of!(factory)));
             self.render(&factory);
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(16));
-                self.get_frame_rect();
+            /*loop {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                /*self.get_frame_rect();
                 self.render(&factory);
                 SetWindowPos(self.m_window,
                     self.m_tracking_window,
@@ -179,16 +198,20 @@ impl WindowBorder {
                     self.window_rect.right - self.window_rect.left,
                     self.window_rect.bottom - self.window_rect.top,
                 SWP_NOREDRAW | SWP_NOACTIVATE
-                );
-            }
+                );*/
+                self.update(&factory);
+            }*/
 
-            //Self::set_windows_hook(&self);
-
+            //println!("border hwnd: {:?}", self.m_window);
+            
+            //TODO replace std::thread::sleep with a dedicated timer for the update function so
+            //we don't miss any of the other messages.
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
-                std::thread::sleep(std::time::Duration::from_millis(1000))
+                //self.update(&factory);
+                std::thread::sleep(std::time::Duration::from_millis(10))
             }
             println!("Potential error with message loop, exiting!");
         }
@@ -230,7 +253,7 @@ impl WindowBorder {
 
         self.m_border_brush = D2D1_BRUSH_PROPERTIES { 
             opacity: 1.0 as f32, 
-            transform: unsafe { std::mem::zeroed() }
+            transform: Default::default() 
         };
 
         self.rounded_rect = D2D1_ROUNDED_RECT { 
@@ -240,19 +263,13 @@ impl WindowBorder {
         };
 
         self.color = D2D1_COLOR_F { 
-            r: 107.0/255.0, 
-            g: 145.0/255.0, 
-            b: 241.0/255.0, 
+            r: 152.0/255.0, 
+            g: 152.0/255.0, 
+            b: 152.0/255.0, 
             a: 1.0 
         };
     }
 
-    // TODO Another optimization I could do is to only change
-    // self.hwnd_render_target_properties.pixelSize whenever the size of the tracking window is
-    // actually changed. Additionally, above in the code, I could only call get_frame_rect when the
-    // window size is changed by listening to window events. Alternatively, I could just make the
-    // window take up the whole screen but only draw on relevants parts (I think this one is
-    // definitely worth a try as it has the potential for most performance gains).
     pub fn render(&mut self, factory: &ID2D1Factory) -> Result<()> {
         /*let render_target_size = D2D_SIZE_U { width: (client_rect.right - client_rect.left) as u32, height: (client_rect.bottom - client_rect.top) as u32 };*/
         self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U { 
@@ -296,29 +313,79 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn set_windows_hook(&self) {
+    pub fn update(&mut self, factory: &ID2D1Factory) {
+        let old_rect = self.window_rect.clone();
+        self.get_frame_rect();
+        // Below is just proof of concept, should probably implement an equals function in the
+        // future.
+        if old_rect.top != self.window_rect.top ||
+            old_rect.right != self.window_rect.right ||
+            old_rect.left != self.window_rect.left ||
+            old_rect.bottom != self.window_rect.bottom {
+            unsafe {
+                SetWindowPos(self.m_window,
+                    self.m_tracking_window,
+                    self.window_rect.left,
+                    self.window_rect.top,
+                    self.window_rect.right - self.window_rect.left,
+                    self.window_rect.bottom - self.window_rect.top,
+                    SWP_NOREDRAW | SWP_NOACTIVATE
+                );
+            }
+            self.render(factory);
+        }
+        /*unsafe {
+            let mut next_window = GetWindow(self.m_tracking_window, GW_HWNDNEXT).unwrap();
+            while !IsWindowVisible(next_window).as_bool() {
+                next_window = GetWindow(self.m_tracking_window, GW_HWNDLAST).unwrap();
+            }
+            println!("next_window: {:?}", next_window);
+            println!("self.m_window: {:?}", self.m_window);
+            if IsWindowVisible(next_window).as_bool() && self.m_window != next_window {
+                println!("this thing!");
+                SetWindowPos(self.m_window,
+                    self.m_tracking_window,
+                    self.window_rect.left,
+                    self.window_rect.top,
+                    self.window_rect.right - self.window_rect.left,
+                    self.window_rect.bottom - self.window_rect.top,
+                    SWP_SHOWWINDOW 
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }*/
+    }
+
+    pub fn set_pos(&mut self) {
         unsafe {
-            let thread = GetWindowThreadProcessId(self.m_tracking_window, None);
-            let error = GetLastError();
-            println!("Is there an error from getting window thread? Last Error: {:?} Thread: {:?} (note that the error may be from elsewhere in the program)", error, thread);
-            SetWindowsHookExW(
-                WH_CALLWNDPROC,
-                Some(Self::win_hook),
-                HINSTANCE::default(),
-                thread,
+            SetWindowPos(self.m_window,
+                self.m_tracking_window,
+                self.window_rect.left,
+                self.window_rect.top,
+                self.window_rect.right - self.window_rect.left,
+                self.window_rect.bottom - self.window_rect.top,
+            SWP_NOREDRAW | SWP_NOACTIVATE
             );
         }
     }
 
-    pub unsafe extern "system" fn win_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+    pub fn set_color(&mut self, r: f32, g: f32, b: f32, factory: &ID2D1Factory) {
+        println!("Changing colors!");
+        self.color.r = r;
+        self.color.g = g;
+        self.color.b = b;
+        self.get_frame_rect();
+        self.render(&factory);
     }
 
     // When CreateWindowExW is called, we can optinally pass a value to its last field which will
     // get sent to the window process on creation. In our code, we've passed a pointer to the border 
     // structure, and here we are getting that pointer and assigning it to the window using SetWindowLongPtrW.
     pub unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        println!("Window Message: {:?}", message);
+        //println!("Window Message: {:?}", message);
+        if message == WM_DESTROY {
+            println!("message == WM_DESTROY");
+        }
         let mut this_ref: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
         
         if this_ref == std::ptr::null_mut() && message == WM_CREATE {
@@ -336,32 +403,22 @@ impl WindowBorder {
     // TODO these messages are the border window itself, which do nothing. I need to somehow get
     // messages from the tracking window. Alternatively I can just put everything on a timer lol.
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        /*match message {
-            WM_MOVING => {
-                // println!("Re-rendering!"); 
-                Self::render(self);
-            },
-            WM_WINDOWPOSCHANGED => {
-                // println!("Re-ordering window z order!");
-                SetWindowPos(self.m_tracking_window,
-                    self.m_window,
-                    self.window_rect.left,
-                    self.window_rect.top,
-                    self.window_rect.right - self.window_rect.left,
-                    self.window_rect.bottom - self.window_rect.top,
-                    SWP_NOMOVE | SWP_NOSIZE
-                );
-            },
+        match message {
             WM_DESTROY => {
-                let ptr = GetWindowLongPtrW(window, GWLP_USERDATA) as *mut i32;
+                //Converting the pointer to a box seems to make the whole program exit so I think
+                //it's better if I just simply set the windowlongptrw to 0 manually like Microsoft
+                //does in PowerToys.
+                /*let ptr = GetWindowLongPtrW(window, GWLP_USERDATA) as *mut i32;
                 // Converting to a box like below means it will automatically clean up when it goes
-                // out of scope (I think).
-                Box::from_raw(ptr);
-                println!("Cleaned up the box.");
+                // out of scope (I think). 
+                println!("Converting to box.");
+                let box_pointer = Box::from_raw(ptr);*/
+                SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+                //UnhookWinEvent(self.win_event_hook);
                 PostQuitMessage(0);
             },
             _ => {}
-        }*/
+        }
         LRESULT(0)
     }
 }
