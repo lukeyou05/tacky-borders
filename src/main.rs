@@ -19,8 +19,12 @@ const COLOR_INVALID: u32 = 0x000000FF;
 use windows::{
     core::*,
     Win32::Foundation::*,
+    Foundation::Numerics::*,
     Win32::Graphics::Gdi::*,
     Win32::Graphics::Dwm::*,
+    Win32::Graphics::Direct2D::*,
+    Win32::Graphics::Direct2D::Common::*,
+    Win32::Graphics::Dxgi::Common::*,
     Win32::System::LibraryLoader::GetModuleHandleA,
     Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::UI::WindowsAndMessaging::*,
@@ -35,17 +39,15 @@ extern "C" {
     static __ImageBase: IMAGE_DOS_HEADER;
 }
 
-static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+//pub static FACTORY: LazyLock<ID2D1Factory> = unsafe { LazyLock::new(|| D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None).expect("REASON")) };
 
 // The code below allows me to send a HWND across threads. This can be VERY UNSAFE, and I should
 // probably search for whether or not it's okay for a HWND, but it works for now.
 pub struct SendHWND(HWND);
-pub struct SendWindowBorder(border::WindowBorder);
 
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
-unsafe impl Send for SendWindowBorder {}
-unsafe impl Sync for SendWindowBorder {}
 
 fn main() {
     /*std::thread::spawn(|| loop {
@@ -70,7 +72,7 @@ fn main() {
         visible_borders = new_visible_borders;
     }*/
     unsafe {
-        SetWinEventHook(
+        /*SetWinEventHook(
             EVENT_MIN,
             EVENT_MAX,
             None,
@@ -78,7 +80,9 @@ fn main() {
             0,
             0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-        );
+        );*/
+        //TODO should check whether dpi_aware is true or not
+        let dpi_aware = SetProcessDPIAware();
         println!("Entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
@@ -132,25 +136,19 @@ pub fn enum_windows(){
                     let mut borders_sent = borders.lock().unwrap();
                     let mut window_sent = window;
 
-                    let mut border = border::WindowBorder { 
-                        m_window: HWND::default(), 
-                        m_tracking_window: window_sent.0, 
-                        window_rect: RECT::default(), 
-                        border_size: 4, 
-                        border_offset: 1,
-                        ..Default::default()
-                    };;
+                    let mut border = border::WindowBorder::create(window_sent.0);
 
                     let window_isize = window_sent.0.0 as isize; 
                     let border_isize = std::ptr::addr_of!(border) as isize;
                     borders_sent.entry(window_isize).or_insert(border_isize);
+                    drop(borders_sent);
 
                     let m_hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
                     border.init(m_hinstance);
 
                     //assign_border(send);
                     println!("Exiting thread! Possibly panicked?");
-                    std::thread::sleep(std::time::Duration::from_millis(100))
+                    //std::thread::sleep(std::time::Duration::from_millis(100))
                 });
             }
         }
@@ -178,7 +176,7 @@ pub fn enum_borders() -> Vec<HWND> {
 }
 
 
-pub fn assign_border(window: SendHWND) -> Option<border::WindowBorder> {
+/*pub fn assign_border(window: SendHWND) -> Option<border::WindowBorder> {
     unsafe {
         /*if window.0 == GetForegroundWindow() {
             let m_hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
@@ -189,7 +187,7 @@ pub fn assign_border(window: SendHWND) -> Option<border::WindowBorder> {
         return Some(border);
     }
     return None;
-}
+}*/
 
 pub fn destroy_borders(mut visible_windows: Vec<HWND>) -> Result<()> {
     for hwnd in visible_windows {

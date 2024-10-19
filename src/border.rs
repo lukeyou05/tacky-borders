@@ -20,6 +20,7 @@ use windows::{
     Win32::UI::Accessibility::*,
 };
 use std::cell::Cell;
+use std::sync::LazyLock;
 
 // Can I use mod drawer here somehow?
 /*use crate::drawer::*;*/
@@ -32,6 +33,7 @@ thread_local! {
 
 const SW_SHOWNA: i32 = 8;
 
+pub static FACTORY: LazyLock<ID2D1Factory> = unsafe { LazyLock::new(|| D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None).expect("REASON")) };
 
 /*#[derive(Debug, Default, Copy, Clone)]
 pub struct RECT {
@@ -55,20 +57,32 @@ pub struct WindowBorder {
     pub m_border_brush: D2D1_BRUSH_PROPERTIES,
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub color: D2D1_COLOR_F,
+    //pub factory: &'static ID2D1Factory,
 }
 
 impl WindowBorder {
-    pub fn create(window: HWND, hinstance: HINSTANCE) -> WindowBorder {
+    pub fn create(window: HWND) -> WindowBorder {
         // let mut border: Box<WindowBorder> = Box::new(WindowBorder { m_window: HWND::default(), m_tracking_window: window } );
+        //static DEBUG_LEVEL: D2D1_DEBUG_LEVEL = D2D1_DEBUG_LEVEL(0);
+        //static FACTORY_OPTIONS: D2D1_FACTORY_OPTIONS = D2D1_FACTORY_OPTIONS { debugLevel: DEBUG_LEVEL };
+        //static FACTORY_OPTIONS_POINTER: &'static D2D1_FACTORY_OPTIONS = &FACTORY_OPTIONS;
+        //static factory_init: ID2D1Factory = unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(FACTORY_OPTIONS_POINTER)).expect("REASON") };
+        //static FACTORY_POINTER: &ID2D1Factory = &*FACTORY;
         let mut border = WindowBorder { 
             m_window: HWND::default(), 
             m_tracking_window: window, 
             window_rect: RECT::default(), 
             border_size: 4, 
             border_offset: 1,
+            //factory: &factory_init,
+            //..unsafe{std::mem::zeroed()}
             ..Default::default()
         };
-        BORDER_POINTER.replace(Some(std::ptr::addr_of_mut!(border))); 
+        BORDER_POINTER.replace(Some(std::ptr::addr_of_mut!(border)));
+        println!("border_pointer (creation): {:?}", std::ptr::addr_of_mut!(border));
+        println!("m_tracking_window (creation): {:?}", border.m_tracking_window);
+        //TODO maybe check if dpi_aware is true or not
+        let dpi_aware = unsafe { SetProcessDPIAware() };
 
         //println!("hinstance: {:?}", hinstance);
         //println!("border.m_window: {:?}", border.m_window);
@@ -172,7 +186,7 @@ impl WindowBorder {
 
             UpdateWindow(self.m_window);
 
-            /*self.win_event_hook = SetWinEventHook(
+            self.win_event_hook = SetWinEventHook(
                 EVENT_MIN,
                 EVENT_MAX,
                 None,
@@ -180,11 +194,11 @@ impl WindowBorder {
                 0,
                 GetWindowThreadProcessId(self.m_tracking_window, None),
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-            );*/
+            );
 
             // println!("self.m_window (from init): {:?}", self.m_window);
             self.create_render_targets();
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_FACTORY_OPTIONS::default()))?;
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             FACTORY_POINTER.replace(Some(std::ptr::addr_of!(factory)));
             self.render(&factory);
             /*loop {
@@ -199,7 +213,7 @@ impl WindowBorder {
                     self.window_rect.bottom - self.window_rect.top,
                 SWP_NOREDRAW | SWP_NOACTIVATE
                 );*/
-                self.update(&factory);
+                self.update();
             }*/
 
             //println!("border hwnd: {:?}", self.m_window);
@@ -208,10 +222,12 @@ impl WindowBorder {
             //we don't miss any of the other messages.
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+                //let before = std::time::Instant::now();
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
                 //self.update(&factory);
-                std::thread::sleep(std::time::Duration::from_millis(10))
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
             }
             println!("Potential error with message loop, exiting!");
         }
@@ -220,6 +236,7 @@ impl WindowBorder {
     }
 
     pub fn get_frame_rect(&mut self) -> Result<()> {
+        unsafe { println!("m_tracking_window: {:?}", self.m_tracking_window) };
         if unsafe { DwmGetWindowAttribute(self.m_tracking_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
             println!("Error getting frame rect!");
         }
@@ -313,7 +330,10 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn update(&mut self, factory: &ID2D1Factory) {
+    pub fn update(&mut self) {
+        let factory: &ID2D1Factory = &*FACTORY;
+        //let factory_pointer = FACTORY_POINTER.get().unwrap();
+        //let before = std::time::Instant::now();
         let old_rect = self.window_rect.clone();
         self.get_frame_rect();
         // Below is just proof of concept, should probably implement an equals function in the
@@ -331,8 +351,10 @@ impl WindowBorder {
                     self.window_rect.bottom - self.window_rect.top,
                     SWP_NOREDRAW | SWP_NOACTIVATE
                 );
+
+                self.render(factory);
             }
-            self.render(factory);
+            //println!("Elapsed time (update): {:.2?}", before.elapsed());
         }
         /*unsafe {
             let mut next_window = GetWindow(self.m_tracking_window, GW_HWNDNEXT).unwrap();
@@ -400,10 +422,14 @@ impl WindowBorder {
         }                                          
     }
 
-    // TODO these messages are the border window itself, which do nothing. I need to somehow get
-    // messages from the tracking window. Alternatively I can just put everything on a timer lol.
+    // TODO event_hook will send more messages than necessary if I do an action for long enough. I
+    // should find a way to fix that.
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
+            WM_MOVE => {
+                //println!("moving!");
+                self.update();
+            },
             WM_DESTROY => {
                 //Converting the pointer to a box seems to make the whole program exit so I think
                 //it's better if I just simply set the windowlongptrw to 0 manually like Microsoft
