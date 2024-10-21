@@ -36,7 +36,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 
 extern "C" {
-    static __ImageBase: IMAGE_DOS_HEADER;
+    pub static __ImageBase: IMAGE_DOS_HEADER;
 }
 
 pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -72,15 +72,7 @@ fn main() {
         visible_borders = new_visible_borders;
     }*/
     unsafe {
-        /*SetWinEventHook(
-            EVENT_MIN,
-            EVENT_MAX,
-            None,
-            Some(event_hook::handle_win_event_main),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-        );*/
+        set_event_hook();
         //TODO should check whether dpi_aware is true or not
         let dpi_aware = SetProcessDPIAware();
         println!("Entering message loop!");
@@ -92,6 +84,18 @@ fn main() {
         }
         println!("Potential error with message loop, exiting!");
     }
+}
+
+pub unsafe fn set_event_hook() {
+    SetWinEventHook(
+        EVENT_MIN,
+        EVENT_MAX,
+        None,
+        Some(event_hook::handle_win_event_main),
+        0,
+        0,
+        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+    );
 }
 
 pub fn enum_windows(){

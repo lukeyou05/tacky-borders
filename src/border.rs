@@ -79,8 +79,8 @@ impl WindowBorder {
             ..Default::default()
         };
         BORDER_POINTER.replace(Some(std::ptr::addr_of_mut!(border)));
-        println!("border_pointer (creation): {:?}", std::ptr::addr_of_mut!(border));
-        println!("m_tracking_window (creation): {:?}", border.m_tracking_window);
+        //println!("border_pointer (creation): {:?}", std::ptr::addr_of_mut!(border));
+        //println!("m_tracking_window (creation): {:?}", border.m_tracking_window);
         //TODO maybe check if dpi_aware is true or not
         let dpi_aware = unsafe { SetProcessDPIAware() };
 
@@ -186,7 +186,7 @@ impl WindowBorder {
 
             UpdateWindow(self.m_window);
 
-            self.win_event_hook = SetWinEventHook(
+            /*self.win_event_hook = SetWinEventHook(
                 EVENT_MIN,
                 EVENT_MAX,
                 None,
@@ -194,7 +194,7 @@ impl WindowBorder {
                 0,
                 GetWindowThreadProcessId(self.m_tracking_window, None),
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-            );
+            );*/
 
             // println!("self.m_window (from init): {:?}", self.m_window);
             self.create_render_targets();
@@ -221,13 +221,24 @@ impl WindowBorder {
             //TODO replace std::thread::sleep with a dedicated timer for the update function so
             //we don't miss any of the other messages.
             let mut message = MSG::default();
+
+            //let mut before = std::time::Instant::now();
+            //let idle = 15;
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 //let before = std::time::Instant::now();
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
+                /*if message.message != idle {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                    //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
+                }*/
+                if message.hwnd != self.m_window {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
                 //self.update(&factory);
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(std::time::Duration::from_millis(5));
                 //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
+                //before = std::time::Instant::now();
             }
             println!("Potential error with message loop, exiting!");
         }
@@ -236,7 +247,7 @@ impl WindowBorder {
     }
 
     pub fn get_frame_rect(&mut self) -> Result<()> {
-        unsafe { println!("m_tracking_window: {:?}", self.m_tracking_window) };
+        //unsafe { println!("m_tracking_window: {:?}", self.m_tracking_window) };
         if unsafe { DwmGetWindowAttribute(self.m_tracking_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
             println!("Error getting frame rect!");
         }
@@ -280,11 +291,16 @@ impl WindowBorder {
         };
 
         self.color = D2D1_COLOR_F { 
-            r: 152.0/255.0, 
-            g: 152.0/255.0, 
-            b: 152.0/255.0, 
+            r: 0.0, 
+            g: 0.0, 
+            b: 0.0, 
             a: 1.0 
         };
+        if unsafe { GetForegroundWindow() } == self.m_tracking_window {
+            self.set_color(true);
+        } else {
+            self.set_color(false);
+        }
     }
 
     pub fn render(&mut self, factory: &ID2D1Factory) -> Result<()> {
@@ -331,14 +347,27 @@ impl WindowBorder {
     }
 
     pub fn update(&mut self) {
-        let factory: &ID2D1Factory = &*FACTORY;
         //let factory_pointer = FACTORY_POINTER.get().unwrap();
         //let before = std::time::Instant::now();
+        let factory: &ID2D1Factory = &*FACTORY;
         let old_rect = self.window_rect.clone();
         self.get_frame_rect();
+        unsafe {
+            SetWindowPos(self.m_window,
+                self.m_tracking_window,
+                self.window_rect.left,
+                self.window_rect.top,
+                self.window_rect.right - self.window_rect.left,
+                self.window_rect.bottom - self.window_rect.top,
+                SWP_NOREDRAW | SWP_NOACTIVATE
+            );
+
+            self.render(factory);
+        }
+        //println!("Elapsed time (update): {:.2?}", before.elapsed());
         // Below is just proof of concept, should probably implement an equals function in the
         // future.
-        if old_rect.top != self.window_rect.top ||
+        /*if old_rect.top != self.window_rect.top ||
             old_rect.right != self.window_rect.right ||
             old_rect.left != self.window_rect.left ||
             old_rect.bottom != self.window_rect.bottom {
@@ -354,8 +383,7 @@ impl WindowBorder {
 
                 self.render(factory);
             }
-            //println!("Elapsed time (update): {:.2?}", before.elapsed());
-        }
+        }*/
         /*unsafe {
             let mut next_window = GetWindow(self.m_tracking_window, GW_HWNDNEXT).unwrap();
             while !IsWindowVisible(next_window).as_bool() {
@@ -391,13 +419,27 @@ impl WindowBorder {
         }
     }
 
-    pub fn set_color(&mut self, r: f32, g: f32, b: f32, factory: &ID2D1Factory) {
-        println!("Changing colors!");
-        self.color.r = r;
-        self.color.g = g;
-        self.color.b = b;
-        self.get_frame_rect();
-        self.render(&factory);
+    pub fn set_color(&mut self, focus: bool) {
+        //println!("Changing colors!");
+        let mut pcr_colorization: u32 = 0;
+        let mut pf_opaqueblend: BOOL = BOOL(0);
+        //TODO should check whether DwmGetColorzationColor was successful or not. 
+        unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
+
+        let r = ((pcr_colorization & 0x00FF0000) >> 16) as f32;
+        let g = ((pcr_colorization & 0x0000FF00) >> 8) as f32;
+        let b = ((pcr_colorization & 0x000000FF) >> 0) as f32;
+
+        if focus {
+            self.color.r = r/255.0;
+            self.color.g = g/255.0;
+            self.color.b = b/255.0;
+        } else {
+            self.color.r = r/255.0/1.5;
+            self.color.g = g/255.0/1.5;
+            self.color.b = b/255.0/1.5;
+        }
+        self.update();
     }
 
     // When CreateWindowExW is called, we can optinally pass a value to its last field which will
@@ -425,10 +467,36 @@ impl WindowBorder {
     // TODO event_hook will send more messages than necessary if I do an action for long enough. I
     // should find a way to fix that.
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        //println!("message: {:?}", message);
         match message {
             WM_MOVE => {
+                //let before = std::time::Instant::now();
                 //println!("moving!");
+
+                // Jump into another message loop with no sleep so as to maximize draw fps.
+                /*let mut message = MSG::default();
+                while GetMessageW(&mut message, HWND::default(), 0, 0).into() && message.message == WM_MOVE {
+                    println!("Moving");
+                    self.update();
+                    //GetMessageW(&mut message, HWND::default(), 0, 0);
+                }*/
                 self.update();
+                //println!("time elapsed: {:.2?}", before.elapsed());
+            },
+            //TODO maybe switch out WM_MOVE with WM_WINDOWPOSCHANGING because that seems like the
+            //more correct way to do it. However, if I do it that way, I have to pass a WINDOWPOS
+            //structure which I'm too lazy to deal with right now.
+            //WM_WINDOWPOSCHANGING => { self.update() },
+            //WM_WINDOWPOSCHANGED => { self.update() },
+            WM_SETFOCUS => {
+                //println!("Focus set: {:?}", self.m_tracking_window);
+                self.set_pos();
+                self.set_color(true); 
+            },
+            WM_KILLFOCUS => {
+                //println!("Focus killed: {:?}", self.m_tracking_window);
+                self.set_pos();
+                self.set_color(false);
             },
             WM_DESTROY => {
                 //Converting the pointer to a box seems to make the whole program exit so I think
@@ -443,7 +511,7 @@ impl WindowBorder {
                 //UnhookWinEvent(self.win_event_hook);
                 PostQuitMessage(0);
             },
-            _ => {}
+            _ => { /*std::thread::sleep(std::time::Duration::from_millis(10))*/ }
         }
         LRESULT(0)
     }
