@@ -80,9 +80,9 @@ fn main() {
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
             TranslateMessage(&message);
             DispatchMessageW(&message);
-            std::thread::sleep(std::time::Duration::from_millis(10))
+            std::thread::sleep(std::time::Duration::from_millis(100))
         }
-        println!("Potential error with message loop, exiting!");
+        println!("MESSSAGE LOOP IN MAIN.RS EXITED, SHOULD NOT HAPPEN");
     }
 }
 
@@ -99,7 +99,6 @@ pub unsafe fn set_event_hook() {
 }
 
 pub fn enum_windows(){
-    println!("In apply_colors!");
     let mut windows: Vec<HWND> = Vec::new();
     //let mut borders = Arc::new(Mutex::new(Vec::new()));
     unsafe {
@@ -112,7 +111,7 @@ pub fn enum_windows(){
     println!("Windows: {:?}", windows);
 
     for hwnd in windows {
-        println!("Iterating over windows");
+        //println!("Iterating over windows");
         unsafe {
             println!("creating hwnd: {:?}", hwnd);
             /*let active = GetForegroundWindow();
@@ -131,7 +130,7 @@ pub fn enum_windows(){
                 println!("{:X}\n", rgb_red);
             }*/
             
-            if IsWindowVisible(hwnd).as_bool() {
+            /*if IsWindowVisible(hwnd).as_bool() {
                 let window = SendHWND(hwnd);
                 let borders = unsafe{ &*BORDERS };
 
@@ -151,10 +150,32 @@ pub fn enum_windows(){
                     border.init(m_hinstance);
 
                     //assign_border(send);
-                    println!("Exiting thread! Possibly panicked?");
+                    println!("Exiting thread! Perhaps window closed?");
                     //std::thread::sleep(std::time::Duration::from_millis(100))
                 });
-            }
+            }*/
+            let window = SendHWND(hwnd);
+            let borders = unsafe{ &*BORDERS };
+
+            let thread = std::thread::spawn(move || {
+                // println!("Spawning thread! {:?}", send.0);
+                let mut borders_sent = borders.lock().unwrap();
+                let mut window_sent = window;
+
+                let mut border = border::WindowBorder::create(window_sent.0);
+
+                let window_isize = window_sent.0.0 as isize; 
+                let border_isize = std::ptr::addr_of!(border) as isize;
+                borders_sent.entry(window_isize).or_insert(border_isize);
+                drop(borders_sent);
+
+                let m_hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
+                border.init(m_hinstance);
+
+                //assign_border(send);
+                println!("Exiting thread! Perhaps window closed?");
+                //std::thread::sleep(std::time::Duration::from_millis(100))
+            });
         }
     }
     /*let send = SendHWND(*test);
@@ -218,6 +239,16 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
             visible_windows.push(hwnd);
         }
     }
+    /*let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+
+    // Exclude certain window styles like WS_EX_TOOLWINDOW
+    if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 {
+        let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
+        //println!("lparam: {:?}", lparam.0);
+        println!("visible_windows: {:?}", visible_windows);
+        visible_windows.push(hwnd);
+    }*/
 
   BOOL(1)
 }

@@ -34,6 +34,7 @@ thread_local! {
 const SW_SHOWNA: i32 = 8;
 
 pub static FACTORY: LazyLock<ID2D1Factory> = unsafe { LazyLock::new(|| D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None).expect("REASON")) };
+//pub static m_render_target = FACTORY.CreateHwndRenderTarget(Default::default, Default::default).expect("REASON");
 
 /*#[derive(Debug, Default, Copy, Clone)]
 pub struct RECT {
@@ -57,6 +58,7 @@ pub struct WindowBorder {
     pub m_border_brush: D2D1_BRUSH_PROPERTIES,
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub color: D2D1_COLOR_F,
+    //pub hwnd_render_target: ID2D1HwndRenderTarget,
     //pub factory: &'static ID2D1Factory,
 }
 
@@ -181,8 +183,10 @@ impl WindowBorder {
             // I doubt the code below is functioning properly (the std::mem::transmute(&val))
             DwmSetWindowAttribute(self.m_window, DWMWA_EXCLUDED_FROM_PEEK, std::mem::transmute(&val), size_of::<BOOL>() as u32);
             //println!("pointer to BOOL: {:?} {:?}", &val, std::mem::transmute::<&BOOL, isize>(&val));
-
-            ShowWindow(self.m_window, SHOW_WINDOW_CMD(SW_SHOWNA));
+            
+            if IsWindowVisible(self.m_tracking_window).as_bool() {
+                ShowWindow(self.m_window, SHOW_WINDOW_CMD(SW_SHOWNA));
+            }
 
             UpdateWindow(self.m_window);
 
@@ -232,6 +236,7 @@ impl WindowBorder {
                     //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
                 }*/
                 if message.hwnd != self.m_window {
+                    //println!("Dispatching message!");
                     TranslateMessage(&message);
                     DispatchMessageW(&message);
                 }
@@ -240,7 +245,7 @@ impl WindowBorder {
                 //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
                 //before = std::time::Instant::now();
             }
-            println!("Potential error with message loop, exiting!");
+            println!("Exiting message loop (border window)");
         }
 
         return Ok(());
@@ -251,6 +256,10 @@ impl WindowBorder {
         if unsafe { DwmGetWindowAttribute(self.m_tracking_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
             println!("Error getting frame rect!");
         }
+
+        /*if unsafe { GetWindowRect(self.m_tracking_window, &mut self.window_rect).is_err() } {
+            println!("Error getting frame rect!");
+        }*/
 
         self.window_rect.top -= self.border_size;
         self.window_rect.left -= self.border_size;
@@ -296,11 +305,7 @@ impl WindowBorder {
             b: 0.0, 
             a: 1.0 
         };
-        if unsafe { GetForegroundWindow() } == self.m_tracking_window {
-            self.set_color(true);
-        } else {
-            self.set_color(false);
-        }
+        self.update_color();
     }
 
     pub fn render(&mut self, factory: &ID2D1Factory) -> Result<()> {
@@ -406,7 +411,7 @@ impl WindowBorder {
         }*/
     }
 
-    pub fn set_pos(&mut self) {
+    pub fn update_pos(&mut self) {
         unsafe {
             SetWindowPos(self.m_window,
                 self.m_tracking_window,
@@ -419,7 +424,7 @@ impl WindowBorder {
         }
     }
 
-    pub fn set_color(&mut self, focus: bool) {
+    pub fn update_color(&mut self) {
         //println!("Changing colors!");
         let mut pcr_colorization: u32 = 0;
         let mut pf_opaqueblend: BOOL = BOOL(0);
@@ -430,7 +435,8 @@ impl WindowBorder {
         let g = ((pcr_colorization & 0x0000FF00) >> 8) as f32;
         let b = ((pcr_colorization & 0x000000FF) >> 0) as f32;
 
-        if focus {
+
+        if unsafe { GetForegroundWindow() } == self.m_tracking_window {
             self.color.r = r/255.0;
             self.color.g = g/255.0;
             self.color.b = b/255.0;
@@ -439,6 +445,7 @@ impl WindowBorder {
             self.color.g = g/255.0/1.5;
             self.color.b = b/255.0/1.5;
         }
+
         self.update();
     }
 
@@ -447,9 +454,9 @@ impl WindowBorder {
     // structure, and here we are getting that pointer and assigning it to the window using SetWindowLongPtrW.
     pub unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         //println!("Window Message: {:?}", message);
-        if message == WM_DESTROY {
+        /*if message == WM_DESTROY {
             println!("message == WM_DESTROY");
-        }
+        }*/
         let mut this_ref: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
         
         if this_ref == std::ptr::null_mut() && message == WM_CREATE {
@@ -490,13 +497,13 @@ impl WindowBorder {
             //WM_WINDOWPOSCHANGED => { self.update() },
             WM_SETFOCUS => {
                 //println!("Focus set: {:?}", self.m_tracking_window);
-                self.set_pos();
-                self.set_color(true); 
+                self.update_pos();
+                self.update_color();
             },
             WM_KILLFOCUS => {
                 //println!("Focus killed: {:?}", self.m_tracking_window);
-                self.set_pos();
-                self.set_color(false);
+                self.update_pos();
+                self.update_color();
             },
             WM_DESTROY => {
                 //Converting the pointer to a box seems to make the whole program exit so I think
