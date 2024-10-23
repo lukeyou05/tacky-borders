@@ -33,7 +33,7 @@ pub extern "system" fn handle_win_event_main(
     dw_event_thread: u32,
     dwms_event_time: u32,
 ) {
-    //let before = std::time::Instant::now();
+    let before = std::time::Instant::now();
     if id_object == OBJID_CURSOR.0 {
         return;
     }
@@ -46,12 +46,12 @@ pub extern "system" fn handle_win_event_main(
             let border_option = borders.get(&hwnd_isize);
             
             if border_option.is_some() {
-                //unsafe { UnhookWinEvent(h_win_event_hook) };
                 let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
+                unsafe { UnhookWinEvent(h_win_event_hook) };
                 unsafe { SendMessageW((*border_pointer).m_window, WM_MOVE, WPARAM(0), LPARAM(0)) };
-                //unsafe { set_event_hook(); }
+                unsafe { set_event_hook(); }
                 //std::thread::sleep(std::time::Duration::from_millis(8));
-                //println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
+                println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
             }
             drop(borders);
         },
@@ -67,42 +67,6 @@ pub extern "system" fn handle_win_event_main(
                 unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
             }
             //unsafe { set_event_hook(); }
-        },
-        // Destroying the border everytime it is hidden may increase CPU usage (or maybe not
-        // because there are no longer unnecessary message loops), but it will save memory.
-        EVENT_OBJECT_HIDE => {
-            /*let mutex = unsafe { &*BORDERS };
-            let borders = mutex.lock().unwrap();
-            let hwnd_isize = hwnd.0 as isize;
-            //println!("borders: {:?}", borders);
-            //println!("hwnd_isize: {:?}", hwnd_isize);
-            //println!("hwnd: {:?}", hwnd);
-            let border_option = borders.get(&hwnd_isize);
-
-            if borders.contains_key(&hwnd_isize) {  
-                unsafe {
-                    let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                    ShowWindow((*border_pointer).m_window, SW_HIDE);
-                }
-            }*/
-            let mutex = unsafe { &*BORDERS };
-            let mut borders = mutex.lock().unwrap();
-            let hwnd_isize = hwnd.0 as isize;
-            let border_option = borders.get(&hwnd_isize);
-            //println!("borders before: {:?}", borders);
-
-            // I have to explicitly check IsWindowVisible because for whatever fucking reason,
-            // EVENT_OBJECT_HIDE is sent even when the window is still visible.
-            if borders.contains_key(&hwnd_isize) && unsafe { !IsWindowVisible(hwnd).as_bool() } {
-                //unsafe { UnhookWinEvent(h_win_event_hook) };
-                let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                unsafe { SendMessageW((*border_pointer).m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
-                //println!("Destroyed");
-                borders.remove(&hwnd_isize);
-                //println!("borders after: {:?}", borders);
-                //unsafe { set_event_hook(); }
-            }
-            drop(borders);
         },
         //TODO code is a mess with the locking and dropping of mutexes
         EVENT_OBJECT_SHOW => {
@@ -162,7 +126,57 @@ pub extern "system" fn handle_win_event_main(
                 drop(borders);
             }
         },
-        EVENT_OBJECT_DESTROY => {
+        // Destroying the border everytime it is hidden may increase CPU usage (or maybe not
+        // because there are no longer unnecessary message loops), but it will save memory.
+        EVENT_OBJECT_HIDE => {
+            /*let mutex = unsafe { &*BORDERS };
+            let borders = mutex.lock().unwrap();
+            let hwnd_isize = hwnd.0 as isize;
+            //println!("borders: {:?}", borders);
+            //println!("hwnd_isize: {:?}", hwnd_isize);
+            //println!("hwnd: {:?}", hwnd);
+            let border_option = borders.get(&hwnd_isize);
+
+            if borders.contains_key(&hwnd_isize) {  
+                unsafe {
+                    let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
+                    ShowWindow((*border_pointer).m_window, SW_HIDE);
+                }
+            }*/
+            let mutex = unsafe { &*BORDERS };
+            let mut borders = mutex.lock().unwrap();
+            let hwnd_isize = hwnd.0 as isize;
+            let border_option = borders.get(&hwnd_isize);
+
+            // I have to explicitly check IsWindowVisible because for whatever fucking reason,
+            // EVENT_OBJECT_HIDE is sent even when the window is still visible.
+            if borders.contains_key(&hwnd_isize) && unsafe { !IsWindowVisible(hwnd).as_bool() } {
+                let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
+                let border_hwnd = unsafe { SendHWND((*border_pointer).m_window) };
+                drop(borders);
+
+                // Due to the fact that these callback functions can be re-entered, I can just
+                // spawn a new thread here to ensure the border gets destroyed even if re-entrancy
+                // happens.
+                let thread = std::thread::spawn(move || {
+                    let border_hwnd_sent = border_hwnd;
+                    let mut borders = mutex.lock().unwrap();
+                    unsafe { SendMessageW(border_hwnd_sent.0, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+                    borders.remove(&hwnd_isize);
+                    drop(borders);
+                });
+                return;
+                /*//unsafe { UnhookWinEvent(h_win_event_hook) };
+
+                let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
+                unsafe { SendMessageW((*border_pointer).m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+                borders.remove(&hwnd_isize);
+
+                //unsafe { set_event_hook(); }*/
+            }
+            drop(borders);
+        },
+        /*EVENT_OBJECT_DESTROY => {
             let mutex = unsafe { &*BORDERS };
             let mut borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
@@ -171,13 +185,14 @@ pub extern "system" fn handle_win_event_main(
             if borders.contains_key(&hwnd_isize) {
                 //unsafe { UnhookWinEvent(h_win_event_hook) };
                 let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                unsafe { SendMessageW((*border_pointer).m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+                let border_m_window = unsafe { (*border_pointer).m_window };
+                unsafe { SendMessageW(border_m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
                 //println!("Destroyed");
                 borders.remove(&hwnd_isize);
                 //unsafe { set_event_hook(); }
             }
             drop(borders);
-        },
+        },*/
         //TODO prevent reentrancy for this too (though I already have a workaround in place but it
         //breaks with flow launcher)
         /*EVENT_OBJECT_CREATE => {
