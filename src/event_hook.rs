@@ -19,81 +19,10 @@ use windows::{
 };
 
 use crate::border::WindowBorder;
-use crate::border::BORDER_POINTER;
-use crate::border::FACTORY_POINTER;
 use crate::BORDERS;
 use crate::set_event_hook;
 use crate::SendHWND;
 use crate::__ImageBase;
-//use crate::FACTORY;
-
-/*pub extern "system" fn handle_win_event(
-    h_win_event_hook: HWINEVENTHOOK,
-    event: u32,
-    hwnd: HWND,
-    id_object: i32,
-    id_child: i32,
-    dw_event_thread: u32,
-    dwms_event_time: u32,
-) {
-    if id_object == OBJID_CURSOR.0 {
-        return;
-    }
-    match event {
-        EVENT_OBJECT_LOCATIONCHANGE => {
-            let border_pointer = BORDER_POINTER.get().unwrap();
-            println!("border_pointer: {:?}", border_pointer);
-            let factory_pointer = FACTORY_POINTER.get().unwrap();
-            //Pretty unsafe code but ehhh it's probably fine I'm a C programmer at heart anyways
-            //(not that I was ever a good one).
-            //unsafe { println!("m_tracking_window: {:?}", (*border_pointer).m_tracking_window) };
-            unsafe { (*border_pointer).update(&*factory_pointer) };
-        },
-        EVENT_SYSTEM_FOREGROUND => {
-            println!("focus? {:?}", hwnd);
-            let border_pointer = BORDER_POINTER.get().unwrap();
-            let factory_pointer = FACTORY_POINTER.get().unwrap();
-            unsafe { (*border_pointer).set_pos() };
-
-            // TODO Code below doesn't work. I think I can just move this into the border structure
-            // itself (specifically in the update function) and maybe add a bool to the arguments
-            // of update to signify whether I want to reset border color/position or not.
-            /*let focused_window = unsafe { GetForegroundWindow() };
-            println!("focused_window: {:?}", focused_window);
-            match unsafe{ (*border_pointer).m_tracking_window } {
-                focused_window => {
-                    let r: f32 = 152.0/255.0;
-                    let g: f32 = 152.0/255.0;
-                    let b: f32 = 152.0/255.0;
-                    unsafe { (*border_pointer).set_color(r, g, b, &(*factory_pointer)) };
-                },
-                _ => {
-                    let r: f32 = 80.0/255.0;
-                    let g: f32 = 80.0/255.0;
-                    let b: f32 = 80.0/255.0;
-                    unsafe { (*border_pointer).set_color(r, g, b, &(*factory_pointer)) };
-                }
-            }*/
-        },
-        EVENT_OBJECT_HIDE => {
-            let border_pointer = BORDER_POINTER.get().unwrap();
-            unsafe { ShowWindow((*border_pointer).m_window, SW_HIDE) };
-        },
-        EVENT_OBJECT_SHOW => {
-            let border_pointer = BORDER_POINTER.get().unwrap();
-            unsafe { ShowWindow((*border_pointer).m_window, SW_SHOWNA) };
-        },
-        EVENT_OBJECT_DESTROY => {
-            let mut border_pointer = BORDER_POINTER.get().unwrap();
-            let hwnd = unsafe{ (*border_pointer).m_window };
-            println!("Destroying border window! {:?}", hwnd);
-            unsafe { DestroyWindow(hwnd) };
-        },
-        _ => {}
-    }
-    //println!("HWINEVENTHOOK: {:?}", h_win_event_hook);
-    //std::thread::sleep(std::time::Duration::from_millis(100));
-}*/
 
 pub extern "system" fn handle_win_event_main(
     h_win_event_hook: HWINEVENTHOOK,
@@ -119,13 +48,6 @@ pub extern "system" fn handle_win_event_main(
             if border_option.is_some() {
                 //unsafe { UnhookWinEvent(h_win_event_hook) };
                 let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                //println!("hwnd: {:?}", hwnd);
-                //unsafe { println!("m_window: {:?}", (*border_pointer).m_window) };
-                //println!("Sending message!");
-                /*let test = unsafe { PostMessageW((*border_pointer).m_window, WM_MOVE, WPARAM(0), LPARAM(0)) };
-                if !test.is_ok() {
-                    println!("Failed to send message");
-                }*/
                 unsafe { SendMessageW((*border_pointer).m_window, WM_MOVE, WPARAM(0), LPARAM(0)) };
                 //unsafe { set_event_hook(); }
                 //std::thread::sleep(std::time::Duration::from_millis(8));
@@ -133,24 +55,23 @@ pub extern "system" fn handle_win_event_main(
             }
             drop(borders);
         },
-        EVENT_OBJECT_DESTROY => {
+        EVENT_OBJECT_FOCUS => {
             let mutex = unsafe { &*BORDERS };
-            let mut borders = mutex.lock().unwrap();
+            let borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
-            let border_option = borders.get(&hwnd_isize);
-
-            if borders.contains_key(&hwnd_isize) {
-                //unsafe { UnhookWinEvent(h_win_event_hook) };
-                let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                unsafe { SendMessageW((*border_pointer).m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
-                //println!("Destroyed");
-                borders.remove(&hwnd_isize);
-                //unsafe { set_event_hook(); }
+            
+            //unsafe { UnhookWinEvent(h_win_event_hook) };
+            for key in borders.keys() {
+                let border_pointer: *mut WindowBorder = *borders.get(&key).unwrap() as *mut _;
+                let border_hwnd = unsafe { (*border_pointer).m_window };
+                unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
             }
-            drop(borders);
+            //unsafe { set_event_hook(); }
         },
+        // Destroying the border everytime it is hidden may increase CPU usage (or maybe not
+        // because there are no longer unnecessary message loops), but it will save memory.
         EVENT_OBJECT_HIDE => {
-            let mutex = unsafe { &*BORDERS };
+            /*let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
             //println!("borders: {:?}", borders);
@@ -160,72 +81,29 @@ pub extern "system" fn handle_win_event_main(
 
             if borders.contains_key(&hwnd_isize) {  
                 unsafe {
-                    //println!("contains_key: {:?}", hwnd);
-                    //UnhookWinEvent(h_win_event_hook);
                     let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
                     ShowWindow((*border_pointer).m_window, SW_HIDE);
-                    /*SetWinEventHook(
-                        EVENT_MIN,
-                        EVENT_MAX,
-                        None,
-                        Some(handle_win_event_main),
-                        0,
-                        0,
-                        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-                    );*/
                 }
-            }
-        },
-        // TODO am trying to get it to work with file explorer but it not work.
-        EVENT_SYSTEM_MINIMIZESTART => {
+            }*/
             let mutex = unsafe { &*BORDERS };
-            let borders = mutex.lock().unwrap();
-            let hwnd_isize = hwnd.0 as isize;
-            //println!("borders: {:?}", borders);
-            //println!("hwnd_isize: {:?}", hwnd_isize);
-            println!("hwnd: {:?}", hwnd);
-            let border_option = borders.get(&hwnd_isize);
-
-            if borders.contains_key(&hwnd_isize) {  
-                unsafe {
-                    println!("contains_key: {:?}", hwnd);
-                    //UnhookWinEvent(h_win_event_hook);
-                    let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                    ShowWindow((*border_pointer).m_window, SW_HIDE);
-                    /*SetWinEventHook(
-                        EVENT_MIN,
-                        EVENT_MAX,
-                        None,
-                        Some(handle_win_event_main),
-                        0,
-                        0,
-                        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-                    );*/
-                }
-            }
-        },
-        EVENT_SYSTEM_MINIMIZEEND => {
-            let mutex = unsafe { &*BORDERS };
-            let borders = mutex.lock().unwrap();
+            let mut borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
             let border_option = borders.get(&hwnd_isize);
+            //println!("borders before: {:?}", borders);
 
-            if borders.contains_key(&hwnd_isize) {
-                unsafe {
-                    let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                    ShowWindow((*border_pointer).m_window, SW_SHOWNA);
-                }
+            // I have to explicitly check IsWindowVisible because for whatever fucking reason,
+            // EVENT_OBJECT_HIDE is sent even when the window is still visible.
+            if borders.contains_key(&hwnd_isize) && unsafe { !IsWindowVisible(hwnd).as_bool() } {
+                //unsafe { UnhookWinEvent(h_win_event_hook) };
+                let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
+                unsafe { SendMessageW((*border_pointer).m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+                //println!("Destroyed");
+                borders.remove(&hwnd_isize);
+                //println!("borders after: {:?}", borders);
+                //unsafe { set_event_hook(); }
             }
-            for key in borders.keys() {
-                let border_pointer: *mut WindowBorder = *borders.get(&key).unwrap() as *mut _;
-                let border_hwnd = unsafe { (*border_pointer).m_window };
-
-                unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
-            }
+            drop(borders);
         },
-        EVENT_OBJECT_STATECHANGE => {
-            //println!("STATE CHANGE!");
-        }
         //TODO code is a mess with the locking and dropping of mutexes
         EVENT_OBJECT_SHOW => {
             let mutex = unsafe { &*BORDERS };
@@ -250,8 +128,7 @@ pub extern "system" fn handle_win_event_main(
                 let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
                 let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
 
-                if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_POPUP.0 != 0 || style & WS_CHILD.0 != 0 {
-                    //println!("returning 2: {:?}", hwnd);
+                if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_CHILD.0 != 0 {
                     return;
                 }
 
@@ -266,7 +143,9 @@ pub extern "system" fn handle_win_event_main(
 
                     // Check to see if the key already exists in the hashmap. If not, then continue
                     // adding the key and initializing the border
+                    //println!("borders: {:?}", borders_sent);
                     if borders_sent.contains_key(&window_isize) {
+                        println!("Duplicate window!");
                         return;
                     }
                     borders_sent.entry(window_isize).or_insert(border_isize);
@@ -277,52 +156,36 @@ pub extern "system" fn handle_win_event_main(
                     let m_hinstance: HINSTANCE = unsafe{ std::mem::transmute(&__ImageBase) };
                     border.init(m_hinstance);
 
-                    println!("Exiting thread! Perhaps window closed?");
+                    //println!("Exiting thread! Perhaps window closed?");
                 });
             } else {
                 drop(borders);
             }
-            /*for key in borders.keys() {
-                let border_pointer: *mut WindowBorder = *borders.get(&key).unwrap() as *mut _;
-                let border_hwnd = unsafe { (*border_pointer).m_window };
-
-                /*if *key == hwnd_isize {
-                    unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
-                } else {
-                    unsafe { SendMessageW(border_hwnd, WM_KILLFOCUS, WPARAM(0), LPARAM(0)) };
-                }*/
-                unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
-            }*/
         },
-        EVENT_OBJECT_FOCUS => {
+        EVENT_OBJECT_DESTROY => {
             let mutex = unsafe { &*BORDERS };
-            let borders = mutex.lock().unwrap();
+            let mut borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
-            //println!("hwnd: {:?}", hwnd);
-            
-            //unsafe { UnhookWinEvent(h_win_event_hook) };
-            for key in borders.keys() {
-                let border_pointer: *mut WindowBorder = *borders.get(&key).unwrap() as *mut _;
-                let border_hwnd = unsafe { (*border_pointer).m_window };
+            let border_option = borders.get(&hwnd_isize);
 
-                /*if *key == hwnd_isize {
-                    unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
-                } else {
-                    unsafe { SendMessageW(border_hwnd, WM_KILLFOCUS, WPARAM(0), LPARAM(0)) };
-                }*/
-                unsafe { SendMessageW(border_hwnd, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
+            if borders.contains_key(&hwnd_isize) {
+                //unsafe { UnhookWinEvent(h_win_event_hook) };
+                let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
+                unsafe { SendMessageW((*border_pointer).m_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+                //println!("Destroyed");
+                borders.remove(&hwnd_isize);
+                //unsafe { set_event_hook(); }
             }
-            //unsafe { set_event_hook(); }
+            drop(borders);
         },
         //TODO prevent reentrancy for this too (though I already have a workaround in place but it
         //breaks with flow launcher)
-        EVENT_OBJECT_CREATE => {
+        /*EVENT_OBJECT_CREATE => {
             // Check if the window is a tool window or popup
             let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
             let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
 
-            if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_POPUP.0 != 0 || style & WS_CHILD.0 != 0 {
-                //println!("returning 2: {:?}", hwnd);
+            if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_CHILD.0 != 0 {
                 return;
             }
 
@@ -348,6 +211,7 @@ pub extern "system" fn handle_win_event_main(
                 // Check to see if the key already exists in the hashmap. If not, then continue
                 // adding the key and initializing the border
                 if borders_sent.contains_key(&window_isize) {
+                    println!("Duplicate window!");
                     return;
                 }
                 borders_sent.entry(window_isize).or_insert(border_isize);
@@ -358,9 +222,9 @@ pub extern "system" fn handle_win_event_main(
                 let m_hinstance: HINSTANCE = unsafe{ std::mem::transmute(&__ImageBase) };
                 border.init(m_hinstance);
 
-                println!("Exiting thread! Perhaps window closed?");
+                //println!("Exiting thread! Perhaps window closed?");
             });
-        },
+        },*/
         _ => {}
     }
 }

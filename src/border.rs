@@ -26,23 +26,10 @@ use std::sync::LazyLock;
 /*use crate::drawer::*;*/
 use crate::event_hook;
 
-thread_local! {
-    pub static BORDER_POINTER: Cell<Option<*mut WindowBorder>> = Cell::new(None);
-    pub static FACTORY_POINTER: Cell<Option<*const ID2D1Factory>> = Cell::new(None);
-}
-
 const SW_SHOWNA: i32 = 8;
 
 pub static FACTORY: LazyLock<ID2D1Factory> = unsafe { LazyLock::new(|| D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None).expect("REASON")) };
 //pub static m_render_target = FACTORY.CreateHwndRenderTarget(Default::default, Default::default).expect("REASON");
-
-/*#[derive(Debug, Default, Copy, Clone)]
-pub struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}*/
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct WindowBorder {
@@ -64,68 +51,31 @@ pub struct WindowBorder {
 
 impl WindowBorder {
     pub fn create(window: HWND) -> WindowBorder {
-        // let mut border: Box<WindowBorder> = Box::new(WindowBorder { m_window: HWND::default(), m_tracking_window: window } );
-        //static DEBUG_LEVEL: D2D1_DEBUG_LEVEL = D2D1_DEBUG_LEVEL(0);
-        //static FACTORY_OPTIONS: D2D1_FACTORY_OPTIONS = D2D1_FACTORY_OPTIONS { debugLevel: DEBUG_LEVEL };
-        //static FACTORY_OPTIONS_POINTER: &'static D2D1_FACTORY_OPTIONS = &FACTORY_OPTIONS;
-        //static factory_init: ID2D1Factory = unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(FACTORY_OPTIONS_POINTER)).expect("REASON") };
-        //static FACTORY_POINTER: &ID2D1Factory = &*FACTORY;
         let mut border = WindowBorder { 
             m_window: HWND::default(), 
             m_tracking_window: window, 
             window_rect: RECT::default(), 
             border_size: 4, 
             border_offset: 1,
-            //factory: &factory_init,
-            //..unsafe{std::mem::zeroed()}
             ..Default::default()
         };
-        BORDER_POINTER.replace(Some(std::ptr::addr_of_mut!(border)));
-        //println!("border_pointer (creation): {:?}", std::ptr::addr_of_mut!(border));
-        //println!("m_tracking_window (creation): {:?}", border.m_tracking_window);
+
         //TODO maybe check if dpi_aware is true or not
         let dpi_aware = unsafe { SetProcessDPIAware() };
-
-        //println!("hinstance: {:?}", hinstance);
-        //println!("border.m_window: {:?}", border.m_window);
-        //println!("border.m_tracking_window: {:?}", border.m_tracking_window);
-
-        // The lines below are currently useless because if a WindowBorder is successfully
-        // initialized, it will be in a message loop and will never reach this part of the code.
-        /*match WindowBorder::init(&mut border, hinstance) {
-            Ok(val) => return border,
-            Err(err) => println!("Error! {}", err),
-        }*/
 
         return border;
     }
 
     pub fn init(&mut self, hinstance: HINSTANCE) -> Result<()> {
-        /*let window_rect_opt: Option<RECT> = match self.m_tracking_window {
-            Some(x) => get_frame_rect(x),
-            None => return false,
-        };*/
-
         if self.m_tracking_window.is_invalid() {
-            /*return Err();*/
             println!("Error at m_tracking_window!");
         }
 
         self.get_frame_rect()?;
 
-        /*let window_rect: RECT;
-        match window_rect_opt {
-            Some(val) => window_rect = val,
-            /*None => return Err(),*/
-            None => return Ok(()),
-        };*/
-
-        // println!("window_rect: {:?}", window_rect);
-
         unsafe {
             self.m_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
-                /*WS_EX_TOPMOST | WS_EX_TOOLWINDOW,*/
                 w!("tacky-border"),
                 w!("tacky-border"),
                 WS_POPUP | WS_DISABLED,
@@ -139,11 +89,8 @@ impl WindowBorder {
                 Some(std::mem::transmute(&mut *self))
             )?;
 
-            // println!("self: {:?}", self);
-
             // make window transparent
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
-            //println!("pos: {:?}", pos);
             let hrgn = CreateRectRgn(pos, 0, (pos + 1), 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
             if !hrgn.is_invalid() {
@@ -180,72 +127,44 @@ impl WindowBorder {
             
             let val: BOOL = TRUE;
 
-            // I doubt the code below is functioning properly (the std::mem::transmute(&val))
-            DwmSetWindowAttribute(self.m_window, DWMWA_EXCLUDED_FROM_PEEK, std::mem::transmute(&val), size_of::<BOOL>() as u32);
-            //println!("pointer to BOOL: {:?} {:?}", &val, std::mem::transmute::<&BOOL, isize>(&val));
+            let result = DwmSetWindowAttribute(self.m_window, DWMWA_EXCLUDED_FROM_PEEK, std::ptr::addr_of!(val) as *const c_void, size_of::<BOOL>() as u32);
+            if result.is_err() {
+                println!("could not exclude border from peek");
+            }
+
+            // Make the native windows border transparent... for some reason it makes the borders
+            // uneven sizes...
+            let transparent = COLORREF(0xFFFFFFFF);
+            let result = DwmSetWindowAttribute(self.m_tracking_window, DWMWA_BORDER_COLOR, std::ptr::addr_of!(transparent) as *const c_void, size_of::<c_ulong>() as u32);
+            if result.is_err() {
+                println!("could not set native border color");
+            }
             
             if IsWindowVisible(self.m_tracking_window).as_bool() {
                 ShowWindow(self.m_window, SHOW_WINDOW_CMD(SW_SHOWNA));
             }
-
             UpdateWindow(self.m_window);
 
-            /*self.win_event_hook = SetWinEventHook(
-                EVENT_MIN,
-                EVENT_MAX,
-                None,
-                Some(event_hook::handle_win_event),
-                0,
-                GetWindowThreadProcessId(self.m_tracking_window, None),
-                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-            );*/
-
-            // println!("self.m_window (from init): {:?}", self.m_window);
             self.create_render_targets();
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
-            FACTORY_POINTER.replace(Some(std::ptr::addr_of!(factory)));
             self.render(&factory);
-            /*loop {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                /*self.get_frame_rect();
-                self.render(&factory);
-                SetWindowPos(self.m_window,
-                    self.m_tracking_window,
-                    self.window_rect.left,
-                    self.window_rect.top,
-                    self.window_rect.right - self.window_rect.left,
-                    self.window_rect.bottom - self.window_rect.top,
-                SWP_NOREDRAW | SWP_NOACTIVATE
-                );*/
-                self.update();
-            }*/
 
-            //println!("border hwnd: {:?}", self.m_window);
-            
-            //TODO replace std::thread::sleep with a dedicated timer for the update function so
-            //we don't miss any of the other messages.
+            //TODO idk how to feel about sleeping the thread bc if the event hook sends too many
+            //messages then this will continue processing all of them even after the event is over. 
             let mut message = MSG::default();
 
             //let mut before = std::time::Instant::now();
-            //let idle = 15;
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 //let before = std::time::Instant::now();
-                /*if message.message != idle {
-                    TranslateMessage(&message);
-                    DispatchMessageW(&message);
-                    //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
-                }*/
                 if message.hwnd != self.m_window {
                     //println!("Dispatching message!");
                     TranslateMessage(&message);
                     DispatchMessageW(&message);
                 }
-                //self.update(&factory);
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
                 //before = std::time::Instant::now();
             }
-            println!("Exiting message loop (border window)");
         }
 
         return Ok(());
@@ -309,13 +228,10 @@ impl WindowBorder {
     }
 
     pub fn render(&mut self, factory: &ID2D1Factory) -> Result<()> {
-        /*let render_target_size = D2D_SIZE_U { width: (client_rect.right - client_rect.left) as u32, height: (client_rect.bottom - client_rect.top) as u32 };*/
         self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U { 
             width: (self.window_rect.right - self.window_rect.left) as u32,
             height: (self.window_rect.bottom - self.window_rect.top) as u32
         };
-
-        //println!("hwnd_render_target_properties: {:?}", hwnd_render_target_properties);
 
         unsafe {
             let m_render_target = factory.CreateHwndRenderTarget(&self.render_target_properties, &self.hwnd_render_target_properties)?;
@@ -324,18 +240,14 @@ impl WindowBorder {
             //m_render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
             let m_brush = m_render_target.CreateSolidColorBrush(&self.color, Some(&self.m_border_brush))?;
-            //println!("m_brush: {:?}", color);
-
-            // Yes, the size calculations below are confusing, but they work, and that's all that
-            // really matters.
+            
+            // Goofy size calculations
             self.rounded_rect.rect = D2D_RECT_F { 
                 left: (self.border_size/2 + self.border_offset) as f32, 
                 top: (self.border_size/2 + self.border_offset) as f32, 
                 right: (self.window_rect.right - self.window_rect.left - self.border_size/2 - self.border_offset) as f32, 
                 bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 - self.border_offset) as f32
             };
-
-            //println!("m_render_target: {:?}", m_render_target);
 
             m_render_target.BeginDraw();
             m_render_target.Clear(None);
@@ -352,7 +264,6 @@ impl WindowBorder {
     }
 
     pub fn update(&mut self) {
-        //let factory_pointer = FACTORY_POINTER.get().unwrap();
         //let before = std::time::Instant::now();
         let factory: &ID2D1Factory = &*FACTORY;
         let old_rect = self.window_rect.clone();
@@ -370,45 +281,6 @@ impl WindowBorder {
             self.render(factory);
         }
         //println!("Elapsed time (update): {:.2?}", before.elapsed());
-        // Below is just proof of concept, should probably implement an equals function in the
-        // future.
-        /*if old_rect.top != self.window_rect.top ||
-            old_rect.right != self.window_rect.right ||
-            old_rect.left != self.window_rect.left ||
-            old_rect.bottom != self.window_rect.bottom {
-            unsafe {
-                SetWindowPos(self.m_window,
-                    self.m_tracking_window,
-                    self.window_rect.left,
-                    self.window_rect.top,
-                    self.window_rect.right - self.window_rect.left,
-                    self.window_rect.bottom - self.window_rect.top,
-                    SWP_NOREDRAW | SWP_NOACTIVATE
-                );
-
-                self.render(factory);
-            }
-        }*/
-        /*unsafe {
-            let mut next_window = GetWindow(self.m_tracking_window, GW_HWNDNEXT).unwrap();
-            while !IsWindowVisible(next_window).as_bool() {
-                next_window = GetWindow(self.m_tracking_window, GW_HWNDLAST).unwrap();
-            }
-            println!("next_window: {:?}", next_window);
-            println!("self.m_window: {:?}", self.m_window);
-            if IsWindowVisible(next_window).as_bool() && self.m_window != next_window {
-                println!("this thing!");
-                SetWindowPos(self.m_window,
-                    self.m_tracking_window,
-                    self.window_rect.left,
-                    self.window_rect.top,
-                    self.window_rect.right - self.window_rect.left,
-                    self.window_rect.bottom - self.window_rect.top,
-                    SWP_SHOWWINDOW 
-                );
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-            }
-        }*/
     }
 
     pub fn update_pos(&mut self) {
@@ -425,7 +297,6 @@ impl WindowBorder {
     }
 
     pub fn update_color(&mut self) {
-        //println!("Changing colors!");
         let mut pcr_colorization: u32 = 0;
         let mut pf_opaqueblend: BOOL = BOOL(0);
         //TODO should check whether DwmGetColorzationColor was successful or not. 
@@ -453,16 +324,11 @@ impl WindowBorder {
     // get sent to the window process on creation. In our code, we've passed a pointer to the border 
     // structure, and here we are getting that pointer and assigning it to the window using SetWindowLongPtrW.
     pub unsafe extern "system" fn s_wnd_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        //println!("Window Message: {:?}", message);
-        /*if message == WM_DESTROY {
-            println!("message == WM_DESTROY");
-        }*/
         let mut this_ref: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
         
         if this_ref == std::ptr::null_mut() && message == WM_CREATE {
             let create_struct: *mut CREATESTRUCTW = lparam.0 as *mut _;
             this_ref = (*create_struct).lpCreateParams as *mut _;
-            // println!("this_ref: {:?}", *this_ref);
             SetWindowLongPtrW(window, GWLP_USERDATA, this_ref as _);
         }
         match this_ref != std::ptr::null_mut() {
@@ -474,13 +340,11 @@ impl WindowBorder {
     // TODO event_hook will send more messages than necessary if I do an action for long enough. I
     // should find a way to fix that.
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        //println!("message: {:?}", message);
         match message {
             WM_MOVE => {
                 //let before = std::time::Instant::now();
-                //println!("moving!");
 
-                // Jump into another message loop with no sleep so as to maximize draw fps.
+                // Attempt to jump into another message loop with no sleep so as to maximize draw fps (doesn't work though).
                 /*let mut message = MSG::default();
                 while GetMessageW(&mut message, HWND::default(), 0, 0).into() && message.message == WM_MOVE {
                     println!("Moving");
@@ -491,7 +355,7 @@ impl WindowBorder {
                 //println!("time elapsed: {:.2?}", before.elapsed());
             },
             //TODO maybe switch out WM_MOVE with WM_WINDOWPOSCHANGING because that seems like the
-            //more correct way to do it. However, if I do it that way, I have to pass a WINDOWPOS
+            //more correct way to do it. But if I do it that way, I have to pass a WINDOWPOS
             //structure which I'm too lazy to deal with right now.
             //WM_WINDOWPOSCHANGING => { self.update() },
             //WM_WINDOWPOSCHANGED => { self.update() },
@@ -506,19 +370,10 @@ impl WindowBorder {
                 self.update_color();
             },
             WM_DESTROY => {
-                //Converting the pointer to a box seems to make the whole program exit so I think
-                //it's better if I just simply set the windowlongptrw to 0 manually like Microsoft
-                //does in PowerToys.
-                /*let ptr = GetWindowLongPtrW(window, GWLP_USERDATA) as *mut i32;
-                // Converting to a box like below means it will automatically clean up when it goes
-                // out of scope (I think). 
-                println!("Converting to box.");
-                let box_pointer = Box::from_raw(ptr);*/
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-                //UnhookWinEvent(self.win_event_hook);
                 PostQuitMessage(0);
             },
-            _ => { /*std::thread::sleep(std::time::Duration::from_millis(10))*/ }
+            _ => {}
         }
         LRESULT(0)
     }
