@@ -1,4 +1,4 @@
-/*#![windows_subsystem = "windows"]*/
+// TODO remove allow unused and fix all the warnings generated
 #![allow(unused)]
 
 use std::ffi::c_ulong;
@@ -6,12 +6,10 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::prelude::OsStringExt;
+use std::sync::{Arc, Mutex, LazyLock};
+use std::collections::HashMap;
 use core::ffi::c_void;
 use core::ffi::c_int;
-
-mod border;
-mod event_hook;
-
 use windows::{
     core::*,
     Win32::Foundation::*,
@@ -27,18 +25,17 @@ use windows::{
     Win32::UI::Accessibility::*,
 };
 
-use std::sync::{Arc, Mutex, LazyLock};
-use std::collections::HashMap;
-
 extern "C" {
     pub static __ImageBase: IMAGE_DOS_HEADER;
 }
+
+mod border;
+mod event_hook;
 
 pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // This shit supposedly unsafe af but it works so idgaf. 
 pub struct SendHWND(HWND);
-
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
@@ -50,9 +47,8 @@ fn main() {
     let mut borders = enum_windows();
 
     unsafe {
+        // TODO unhook on program close
         set_event_hook();
-        //TODO should check whether dpi_aware is true or not
-        let dpi_aware = SetProcessDPIAware();
 
         println!("Entering message loop!");
         let mut message = MSG::default();
@@ -63,101 +59,6 @@ fn main() {
         }
         println!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
     }
-}
-
-pub unsafe fn set_event_hook() {
-    SetWinEventHook(
-        EVENT_MIN,
-        EVENT_MAX,
-        None,
-        Some(event_hook::handle_win_event_main),
-        0,
-        0,
-        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-    );
-}
-
-pub fn enum_windows(){
-    let mut windows: Vec<HWND> = Vec::new();
-    unsafe {
-        EnumWindows(
-            Some(enum_windows_callback),
-            LPARAM(&mut windows as *mut _ as isize),
-        );
-    }
-    println!("Windows have been enumerated!");
-    println!("Windows: {:?}", windows);
-
-    for hwnd in windows {
-        unsafe {
-            println!("creating border for hwnd: {:?}", hwnd);
-            let window = SendHWND(hwnd);
-            let borders = unsafe{ &*BORDERS };
-
-            let thread = std::thread::spawn(move || {
-                let mut borders_sent = borders.lock().unwrap();
-                let mut window_sent = window;
-
-                let mut border = border::WindowBorder::create(window_sent.0);
-
-                let window_isize = window_sent.0.0 as isize; 
-                let border_isize = std::ptr::addr_of!(border) as isize;
-                borders_sent.entry(window_isize).or_insert(border_isize);
-                drop(borders_sent);
-
-                let m_hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
-                border.init(m_hinstance);
-
-                //println!("Exiting thread! Perhaps window closed?");
-            });
-        }
-    }
-}
-
-pub fn enum_borders() -> Vec<HWND> {
-    let mut borders: Vec<HWND> = Vec::new();
-    unsafe {
-        EnumWindows(
-            Some(enum_borders_callback),
-            LPARAM(&mut borders as *mut _ as isize),
-        );
-    }
-    return borders;
-}
-
-unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    if IsWindowVisible(hwnd).as_bool() {
-        //println!("In enum_windows_callback and window is visible!");
-        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-
-        // Exclude certain window styles
-        // TODO for some reason there are a few non-visible windows that aren't tool windows or
-        // child windows. They are however, popup windows, but I don't want to exclude ALL popup
-        // windows during the initial window creation process if possible.
-        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 {
-            let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
-            println!("visible_windows: {:?}", visible_windows);
-            visible_windows.push(hwnd);
-        }
-    }
-  BOOL(1)
-}
-
-unsafe extern "system" fn enum_borders_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    if IsWindowVisible(hwnd).as_bool() {
-        let mut class_name = vec![0u16; (MAX_PATH + 1).try_into().unwrap()];
-        println!("enum_borders_callback hwnd: {:?}", hwnd);
-        GetClassNameW(hwnd, &mut class_name);
-        let class = OsString::from_wide(&class_name).to_string_lossy().into_owned();
-        println!("enum_borders_callback class_name: {:?}", class);
-        let border_class = w!("tacky-border");
-        println!("enum_borders_callback border_class: {:?}", border_class);
-
-            let borders: &mut Vec<HWND> = std::mem::transmute(lparam.0);
-            borders.push(hwnd);
-    }
-    BOOL(1)
 }
 
 pub fn register_window_class() -> Result<()> {
@@ -173,9 +74,9 @@ pub fn register_window_class() -> Result<()> {
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             ..Default::default()
         };
-        let atom = RegisterClassExW(&wcex);
+        let result = RegisterClassExW(&wcex);
             
-        if atom == 0 {
+        if result == 0 {
             let last_error = GetLastError();
             println!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
         }
@@ -184,9 +85,86 @@ pub fn register_window_class() -> Result<()> {
     return Ok(());
 }
 
-#[link(name = "User32")]
-extern "system" {
-    /// [`DefWindowProcW`](https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-defwindowprocw)
-    pub fn DefWindowProcW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
-    pub fn ShowWindow(hWnd: HWND, nCmdShow: i32) -> BOOL;
+pub unsafe fn set_event_hook() {
+    SetWinEventHook(
+        EVENT_MIN,
+        EVENT_MAX,
+        None,
+        Some(event_hook::handle_win_event_main),
+        0,
+        0,
+        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+    );
+}
+
+pub fn enum_windows() {
+    let mut windows: Vec<HWND> = Vec::new();
+    unsafe {
+        EnumWindows(
+            Some(enum_windows_callback),
+            LPARAM(&mut windows as *mut _ as isize),
+        );
+    }
+    println!("Windows have been enumerated!");
+    println!("Windows: {:?}", windows);
+
+    for hwnd in windows {
+        spawn_border_thread(hwnd);
+    }
+}
+
+pub fn spawn_border_thread(tracking_window: HWND) {
+    let borders = unsafe { &*BORDERS };
+    let window = SendHWND(tracking_window);
+
+    let thread = std::thread::spawn(move || {
+        let mut window_sent = window;
+        let hinstance: HINSTANCE = unsafe{ std::mem::transmute(&__ImageBase) };
+
+        let mut border = border::WindowBorder { 
+            tracking_window: window_sent.0, 
+            border_size: 4, 
+            border_offset: 1,
+            ..Default::default()
+        };
+        border.create_border_window(hinstance);
+
+        let mut borders_sent = borders.lock().unwrap();
+        let window_isize = window_sent.0.0 as isize; 
+        let border_isize = border.border_window.0 as isize;
+
+        // Check to see if the key already exists in the hashmap. If not, then continue
+        // adding the key and initializing the border. This is important because sometimes, the
+        // event_hook function will call spawn_border_thread multiple times for the same window. 
+        if borders_sent.contains_key(&window_isize) {
+            println!("Duplicate window!");
+            return;
+        }
+        borders_sent.insert(window_isize, border_isize);
+        drop(borders_sent);
+ 
+        println!("Initializing border for window: {:?}", window_sent.0);
+        
+        //border.bruh(hinstance);
+        //println!("init hinstance: {:?}", hinstance);
+        border.init(hinstance);
+    });
+}
+
+unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if IsWindowVisible(hwnd).as_bool() {
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+
+        // Exclude certain window styles
+        // TODO for some reason there are a few non-visible windows that aren't tool windows or
+        // child windows. They are however, popup windows, but I don't want to exclude ALL popup
+        // windows during the initial window creation process if possible.
+        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 {
+            let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
+            println!("visible_windows: {:?}", visible_windows);
+            visible_windows.push(hwnd);
+        }
+    }
+  BOOL(1)
 }
