@@ -23,6 +23,15 @@ use crate::BORDERS;
 use crate::set_event_hook;
 use crate::SendHWND;
 use crate::__ImageBase;
+use std::time::Instant;
+use std::time::Duration;
+use std::sync::LazyLock;
+use std::cell::Cell;
+
+// TODO replace static mut with some sort of cell for more safe behavior.
+//static TIMER: Cell<LazyLock<Instant>> = Cell::new(LazyLock::new(|| Instant::now()));
+static mut TIMER: LazyLock<Instant> = LazyLock::new(|| Instant::now());
+const REFRESH_INTERVAL: Duration = Duration::from_millis(7);
 
 pub extern "system" fn handle_win_event_main(
     h_win_event_hook: HWINEVENTHOOK,
@@ -33,25 +42,41 @@ pub extern "system" fn handle_win_event_main(
     dw_event_thread: u32,
     dwms_event_time: u32,
 ) {
-    let before = std::time::Instant::now();
     if id_object == OBJID_CURSOR.0 {
         return;
     }
+    //let before = std::time::Instant::now();
     match event {
-        //TODO prevent reentrancy (especially for this location change because it can be called so often)
+        //TODO find a better way to prevent reentrancy (currently i have a workaround using a timer)
         EVENT_OBJECT_LOCATIONCHANGE => {
+            let timer = unsafe { &*TIMER };
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
             let border_option = borders.get(&hwnd_isize);
-            
+
             if border_option.is_some() {
                 let border_pointer: *mut WindowBorder = (*border_option.unwrap()) as *mut _;
-                unsafe { UnhookWinEvent(h_win_event_hook) };
-                unsafe { SendMessageW((*border_pointer).m_window, WM_MOVE, WPARAM(0), LPARAM(0)) };
-                unsafe { set_event_hook(); }
-                //std::thread::sleep(std::time::Duration::from_millis(8));
-                println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
+                unsafe {
+                    //UnhookWinEvent(h_win_event_hook);
+
+                    // I'm just using a timer here to make sure we're not sending too many messages
+                    // in a short time span bc if that happens, then the border window will keep
+                    // processing the backlog of WM_MOVE messages even after the tracking window
+                    // has stopped (for a long time too).
+                    if timer.elapsed() >= REFRESH_INTERVAL {
+                        // Reset the timer and re-initialize it because it is a LazyLock 
+                        TIMER = LazyLock::new(|| Instant::now());
+                        &*TIMER;
+
+                        SendMessageW((*border_pointer).m_window, WM_MOVE, WPARAM(0), LPARAM(0));
+                        //println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
+                    }
+
+                    //SendMessageW((*border_pointer).m_window, WM_MOVE, WPARAM(0), LPARAM(0));
+                    //println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
+                    //set_event_hook();
+                }
             }
             drop(borders);
         },
@@ -92,7 +117,7 @@ pub extern "system" fn handle_win_event_main(
                 let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
                 let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
 
-                if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_CHILD.0 != 0 {
+                if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_CHILD.0 != 0 || style & WS_POPUP.0 != 0 {
                     return;
                 }
 

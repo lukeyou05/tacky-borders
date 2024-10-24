@@ -26,8 +26,6 @@ use std::sync::LazyLock;
 /*use crate::drawer::*;*/
 use crate::event_hook;
 
-const SW_SHOWNA: i32 = 8;
-
 pub static FACTORY: LazyLock<ID2D1Factory> = unsafe { LazyLock::new(|| D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None).expect("REASON")) };
 //pub static m_render_target = FACTORY.CreateHwndRenderTarget(Default::default, Default::default).expect("REASON");
 
@@ -86,7 +84,7 @@ impl WindowBorder {
                 None,
                 None,
                 hinstance,
-                Some(std::mem::transmute(&mut *self))
+                Some(std::ptr::addr_of!(*self) as *const _)
             )?;
 
             // make window transparent
@@ -111,7 +109,7 @@ impl WindowBorder {
                 println!("Error Setting Layered Window Attributes!");
             }
 
-            // set position of the border-window behind the tracking window
+            /*// set position of the border-window behind the tracking window
             // helps to prevent border overlapping (happens after turning borders off and on)
             let set_pos = SetWindowPos(self.m_tracking_window,
                 self.m_window,
@@ -123,14 +121,14 @@ impl WindowBorder {
 
             if set_pos.is_err() {
                 println!("Error with SetWindowPos!");
-            }
+            }*/
             
-            let val: BOOL = TRUE;
+            /*let val: BOOL = TRUE;
 
             let result = DwmSetWindowAttribute(self.m_window, DWMWA_EXCLUDED_FROM_PEEK, std::ptr::addr_of!(val) as *const c_void, size_of::<BOOL>() as u32);
             if result.is_err() {
                 println!("could not exclude border from peek");
-            }
+            }*/
 
             // Make the native windows border transparent... for some reason it makes the borders
             // uneven sizes...
@@ -141,13 +139,12 @@ impl WindowBorder {
             }
             
             if IsWindowVisible(self.m_tracking_window).as_bool() {
-                ShowWindow(self.m_window, SHOW_WINDOW_CMD(SW_SHOWNA));
+                ShowWindow(self.m_window, SW_SHOWNA);
             }
             UpdateWindow(self.m_window);
 
             self.create_render_targets();
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
-            self.render(&factory);
+            self.render();
 
             //TODO idk how to feel about sleeping the thread bc if the event hook sends too many
             //messages then this will continue processing all of them even after the event is over. 
@@ -227,19 +224,23 @@ impl WindowBorder {
         self.update_color();
     }
 
-    pub fn render(&mut self, factory: &ID2D1Factory) -> Result<()> {
+    pub fn render(&mut self) -> Result<()> {
+        let factory: &ID2D1Factory = &*FACTORY;
+
         self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U { 
             width: (self.window_rect.right - self.window_rect.left) as u32,
             height: (self.window_rect.bottom - self.window_rect.top) as u32
         };
 
         unsafe {
+            //let before = std::time::Instant::now();
             let m_render_target = factory.CreateHwndRenderTarget(&self.render_target_properties, &self.hwnd_render_target_properties)?;
             // I'm not even sure what SetAntiAliasMode does because without the line, the corners are still anti-aliased.
             // Maybe there's an ever so slight bit more anti-aliasing with it but I could just be crazy. 
             //m_render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
             let m_brush = m_render_target.CreateSolidColorBrush(&self.color, Some(&self.m_border_brush))?;
+            //println!("Time it takes to create render target and brush: {:.2?}", before.elapsed());
             
             // Goofy size calculations
             self.rounded_rect.rect = D2D_RECT_F { 
@@ -249,6 +250,8 @@ impl WindowBorder {
                 bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 - self.border_offset) as f32
             };
 
+
+            //let before = std::time::Instant::now();
             m_render_target.BeginDraw();
             m_render_target.Clear(None);
             m_render_target.DrawRoundedRectangle(
@@ -258,6 +261,7 @@ impl WindowBorder {
                 None
             );
             m_render_target.EndDraw(None, None);
+            //println!("Time it takes to render: {:.2?}", before.elapsed());
         }
 
         Ok(())
@@ -265,20 +269,11 @@ impl WindowBorder {
 
     pub fn update(&mut self) {
         //let before = std::time::Instant::now();
-        let factory: &ID2D1Factory = &*FACTORY;
         let old_rect = self.window_rect.clone();
         self.get_frame_rect();
         unsafe {
-            SetWindowPos(self.m_window,
-                self.m_tracking_window,
-                self.window_rect.left,
-                self.window_rect.top,
-                self.window_rect.right - self.window_rect.left,
-                self.window_rect.bottom - self.window_rect.top,
-                SWP_NOREDRAW | SWP_NOACTIVATE
-            );
-
-            self.render(factory);
+            self.update_pos();
+            self.render();
         }
         //println!("Elapsed time (update): {:.2?}", before.elapsed());
     }
@@ -305,7 +300,6 @@ impl WindowBorder {
         let r = ((pcr_colorization & 0x00FF0000) >> 16) as f32;
         let g = ((pcr_colorization & 0x0000FF00) >> 8) as f32;
         let b = ((pcr_colorization & 0x000000FF) >> 0) as f32;
-
 
         if unsafe { GetForegroundWindow() } == self.m_tracking_window {
             self.color.r = r/255.0;
