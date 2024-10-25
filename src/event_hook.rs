@@ -26,6 +26,7 @@ use crate::border::WindowBorder;
 use crate::BORDERS;
 use crate::set_event_hook;
 use crate::spawn_border_thread;
+use crate::destroy_border_thread;
 use crate::SendHWND;
 use crate::__ImageBase;
 
@@ -62,7 +63,7 @@ pub extern "system" fn handle_win_event_main(
                     // I'm just using a timer here to make sure we're not sending too many messages
                     // in a short time span bc if that happens, then the border window will keep
                     // processing the backlog of WM_MOVE messages even after the tracking window
-                    // has stopped (for a long time too).
+                    // has stopped moving (for a long time too).
                     if timer.elapsed() >= REFRESH_INTERVAL {
                         // Reset the timer and re-initialize it because it is a LazyLock 
                         TIMER = LazyLock::new(|| Instant::now());
@@ -81,47 +82,13 @@ pub extern "system" fn handle_win_event_main(
         EVENT_OBJECT_FOCUS => {
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
-            let hwnd_isize = hwnd.0 as isize;
             
-            //unsafe { UnhookWinEvent(h_win_event_hook) };
             for key in borders.keys() {
                 let border_window: HWND = HWND(*borders.get(&key).unwrap() as _);
                 unsafe { SendMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
             }
-            //unsafe { set_event_hook(); }
         },
-        //TODO code is a mess with the locking and dropping of mutexes (the commented out code)
         EVENT_OBJECT_SHOW => {
-            /*let mutex = unsafe { &*BORDERS };
-            let borders = mutex.lock().unwrap();
-            let hwnd_isize = hwnd.0 as isize;
-            let border_option = borders.get(&hwnd_isize);
-            //println!("show: {:?}", hwnd);
-
-            if borders.contains_key(&hwnd_isize) {
-                unsafe {
-                    let border_window: HWND = HWND(*border_option.unwrap() as _);
-                    ShowWindow(border_window, SW_SHOWNA);
-                    SendMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0));
-                    drop(borders);
-                }
-            } else if unsafe { IsWindowVisible(hwnd).as_bool() } {
-                // Drop borders so that we can access it in the new thread
-                drop(borders);
-
-                // Check if the window is a tool window or popup
-                let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
-                let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
-
-                if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_CHILD.0 != 0 || style & WS_POPUP.0 != 0 {
-                    return;
-                }
-
-                spawn_border_thread(hwnd);
-            } else {
-                drop(borders);
-            }*/
-
             // I may not have to check IsWindowVisible
             if unsafe { IsWindowVisible(hwnd).as_bool() } {
                 // Check if the window is a tool window or popup
@@ -138,31 +105,14 @@ pub extern "system" fn handle_win_event_main(
         // Destroying the border everytime it is hidden may increase CPU usage (or maybe not
         // because there are no longer unnecessary message loops), but it will save memory.
         EVENT_OBJECT_HIDE => {
-            let mutex = unsafe { &*BORDERS };
-            let mut borders = mutex.lock().unwrap();
-            let hwnd_isize = hwnd.0 as isize;
-            let border_option = borders.get(&hwnd_isize);
-
             // I have to explicitly check IsWindowVisible because for whatever fucking reason,
             // EVENT_OBJECT_HIDE is sent even when the window is still visible.
-            if borders.contains_key(&hwnd_isize) && unsafe { !IsWindowVisible(hwnd).as_bool() } {
-                let border_window: SendHWND = SendHWND(HWND((*border_option.unwrap()) as *mut _));
-                drop(borders);
-
+            if unsafe { !IsWindowVisible(hwnd).as_bool() } {
                 // Due to the fact that these callback functions can be re-entered, I can just
                 // spawn a new thread here to ensure the border gets destroyed even if re-entrancy
                 // happens.
-                let thread = std::thread::spawn(move || {
-                    let border_window_sent = border_window;
-                    let mut borders = mutex.lock().unwrap();
-                    unsafe { SendMessageW(border_window_sent.0, WM_DESTROY, WPARAM(0), LPARAM(0)) };
-                    borders.remove(&hwnd_isize);
-                    drop(borders);
-                });
-
-                return;
+                destroy_border_thread(hwnd);
             }
-            drop(borders);
         },
         _ => {}
     }

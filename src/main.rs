@@ -1,5 +1,7 @@
 // TODO remove allow unused and fix all the warnings generated
 #![allow(unused)]
+// This hides the console when running the app. Comment it out to debug.
+//#![windows_subsystem = "windows"]
 
 use std::ffi::c_ulong;
 use std::ffi::OsStr;
@@ -23,6 +25,7 @@ use windows::{
     Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
+    Win32::System::Threading::*,
 };
 
 extern "C" {
@@ -31,6 +34,7 @@ extern "C" {
 
 mod border;
 mod event_hook;
+mod sys_tray_icon;
 
 pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -40,22 +44,33 @@ unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    println!("registering window class");
     register_window_class();
     println!("window class is registered!");
+    enum_windows();
 
-    let mut borders = enum_windows();
+    let main_thread = unsafe { GetCurrentThreadId() };
+    let tray_icon_option = sys_tray_icon::create_tray_icon(main_thread);
+    if tray_icon_option.is_err() {
+        println!("Error creating tray icon!");
+    }
 
+    let win_event_hook = set_event_hook();
     unsafe {
-        // TODO unhook on program close
-        set_event_hook();
-
         println!("Entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+            if message.message == WM_CLOSE {
+                let result = UnhookWinEvent(win_event_hook);
+                if result.as_bool() {
+                    ExitProcess(0);
+                } else {
+                    println!("Error. Could not unhook win event hook");
+                }
+            }
+
             TranslateMessage(&message);
             DispatchMessageW(&message);
-            std::thread::sleep(std::time::Duration::from_millis(100))
+            std::thread::sleep(std::time::Duration::from_millis(16))
         }
         println!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
     }
@@ -85,16 +100,18 @@ pub fn register_window_class() -> Result<()> {
     return Ok(());
 }
 
-pub unsafe fn set_event_hook() {
-    SetWinEventHook(
-        EVENT_MIN,
-        EVENT_MAX,
-        None,
-        Some(event_hook::handle_win_event_main),
-        0,
-        0,
-        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-    );
+pub fn set_event_hook() -> HWINEVENTHOOK {
+    unsafe {
+        return SetWinEventHook(
+            EVENT_MIN,
+            EVENT_MAX,
+            None,
+            Some(event_hook::handle_win_event_main),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+    }
 }
 
 pub fn enum_windows() {
@@ -114,12 +131,11 @@ pub fn enum_windows() {
 }
 
 pub fn spawn_border_thread(tracking_window: HWND) {
-    let borders = unsafe { &*BORDERS };
+    let mutex = unsafe { &*BORDERS };
     let window = SendHWND(tracking_window);
 
     let thread = std::thread::spawn(move || {
-        let mut window_sent = window;
-        let hinstance: HINSTANCE = unsafe{ std::mem::transmute(&__ImageBase) };
+        let window_sent = window;
 
         let mut border = border::WindowBorder { 
             tracking_window: window_sent.0, 
@@ -127,27 +143,47 @@ pub fn spawn_border_thread(tracking_window: HWND) {
             border_offset: 1,
             ..Default::default()
         };
-        border.create_border_window(hinstance);
 
-        let mut borders_sent = borders.lock().unwrap();
+        let mut borders_hashmap = mutex.lock().unwrap();
         let window_isize = window_sent.0.0 as isize; 
-        let border_isize = border.border_window.0 as isize;
 
         // Check to see if the key already exists in the hashmap. If not, then continue
         // adding the key and initializing the border. This is important because sometimes, the
         // event_hook function will call spawn_border_thread multiple times for the same window. 
-        if borders_sent.contains_key(&window_isize) {
+        if borders_hashmap.contains_key(&window_isize) {
             println!("Duplicate window!");
+            // TODO do i have to drop borders_hasmap here?
+            drop(borders_hashmap);
             return;
         }
-        borders_sent.insert(window_isize, border_isize);
-        drop(borders_sent);
- 
-        println!("Initializing border for window: {:?}", window_sent.0);
+
+        let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
+        border.create_border_window(hinstance);
+        borders_hashmap.insert(window_isize, border.border_window.0 as isize);
+        println!("borders_hashmap: {:?}", borders_hashmap);
+        drop(borders_hashmap);
         
-        //border.bruh(hinstance);
-        //println!("init hinstance: {:?}", hinstance);
         border.init(hinstance);
+    });
+}
+
+pub fn destroy_border_thread(tracking_window: HWND) {
+    let mutex = unsafe { &*BORDERS };
+    let window = SendHWND(tracking_window);
+
+    let thread = std::thread::spawn(move || {
+        let window_sent = window;
+        let mut borders_hashmap = mutex.lock().unwrap();
+        let window_isize = window_sent.0.0 as isize;
+        let border_option = borders_hashmap.get(&window_isize);
+        
+        if border_option.is_some() {
+            let border_window: HWND = HWND((*border_option.unwrap()) as *mut _);
+            unsafe { SendMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+            borders_hashmap.remove(&window_isize);
+        }
+
+        drop(borders_hashmap);
     });
 }
 
