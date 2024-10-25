@@ -1,38 +1,21 @@
-use std::ffi::c_ulong;
-use std::ffi::OsStr;
-use std::ffi::OsString;
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::prelude::OsStringExt;
 use std::time::Instant;
 use std::time::Duration;
 use std::sync::LazyLock;
-use std::cell::Cell;
-use core::ffi::c_void;
-use core::ffi::c_int;
 use windows::{
-    core::*,
     Win32::Foundation::*,
-    Win32::Graphics::Gdi::*,
-    Win32::Graphics::Dwm::*,
-    Win32::Graphics::Direct2D::*,
-    Win32::Graphics::Direct2D::Common::*,
-    Win32::System::LibraryLoader::GetModuleHandleA,
-    Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
 };
 
-use crate::border::WindowBorder;
+use crate::window_border::WindowBorder;
 use crate::BORDERS;
 use crate::set_event_hook;
 use crate::spawn_border_thread;
 use crate::destroy_border_thread;
-use crate::SendHWND;
-use crate::__ImageBase;
 
 // TODO replace static mut with some sort of cell for more safe behavior.
 //static TIMER: Cell<LazyLock<Instant>> = Cell::new(LazyLock::new(|| Instant::now()));
-static mut TIMER: LazyLock<Instant> = LazyLock::new(|| Instant::now());
+//static mut TIMER: LazyLock<Instant> = LazyLock::new(|| Instant::now());
 const REFRESH_INTERVAL: Duration = Duration::from_millis(7);
 
 pub extern "system" fn handle_win_event_main(
@@ -51,7 +34,7 @@ pub extern "system" fn handle_win_event_main(
     match event {
         //TODO find a better way to prevent reentrancy (currently i have a workaround using a timer)
         EVENT_OBJECT_LOCATIONCHANGE => {
-            let timer = unsafe { &*TIMER };
+            //let timer = unsafe { &*TIMER };
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
             let hwnd_isize = hwnd.0 as isize;
@@ -63,17 +46,19 @@ pub extern "system" fn handle_win_event_main(
                     // I'm just using a timer here to make sure we're not sending too many messages
                     // in a short time span bc if that happens, then the border window will keep
                     // processing the backlog of WM_MOVE messages even after the tracking window
-                    // has stopped moving (for a long time too).
-                    if timer.elapsed() >= REFRESH_INTERVAL {
+                    // has stopped moving (for a long time too) (I REFACTORED SOME CODE AND THIS
+                    // GOT FIXED SOMEHOW????? oh i think it's cuz i set
+                    // D2D1_PRESENT_OPTIONS_IMMEDIATELY or whatever it was).
+                    /*if timer.elapsed() >= REFRESH_INTERVAL {
                         // Reset the timer and re-initialize it because it is a LazyLock 
                         TIMER = LazyLock::new(|| Instant::now());
                         &*TIMER;
 
                         SendMessageW(border_window, WM_MOVE, WPARAM(0), LPARAM(0));
                         //println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
-                    }
+                    }*/
 
-                    //SendMessageW((*border_pointer).border_window, WM_MOVE, WPARAM(0), LPARAM(0));
+                    SendMessageW(border_window, WM_MOVE, WPARAM(0), LPARAM(0));
                     //println!("Elapsed time (event_hook, total): {:.2?}", before.elapsed());
                 }
             }
@@ -82,7 +67,8 @@ pub extern "system" fn handle_win_event_main(
         EVENT_OBJECT_FOCUS => {
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
-            
+           
+            // I have to loop through because it doesn't always send this event for each window
             for key in borders.keys() {
                 let border_window: HWND = HWND(*borders.get(&key).unwrap() as _);
                 unsafe { SendMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };

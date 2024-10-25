@@ -3,36 +3,22 @@
 // This hides the console when running the app. Comment it out to debug.
 //#![windows_subsystem = "windows"]
 
-use std::ffi::c_ulong;
-use std::ffi::OsStr;
-use std::ffi::OsString;
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::prelude::OsStringExt;
 use std::sync::{Arc, Mutex, LazyLock};
 use std::collections::HashMap;
-use core::ffi::c_void;
-use core::ffi::c_int;
 use windows::{
     core::*,
     Win32::Foundation::*,
-    Foundation::Numerics::*,
-    Win32::Graphics::Gdi::*,
-    Win32::Graphics::Dwm::*,
-    Win32::Graphics::Direct2D::*,
-    Win32::Graphics::Direct2D::Common::*,
-    Win32::Graphics::Dxgi::Common::*,
-    Win32::System::LibraryLoader::GetModuleHandleA,
     Win32::System::SystemServices::IMAGE_DOS_HEADER,
+    Win32::System::Threading::*,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
-    Win32::System::Threading::*,
 };
 
 extern "C" {
     pub static __ImageBase: IMAGE_DOS_HEADER;
 }
 
-mod border;
+mod window_border;
 mod event_hook;
 mod sys_tray_icon;
 
@@ -83,7 +69,7 @@ pub fn register_window_class() -> Result<()> {
 
         let mut wcex = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
-            lpfnWndProc: Some(border::WindowBorder::s_wnd_proc),
+            lpfnWndProc: Some(window_border::WindowBorder::s_wnd_proc),
             hInstance: hinstance,
             lpszClassName: window_class,
             hCursor: LoadCursorW(None, IDC_ARROW)?,
@@ -137,7 +123,7 @@ pub fn spawn_border_thread(tracking_window: HWND) {
     let thread = std::thread::spawn(move || {
         let window_sent = window;
 
-        let mut border = border::WindowBorder { 
+        let mut border = window_border::WindowBorder { 
             tracking_window: window_sent.0, 
             border_size: 4, 
             border_offset: 1,
@@ -202,5 +188,5 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
             visible_windows.push(hwnd);
         }
     }
-  BOOL(1)
+    BOOL(1)
 }
