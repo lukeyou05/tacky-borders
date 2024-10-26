@@ -102,10 +102,6 @@ impl WindowBorder {
                 println!("could not set native border color");
             }
             
-            if IsWindowVisible(self.tracking_window).as_bool() {
-                ShowWindow(self.border_window, SW_SHOWNA);
-            }
-
             self.create_render_targets();
             self.render();
 
@@ -244,26 +240,24 @@ impl WindowBorder {
             let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
             let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW;
 
+            if !IsWindowVisible(self.border_window).as_bool() {
+                u_flags = u_flags | SWP_SHOWWINDOW;
+            }
+
+            // If the top left corner of a tracking window is at the screen's corner, it's likely
+            //  the tracking window is fullscreen or maximized. So I just set the position of the
+            //  window border under the tracking window. This is lowkey SUPER janky TODO 
             // If hwnd_above_tracking is just the window border itself, then we have what we want
             //  and there's no need to update the z-order (plus it breaks if we try to do so here).
             // Else, if the hwnd_above_tracking returns an error, that likely means that
             //  tracking_window is already the highest window in the z-order, so we use HWND_TOP to
             //  place the window border above.
-            if hwnd_above_tracking == Ok(self.border_window) {
+            if self.window_rect.top + self.border_size == 0 && self.window_rect.left + self.border_size == 0 {
+                hwnd_above_tracking = Ok(self.tracking_window);
+            } else if hwnd_above_tracking == Ok(self.border_window) {
                 u_flags = u_flags | SWP_NOZORDER;
             } else if hwnd_above_tracking.is_err() {
                 hwnd_above_tracking = Ok(HWND_TOP);
-            }
-
-            // If the top left corner of a tracking_window is at the screen's corner, it's likely
-            // the tracking_window is fullscreen or maximized. So, we should show/hide the window
-            // border accordingly. This is SUPER janky and I should make this shit better at some
-            // point TODO.
-            if self.window_rect.top + self.border_size == 0 && self.window_rect.left + self.border_size == 0 {
-                ShowWindow(self.border_window, SW_HIDE);
-                return;
-            } else if !IsWindowVisible(self.border_window).as_bool() {
-                ShowWindow(self.border_window, SW_SHOWNA);
             }
 
             //println!("getting hwnd_above_tracking: {:?}", before.elapsed());
