@@ -112,10 +112,10 @@ impl WindowBorder {
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 //let before = std::time::Instant::now();
-                //println!("message received");
+                println!("message received: {:?}", message.message);
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                //std::thread::sleep(std::time::Duration::from_millis(10));
                 //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
             }
         }
@@ -242,7 +242,7 @@ impl WindowBorder {
             // window border, because that function takes up the majority of the border update
             // processing time.
             let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
-            let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE;
+            let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW;
 
             // If hwnd_above_tracking is just the window border itself, then we have what we want
             //  and there's no need to update the z-order (plus it breaks if we try to do so here).
