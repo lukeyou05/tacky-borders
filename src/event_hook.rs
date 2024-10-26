@@ -64,11 +64,13 @@ pub extern "system" fn handle_win_event_main(
             }
             drop(borders);
         },
-        EVENT_OBJECT_FOCUS => {
+        EVENT_OBJECT_REORDER => {
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
            
-            // I have to loop through because it doesn't always send this event for each window
+            // I have to loop through because for whatever reason, EVENT_OBJECT_REORDER only gets
+            // sent with some random memory address that might be important but idk. Works better
+            // than EVENT_OBJECT_FOCUS though because EVENT_OBJECT_REORDER gets called more often. 
             for key in borders.keys() {
                 let border_window: HWND = HWND(*borders.get(&key).unwrap() as _);
                 unsafe { SendMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };

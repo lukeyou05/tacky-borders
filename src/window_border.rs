@@ -115,7 +115,7 @@ impl WindowBorder {
                 //println!("message received");
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
-                //std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(std::time::Duration::from_millis(10));
                 //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
             }
         }
@@ -167,7 +167,8 @@ impl WindowBorder {
         }
 
         self.update_color();
-        self.update_border_location();
+        self.update_window_rect();
+        self.update_position();
     }
 
     pub fn render(&mut self) -> Result<()> {
@@ -219,14 +220,6 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn update_border_location(&mut self) {
-        //let before = std::time::Instant::now();
-        self.update_window_rect();
-        self.update_pos();
-        self.render();
-        //println!("Elapsed time (update): {:.2?}", before.elapsed());
-    }
-
     pub fn update_window_rect(&mut self) -> Result<()> {
         if unsafe { DwmGetWindowAttribute(self.tracking_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
             println!("Error getting frame rect!");
@@ -241,19 +234,54 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn update_pos(&mut self) {
+    pub fn update_position(&mut self) {
+        //let before = std::time::Instant::now();
         unsafe {
+            // Half of this code is to put the window border on top of the tracking window without
+            // having to call SetWindowPos twice, once for the tracking_window and once for the
+            // window border, because that function takes up the majority of the border update
+            // processing time.
+            let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
+            let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE;
+
+            // If hwnd_above_tracking is just the window border itself, then we have what we want
+            //  and there's no need to update the z-order (plus it breaks if we try to do so here).
+            // Else, if the hwnd_above_tracking returns an error, that likely means that
+            //  tracking_window is already the highest window in the z-order, so we use HWND_TOP to
+            //  place the window border above.
+            if hwnd_above_tracking == Ok(self.border_window) {
+                u_flags = u_flags | SWP_NOZORDER;
+            } else if hwnd_above_tracking.is_err() {
+                hwnd_above_tracking = Ok(HWND_TOP);
+            }
+
+            // If the top left corner of a tracking_window is at the screen's corner, it's likely
+            // the tracking_window is fullscreen or maximized. So, we should show/hide the window
+            // border accordingly. This is SUPER janky and I should make this shit better at some
+            // point TODO.
+            if self.window_rect.top + self.border_size == 0 && self.window_rect.left + self.border_size == 0 {
+                ShowWindow(self.border_window, SW_HIDE);
+                return;
+            } else if !IsWindowVisible(self.border_window).as_bool() {
+                ShowWindow(self.border_window, SW_SHOWNA);
+            }
+
+            //println!("getting hwnd_above_tracking: {:?}", before.elapsed());
+            
             SetWindowPos(self.border_window,
-                self.tracking_window,
+                hwnd_above_tracking.unwrap(),
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
                 self.window_rect.bottom - self.window_rect.top,
-            SWP_NOREDRAW | SWP_NOACTIVATE
+                u_flags 
             );
         }
+        //println!("setting window position: {:?}", before.elapsed());
     }
 
+    // TODO create active_color and inactive_color variables so that we don't have to recalculate
+    // these values everytime the window changes focus
     pub fn update_color(&mut self) {
         let mut pcr_colorization: u32 = 0;
         let mut pf_opaqueblend: BOOL = BOOL(0);
@@ -269,9 +297,10 @@ impl WindowBorder {
             self.color.g = g/255.0;
             self.color.b = b/255.0;
         } else {
-            self.color.r = r/255.0/1.5;
-            self.color.g = g/255.0/1.5;
-            self.color.b = b/255.0/1.5;
+            let avg = (r + g + b)/3.0/255.0;
+            self.color.r = avg/1.5 + r/255.0/10.0;
+            self.color.g = avg/1.5 + g/255.0/10.0;
+            self.color.b = avg/1.5 + b/255.0/10.0;
         }
     }
 
@@ -303,18 +332,17 @@ impl WindowBorder {
             // structure which I'm too lazy to deal with right now.
             WM_MOVE => {
                 //let before = std::time::Instant::now();
-                self.update_border_location();
-                //std::thread::sleep(std::time::Duration::from_millis(7));
-                //println!("time elapsed: {:.2?}", before.elapsed());
+                self.update_window_rect();
+                self.update_position();
+                self.render();
+                //println!("Elapsed time (update): {:.2?}", before.elapsed());
             },
             WM_SETFOCUS => {
                 //println!("Focus set: {:?}", self.tracking_window);
                 self.update_color();
-                self.render();
-            },
-            WM_KILLFOCUS => {
-                //println!("Focus killed: {:?}", self.tracking_window);
-                self.update_color();
+                if self.tracking_window == GetForegroundWindow() {
+                    self.update_position();
+                }
                 self.render();
             },
             WM_DESTROY => {

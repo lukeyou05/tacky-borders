@@ -137,7 +137,7 @@ pub fn spawn_border_thread(tracking_window: HWND) {
         // adding the key and initializing the border. This is important because sometimes, the
         // event_hook function will call spawn_border_thread multiple times for the same window. 
         if borders_hashmap.contains_key(&window_isize) {
-            println!("Duplicate window!");
+            println!("Duplicate window: {:?}", borders_hashmap);
             // TODO do i have to drop borders_hasmap here?
             drop(borders_hashmap);
             return;
@@ -146,7 +146,7 @@ pub fn spawn_border_thread(tracking_window: HWND) {
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
         border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
-        println!("borders_hashmap: {:?}", borders_hashmap);
+        println!("borders_hashmap after creating window: {:?}", borders_hashmap);
         drop(borders_hashmap);
         
         border.init(hinstance);
