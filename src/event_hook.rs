@@ -73,6 +73,11 @@ pub extern "system" fn handle_win_event_main(
                 destroy_border_thread(hwnd);
             }
         },
+        EVENT_OBJECT_CLOAKED => {
+            if unsafe { !IsWindowVisible(hwnd).as_bool() } {
+                destroy_border_thread(hwnd);
+            }
+        },
         _ => {}
     }
 }
