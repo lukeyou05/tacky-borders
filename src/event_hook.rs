@@ -177,7 +177,15 @@ pub extern "system" fn handle_win_event_main(
             });
         },
         EVENT_OBJECT_DESTROY => {
-            destroy_border_thread(hwnd);
+            if unsafe { !IsWindowVisible(hwnd).as_bool() } {
+                destroy_border_thread(hwnd);
+
+                // Use below to debug whether window borders are properly destroyed
+                let mutex = unsafe { &*BORDERS };
+                let borders = mutex.lock().unwrap();
+                println!("borders after destroying window: {:?}", borders);
+                drop(borders);
+            }
         },
         _ => {}
     }

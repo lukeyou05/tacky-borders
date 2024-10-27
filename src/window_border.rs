@@ -335,11 +335,11 @@ impl WindowBorder {
             WM_SHOWWINDOW => {
                 SetWindowPos(self.border_window,
                     self.tracking_window,
-                    self.window_rect.left,
-                    self.window_rect.top,
-                    self.window_rect.right - self.window_rect.left,
-                    self.window_rect.bottom - self.window_rect.top,
-                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_SHOWWINDOW 
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW 
                 );
             }
             WM_CLOSE => {
@@ -349,11 +349,10 @@ impl WindowBorder {
                     0,
                     0,
                     0,
-                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_HIDEWINDOW 
+                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW 
                 );
             }
             WM_MOVE => {
-                //println!("moving");
                 // TODO WM_MOVE and WM_SETFOCUS may be called after WM_CLOSE, causing the window to
                 // be visible again which is not what we want. That's why I check here to make sure
                 // whether the window is cloaked/visible or not. It doesn't take up much processing
@@ -369,6 +368,7 @@ impl WindowBorder {
                 if result.is_err() || is_cloaked.as_bool() || !IsWindowVisible(self.tracking_window).as_bool() {
                     return LRESULT(0);
                 }
+
                 self.update_window_rect();
                 self.update_position();
                 self.render();
@@ -384,6 +384,7 @@ impl WindowBorder {
                 if result.is_err() || is_cloaked.as_bool() || !IsWindowVisible(self.tracking_window).as_bool() {
                     return LRESULT(0);
                 }
+
                 self.update_color();
                 if self.tracking_window == GetForegroundWindow() {
                     self.update_position();
