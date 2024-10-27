@@ -1,7 +1,6 @@
 use std::ffi::c_ulong;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
-use core::ffi::c_void;
 use windows::{
     core::*,
     Win32::Foundation::*,
@@ -88,12 +87,22 @@ impl WindowBorder {
             
             self.create_render_targets();
             self.render();
+            
+            // TODO Here im running all the render commands again because it sometimes doesn't
+            // render properly at first and I'm too lazy to figure out why. Definitely should be
+            // looked into in the future.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            self.update_color();
+            self.update_window_rect();
+            self.update_position();
+            self.render();
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 //println!("message received in window border thread");
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
 
@@ -196,7 +205,7 @@ impl WindowBorder {
         let result = unsafe { DwmGetWindowAttribute(
             self.tracking_window, 
             DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut self.window_rect as *mut _ as *mut c_void,
+            std::ptr::addr_of_mut!(self.window_rect) as *mut _,
             size_of::<RECT>() as u32
         ) }; 
         if result.is_err() {
@@ -220,7 +229,10 @@ impl WindowBorder {
             let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
             let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW;
 
-            // If the tracking window does not have a window edge, don't show the window border. 
+            // If the tracking window does not have a window edge, don't show the window border.
+            // The reason I'm not just destroying the window border is because going into
+            // fullscreen in browsers also gets rid of the WINDOWEDGE style, but I want to keep the
+            // window border for when they exit fullscreen.
             let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
             if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
                 u_flags = u_flags | SWP_HIDEWINDOW;
@@ -320,30 +332,58 @@ impl WindowBorder {
 
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
-            WM_ACTIVATE => {
-                //println!("hwnd: {:?}", window);
-                unsafe {
-                    SetWindowPos(self.border_window,
-                        self.tracking_window,
-                        self.window_rect.left,
-                        self.window_rect.top,
-                        self.window_rect.right - self.window_rect.left,
-                        self.window_rect.bottom - self.window_rect.top,
-                        SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_HIDEWINDOW
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(1000));
-                    self.update_position();
-                }
-            },
-            // TODO maybe switch out WM_MOVE with WM_WINDOWPOSCHANGING because that seems like the
-            // more "correct" way to do it. But if I do it that way, I have to pass a WINDOWPOS
-            // structure and I don't wanna deal with that rn.
+            WM_SHOWWINDOW => {
+                SetWindowPos(self.border_window,
+                    self.tracking_window,
+                    self.window_rect.left,
+                    self.window_rect.top,
+                    self.window_rect.right - self.window_rect.left,
+                    self.window_rect.bottom - self.window_rect.top,
+                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_SHOWWINDOW 
+                );
+            }
+            WM_CLOSE => {
+                SetWindowPos(self.border_window,
+                    self.tracking_window,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_HIDEWINDOW 
+                );
+            }
             WM_MOVE => {
+                //println!("moving");
+                // TODO WM_MOVE and WM_SETFOCUS may be called after WM_CLOSE, causing the window to
+                // be visible again which is not what we want. That's why I check here to make sure
+                // whether the window is cloaked/visible or not. It doesn't take up much processing
+                // time so it's totally fine to leave as is, but it might still be worth trying to
+                // make better.
+                let mut is_cloaked = FALSE;
+                let result = unsafe { DwmGetWindowAttribute(
+                    self.tracking_window, 
+                    DWMWA_CLOAKED,
+                    std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+                    size_of::<BOOL>() as u32
+                ) };
+                if result.is_err() || is_cloaked.as_bool() || !IsWindowVisible(self.tracking_window).as_bool() {
+                    return LRESULT(0);
+                }
                 self.update_window_rect();
                 self.update_position();
                 self.render();
             },
             WM_SETFOCUS => {
+                let mut is_cloaked = FALSE;
+                let result = unsafe { DwmGetWindowAttribute(
+                    self.tracking_window, 
+                    DWMWA_CLOAKED,
+                    std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+                    size_of::<BOOL>() as u32
+                ) };
+                if result.is_err() || is_cloaked.as_bool() || !IsWindowVisible(self.tracking_window).as_bool() {
+                    return LRESULT(0);
+                }
                 self.update_color();
                 if self.tracking_window == GetForegroundWindow() {
                     self.update_position();

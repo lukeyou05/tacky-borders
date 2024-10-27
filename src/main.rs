@@ -201,10 +201,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
         }
 
         // Exclude certain window styles
-        // TODO for some reason there are a few non-visible windows that aren't tool windows or
-        // child windows, but are popup windows, but I don't want to exclude ALL popup windows 
-        // during the initial window creation process if possible.
-        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
             let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
             println!("visible_windows: {:?}", visible_windows);
             visible_windows.push(hwnd);

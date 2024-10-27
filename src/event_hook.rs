@@ -10,6 +10,7 @@ use crate::BORDERS;
 use crate::set_event_hook;
 use crate::spawn_border_thread;
 use crate::destroy_border_thread;
+use crate::SendHWND;
 
 pub extern "system" fn handle_win_event_main(
     h_win_event_hook: HWINEVENTHOOK,
@@ -25,26 +26,6 @@ pub extern "system" fn handle_win_event_main(
     }
 
     match event {
-        /*EVENT_OBJECT_CREATE => {
-            // Check if the window is a tool window or popup
-            let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
-            let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
-            let mut is_cloaked = FALSE;
-            let result = unsafe { DwmGetWindowAttribute(
-                hwnd, 
-                DWMWA_CLOAKED,
-                std::ptr::addr_of_mut!(is_cloaked) as *mut _,
-                size_of::<BOOL>() as u32
-            ) };
-            if result.is_err() {
-                return;
-            }
-
-            if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
-                //println!("creating window border for: {:?}", hwnd);
-                spawn_border_thread(hwnd, 300);
-            }
-        },*/
         EVENT_OBJECT_LOCATIONCHANGE => {
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
@@ -67,9 +48,39 @@ pub extern "system" fn handle_win_event_main(
                 let border_window: HWND = HWND(*borders.get(&key).unwrap() as _);
                 unsafe { SendMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
             }
+            drop(borders);
+        },
+        EVENT_OBJECT_CREATE => {
+            // Check if the window is a tool window or popup
+            let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
+            let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
+            let mut is_cloaked = FALSE;
+            let result = unsafe { DwmGetWindowAttribute(
+                hwnd, 
+                DWMWA_CLOAKED,
+                std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+                size_of::<BOOL>() as u32
+            ) };
+            if result.is_err() {
+                return;
+            }
+
+            if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+                //println!("creating window border for: {:?}", hwnd);
+                spawn_border_thread(hwnd, 350);
+            }
         },
         EVENT_OBJECT_SHOW => {
-            if unsafe { IsWindowVisible(hwnd).as_bool() } {
+            let mutex = unsafe { &*BORDERS };
+            let borders = mutex.lock().unwrap();
+            let hwnd_isize = hwnd.0 as isize;
+            let border_option = borders.get(&hwnd_isize);
+
+            if border_option.is_some() {
+                let border_window: HWND = HWND(*border_option.unwrap() as _);
+                drop(borders);
+                unsafe { SendMessageW(border_window, WM_SHOWWINDOW, WPARAM(0), LPARAM(0)); }
+            } else {
                 // Check if the window is a tool window or popup
                 let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
                 let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
@@ -81,25 +92,50 @@ pub extern "system" fn handle_win_event_main(
                     size_of::<BOOL>() as u32
                 ) };
                 if result.is_err() {
+                    drop(borders);
                     return;
                 }
 
-                if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+                if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
                     //println!("creating window border for: {:?}", hwnd);
-                    spawn_border_thread(hwnd, 0);
+                    spawn_border_thread(hwnd, 350);
                 }
+                drop(borders);
             }
         },
         EVENT_OBJECT_HIDE => {
-            // I have to explicitly check IsWindowVisible because for whatever reason,
-            // EVENT_OBJECT_HIDE can be sent even when the window is still visible (happens with
-            // Vesktop, for example).
-            if unsafe { !IsWindowVisible(hwnd).as_bool() } {
-                destroy_border_thread(hwnd);
-            }
+            let mutex = unsafe { &*BORDERS };
+            let window = SendHWND(hwnd);
+
+            let thread = std::thread::spawn(move || {
+                let window_sent = window;
+                let borders = mutex.lock().unwrap();
+                let window_isize = window_sent.0.0 as isize;
+                let border_option = borders.get(&window_isize);
+
+                // I have to check IsWindowVisible because for whatever reason, EVENT_OBJECT_HIDE
+                // can be sent even if the window is still visible (it does this for Vesktop)
+                if border_option.is_some() && unsafe { !IsWindowVisible(window_sent.0).as_bool() } {
+                    let border_window: HWND = HWND(*border_option.unwrap() as _);
+                    drop(borders);
+                    unsafe { SendMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                } else {
+                    drop(borders);
+                }
+            });
         },
         EVENT_OBJECT_UNCLOAKED => {
-            if unsafe { IsWindowVisible(hwnd).as_bool() } {
+            let mutex = unsafe { &*BORDERS };
+            let borders = mutex.lock().unwrap();
+            let hwnd_isize = hwnd.0 as isize;
+            let border_option = borders.get(&hwnd_isize);
+
+            if border_option.is_some() {
+                let border_window: HWND = HWND(*border_option.unwrap() as _);
+                drop(borders);
+                unsafe { SendMessageW(border_window, WM_SHOWWINDOW, WPARAM(0), LPARAM(0)); }
+            } else {
+                // Check if the window is a tool window or popup
                 let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
                 let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
                 let mut is_cloaked = FALSE;
@@ -110,16 +146,37 @@ pub extern "system" fn handle_win_event_main(
                     size_of::<BOOL>() as u32
                 ) };
                 if result.is_err() {
+                    drop(borders);
                     return;
                 }
 
-                if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+                if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
                     //println!("creating window border for: {:?}", hwnd);
                     spawn_border_thread(hwnd, 0);
                 }
+                drop(borders);
             }
         },
         EVENT_OBJECT_CLOAKED => {
+            let mutex = unsafe { &*BORDERS };
+            let window = SendHWND(hwnd);
+
+            let thread = std::thread::spawn(move || {
+                let window_sent = window;
+                let borders = mutex.lock().unwrap();
+                let window_isize = window_sent.0.0 as isize;
+                let border_option = borders.get(&window_isize);
+
+                if border_option.is_some() {
+                    let border_window: HWND = HWND(*border_option.unwrap() as _);
+                    drop(borders);
+                    unsafe { SendMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0)); }
+                } else {
+                    drop(borders);
+                }
+            });
+        },
+        EVENT_OBJECT_DESTROY => {
             destroy_border_thread(hwnd);
         },
         _ => {}
