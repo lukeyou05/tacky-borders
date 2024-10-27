@@ -91,6 +91,7 @@ impl WindowBorder {
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+                //println!("message received in window border thread");
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
@@ -152,7 +153,7 @@ impl WindowBorder {
 
         // Get the Windows accent color
         let mut pcr_colorization: u32 = 0;
-        let mut pf_opaqueblend: BOOL = BOOL(0);
+        let mut pf_opaqueblend: BOOL = FALSE;
         let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
         if result.is_err() {
             println!("Error getting Windows accent color!");
@@ -319,6 +320,21 @@ impl WindowBorder {
 
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
+            WM_ACTIVATE => {
+                //println!("hwnd: {:?}", window);
+                unsafe {
+                    SetWindowPos(self.border_window,
+                        self.tracking_window,
+                        self.window_rect.left,
+                        self.window_rect.top,
+                        self.window_rect.right - self.window_rect.left,
+                        self.window_rect.bottom - self.window_rect.top,
+                        SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_HIDEWINDOW
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                    self.update_position();
+                }
+            },
             // TODO maybe switch out WM_MOVE with WM_WINDOWPOSCHANGING because that seems like the
             // more "correct" way to do it. But if I do it that way, I have to pass a WINDOWPOS
             // structure and I don't wanna deal with that rn.
@@ -338,7 +354,7 @@ impl WindowBorder {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
                 PostQuitMessage(0);
             },
-            _ => {}
+            _ => { /*println!("message: {:?}", message)*/ }
         }
         LRESULT(0)
     }

@@ -12,6 +12,7 @@ use windows::{
     Win32::System::Threading::*,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
+    Win32::Graphics::Dwm::*,
 };
 
 extern "C" {
@@ -114,17 +115,22 @@ pub fn enum_windows() {
     println!("Windows: {:?}", windows);
 
     for hwnd in windows {
-        spawn_border_thread(hwnd);
+        spawn_border_thread(hwnd, 0);
     }
 }
 
-pub fn spawn_border_thread(tracking_window: HWND) -> Result<()> {
+pub fn spawn_border_thread(tracking_window: HWND, delay: u64) -> Result<()> {
     let borders_mutex = unsafe { &*BORDERS };
     let config = unsafe { &*CONFIG };
     let window = SendHWND(tracking_window);
 
     let thread = std::thread::spawn(move || {
         let window_sent = window;
+
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+        if unsafe { !IsWindowVisible(window_sent.0).as_bool() } {
+            return;
+        }
 
         let mut border = window_border::WindowBorder { 
             tracking_window: window_sent.0, 
@@ -141,7 +147,7 @@ pub fn spawn_border_thread(tracking_window: HWND) -> Result<()> {
         // adding the key and initializing the border. This is important because sometimes, the
         // event_hook function will call spawn_border_thread multiple times for the same window. 
         if borders_hashmap.contains_key(&window_isize) {
-            println!("Duplicate window: {:?}", borders_hashmap);
+            //println!("Duplicate window: {:?}", borders_hashmap);
             drop(borders_hashmap);
             return;
         }
@@ -183,16 +189,26 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     if IsWindowVisible(hwnd).as_bool() {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let mut is_cloaked = FALSE;
+        let result = unsafe { DwmGetWindowAttribute(
+            hwnd, 
+            DWMWA_CLOAKED,
+            std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+            size_of::<BOOL>() as u32
+        ) };
+        if result.is_err() {
+            return FALSE;
+        }
 
         // Exclude certain window styles
         // TODO for some reason there are a few non-visible windows that aren't tool windows or
         // child windows, but are popup windows, but I don't want to exclude ALL popup windows 
         // during the initial window creation process if possible.
-        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 {
+        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
             let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
             println!("visible_windows: {:?}", visible_windows);
             visible_windows.push(hwnd);
         }
     }
-    BOOL(1)
+    TRUE 
 }

@@ -2,6 +2,7 @@ use windows::{
     Win32::Foundation::*,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
+    Win32::Graphics::Dwm::*,
 };
 
 use crate::window_border::WindowBorder;
@@ -24,6 +25,26 @@ pub extern "system" fn handle_win_event_main(
     }
 
     match event {
+        /*EVENT_OBJECT_CREATE => {
+            // Check if the window is a tool window or popup
+            let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
+            let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
+            let mut is_cloaked = FALSE;
+            let result = unsafe { DwmGetWindowAttribute(
+                hwnd, 
+                DWMWA_CLOAKED,
+                std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+                size_of::<BOOL>() as u32
+            ) };
+            if result.is_err() {
+                return;
+            }
+
+            if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+                //println!("creating window border for: {:?}", hwnd);
+                spawn_border_thread(hwnd, 300);
+            }
+        },*/
         EVENT_OBJECT_LOCATIONCHANGE => {
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
@@ -48,29 +69,54 @@ pub extern "system" fn handle_win_event_main(
             }
         },
         EVENT_OBJECT_SHOW => {
-            // I may not have to check IsWindowVisible
             if unsafe { IsWindowVisible(hwnd).as_bool() } {
                 // Check if the window is a tool window or popup
                 let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
                 let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
-
-                if ex_style & WS_EX_TOOLWINDOW.0 != 0 || style & WS_CHILD.0 != 0 || style & WS_POPUP.0 != 0 {
+                let mut is_cloaked = FALSE;
+                let result = unsafe { DwmGetWindowAttribute(
+                    hwnd, 
+                    DWMWA_CLOAKED,
+                    std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+                    size_of::<BOOL>() as u32
+                ) };
+                if result.is_err() {
                     return;
                 }
 
-                println!("creating window border for: {:?}", hwnd);
-                spawn_border_thread(hwnd);
+                if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+                    //println!("creating window border for: {:?}", hwnd);
+                    spawn_border_thread(hwnd, 0);
+                }
             }
         },
-        // TODO I don't know if destroying the window borders or just hiding them would be better.
         EVENT_OBJECT_HIDE => {
-            // I have to explicitly check IsWindowVisible because for whatever fucking reason,
-            // EVENT_OBJECT_HIDE can be sent even when the window is still visible.
+            // I have to explicitly check IsWindowVisible because for whatever reason,
+            // EVENT_OBJECT_HIDE can be sent even when the window is still visible (happens with
+            // Vesktop, for example).
             if unsafe { !IsWindowVisible(hwnd).as_bool() } {
-                // Due to the fact that these callback functions can be re-entered, I can just
-                // spawn a new thread here to ensure the border gets destroyed even if re-entrancy
-                // happens.
                 destroy_border_thread(hwnd);
+            }
+        },
+        EVENT_OBJECT_UNCLOAKED => {
+            if unsafe { IsWindowVisible(hwnd).as_bool() } {
+                let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
+                let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
+                let mut is_cloaked = FALSE;
+                let result = unsafe { DwmGetWindowAttribute(
+                    hwnd, 
+                    DWMWA_CLOAKED,
+                    std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+                    size_of::<BOOL>() as u32
+                ) };
+                if result.is_err() {
+                    return;
+                }
+
+                if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
+                    //println!("creating window border for: {:?}", hwnd);
+                    spawn_border_thread(hwnd, 0);
+                }
             }
         },
         EVENT_OBJECT_CLOAKED => {
