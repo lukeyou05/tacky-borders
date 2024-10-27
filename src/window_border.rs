@@ -24,6 +24,7 @@ pub struct WindowBorder {
     pub window_rect: RECT,
     pub border_size: i32,
     pub border_offset: i32,
+    pub force_border_radius: f32,
     pub dpi: f32,
     pub render_target_properties: D2D1_RENDER_TARGET_PROPERTIES,
     pub hwnd_render_target_properties: D2D1_HWND_RENDER_TARGET_PROPERTIES,
@@ -119,26 +120,30 @@ impl WindowBorder {
             transform: Default::default() 
         };
 
-        // Create a rounded_rect with radius depending on the tracking window corner preference 
+        // Create a rounded_rect with radius depending on the force_border_radius variable 
         let mut border_radius = 0.0;
         let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
-        let result = unsafe { DwmGetWindowAttribute(
-            self.tracking_window,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            std::ptr::addr_of_mut!(corner_preference) as *mut _,
-            size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32
-        ) }; 
-        if result.is_err() {
-            println!("Error getting window corner preference!");
+        if self.force_border_radius == -1.0 {
+            let result = unsafe { DwmGetWindowAttribute(
+                self.tracking_window,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                std::ptr::addr_of_mut!(corner_preference) as *mut _,
+                size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32
+            ) }; 
+            if result.is_err() {
+                println!("Error getting window corner preference!");
+            }
+            match corner_preference.0 {
+                0 => border_radius = 6.0 + ((self.border_size/2) as f32),
+                1 => border_radius = 0.0,
+                2 => border_radius = 6.0 + ((self.border_size/2) as f32),
+                3 => border_radius = 3.0 + ((self.border_size/2) as f32),
+                _ => {}
+            }
+        } else {
+            border_radius = self.force_border_radius;
         }
-        match corner_preference.0 {
-            0 => border_radius = 6.0 + ((self.border_size/2) as f32),
-            1 => border_radius = 0.0,
-            2 => border_radius = 6.0 + ((self.border_size/2) as f32),
-            3 => border_radius = 3.0 + ((self.border_size/2) as f32),
-            _ => {}
-        }
-
+        
         self.rounded_rect = D2D1_ROUNDED_RECT { 
             rect: Default::default(), 
             radiusX: border_radius, 

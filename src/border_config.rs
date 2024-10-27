@@ -6,6 +6,7 @@ use std::fs;
 pub struct Config {
     pub border_size: i32,
     pub border_offset: i32,
+    pub border_radius: f32,
 }
 
 pub fn create_config() -> Config {

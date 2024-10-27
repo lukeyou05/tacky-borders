@@ -1,2 +1,8 @@
+# border_size adjusts the thickness of the borders in pixels
 border_size: 4
+
+# border_offset adjusts how much to shrink or expand the border by in pixels to better fit the size of the window
 border_offset: -1
+
+# border_radius lets you set your own custom radius for the border in pixels. Leave it at -1 to let the program handle the radius, or set it to anything other than -1 to use as the radius.
+border_radius: -1

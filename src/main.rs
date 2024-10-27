@@ -24,7 +24,7 @@ mod sys_tray_icon;
 mod border_config;
 
 pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static CONFIG: LazyLock<Mutex<border_config::Config>> = LazyLock::new(|| Mutex::new(border_config::create_config()));
+pub static CONFIG: LazyLock<border_config::Config> = LazyLock::new(|| border_config::create_config());
 
 // This shit supposedly unsafe af but it works so idgaf. 
 pub struct SendHWND(HWND);
@@ -120,20 +120,19 @@ pub fn enum_windows() {
 
 pub fn spawn_border_thread(tracking_window: HWND) -> Result<()> {
     let borders_mutex = unsafe { &*BORDERS };
-    let config_mutex = unsafe { &*CONFIG };
+    let config = unsafe { &*CONFIG };
     let window = SendHWND(tracking_window);
 
     let thread = std::thread::spawn(move || {
         let window_sent = window;
 
-        let config = config_mutex.lock().unwrap();
         let mut border = window_border::WindowBorder { 
             tracking_window: window_sent.0, 
             border_size: config.border_size, 
             border_offset: config.border_offset,
+            force_border_radius: config.border_radius,
             ..Default::default()
         };
-        drop(config);
 
         let mut borders_hashmap = borders_mutex.lock().unwrap();
         let window_isize = window_sent.0.0 as isize; 
