@@ -21,8 +21,10 @@ extern "C" {
 mod window_border;
 mod event_hook;
 mod sys_tray_icon;
+mod border_config;
 
 pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static CONFIG: LazyLock<Mutex<border_config::Config>> = LazyLock::new(|| Mutex::new(border_config::create_config()));
 
 // This shit supposedly unsafe af but it works so idgaf. 
 pub struct SendHWND(HWND);
@@ -116,21 +118,24 @@ pub fn enum_windows() {
     }
 }
 
-pub fn spawn_border_thread(tracking_window: HWND) {
-    let mutex = unsafe { &*BORDERS };
+pub fn spawn_border_thread(tracking_window: HWND) -> Result<()> {
+    let borders_mutex = unsafe { &*BORDERS };
+    let config_mutex = unsafe { &*CONFIG };
     let window = SendHWND(tracking_window);
 
     let thread = std::thread::spawn(move || {
         let window_sent = window;
 
+        let config = config_mutex.lock().unwrap();
         let mut border = window_border::WindowBorder { 
             tracking_window: window_sent.0, 
-            border_size: 4, 
-            border_offset: 1,
+            border_size: config.border_size, 
+            border_offset: config.border_offset,
             ..Default::default()
         };
+        drop(config);
 
-        let mut borders_hashmap = mutex.lock().unwrap();
+        let mut borders_hashmap = borders_mutex.lock().unwrap();
         let window_isize = window_sent.0.0 as isize; 
 
         // Check to see if the key already exists in the hashmap. If not, then continue
@@ -138,7 +143,6 @@ pub fn spawn_border_thread(tracking_window: HWND) {
         // event_hook function will call spawn_border_thread multiple times for the same window. 
         if borders_hashmap.contains_key(&window_isize) {
             println!("Duplicate window: {:?}", borders_hashmap);
-            // TODO do i have to drop borders_hasmap here?
             drop(borders_hashmap);
             return;
         }
@@ -146,14 +150,15 @@ pub fn spawn_border_thread(tracking_window: HWND) {
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
         border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
-        println!("borders_hashmap after creating window: {:?}", borders_hashmap);
         drop(borders_hashmap);
         
         border.init(hinstance);
     });
+
+    return Ok(());
 }
 
-pub fn destroy_border_thread(tracking_window: HWND) {
+pub fn destroy_border_thread(tracking_window: HWND) -> Result<()> {
     let mutex = unsafe { &*BORDERS };
     let window = SendHWND(tracking_window);
 
@@ -171,6 +176,8 @@ pub fn destroy_border_thread(tracking_window: HWND) {
 
         drop(borders_hashmap);
     });
+
+    return Ok(());
 }
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -180,8 +187,8 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
 
         // Exclude certain window styles
         // TODO for some reason there are a few non-visible windows that aren't tool windows or
-        // child windows. They are however, popup windows, but I don't want to exclude ALL popup
-        // windows during the initial window creation process if possible.
+        // child windows, but are popup windows, but I don't want to exclude ALL popup windows 
+        // during the initial window creation process if possible.
         if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_POPUP.0 == 0 && style & WS_CHILD.0 == 0 {
             let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
             println!("visible_windows: {:?}", visible_windows);

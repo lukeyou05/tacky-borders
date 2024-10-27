@@ -30,7 +30,9 @@ pub struct WindowBorder {
     pub render_target: OnceLock<ID2D1HwndRenderTarget>,
     pub border_brush: D2D1_BRUSH_PROPERTIES,
     pub rounded_rect: D2D1_ROUNDED_RECT,
-    pub color: D2D1_COLOR_F,
+    pub active_color: D2D1_COLOR_F,
+    pub inactive_color: D2D1_COLOR_F,
+    pub current_color: D2D1_COLOR_F,
 }
 
 impl WindowBorder {
@@ -51,8 +53,6 @@ impl WindowBorder {
                 Some(std::ptr::addr_of!(*self) as *const _)
             )?;
 
-            self.update_window_rect()?;
-
             let dpi_aware = SetProcessDPIAware();
             if !dpi_aware.as_bool() {
                 println!("Failed to make process DPI aware");
@@ -64,8 +64,7 @@ impl WindowBorder {
 
     pub fn init(&mut self, hinstance: HINSTANCE) -> Result<()> {
         unsafe {
-            //println!("render target: {:?}", RENDER_TARGET.get());
-            // make window transparent
+            // Make the window border transparent 
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
             let hrgn = CreateRectRgn(pos, 0, (pos + 1), 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
@@ -85,41 +84,21 @@ impl WindowBorder {
             if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA).is_err() {
                 println!("Error Setting Layered Window Attributes!");
             }
-
-            /*let val: BOOL = TRUE;
-
-            let result = DwmSetWindowAttribute(self.border_window, DWMWA_EXCLUDED_FROM_PEEK, std::ptr::addr_of!(val) as *const c_void, size_of::<BOOL>() as u32);
-            if result.is_err() {
-                println!("could not exclude border from peek");
-            }*/
-
-            // Make the native windows border transparent... for some reason it makes the borders
-            // uneven sizes... so thats why u might notice that transparent is not actually set to
-            // transparent for the time being...
-            let transparent = COLORREF(0xFFFFFFFF);
-            let result = DwmSetWindowAttribute(self.tracking_window, DWMWA_BORDER_COLOR, std::ptr::addr_of!(transparent) as *const c_void, size_of::<c_ulong>() as u32);
-            if result.is_err() {
-                println!("could not set native border color");
-            }
             
             self.create_render_targets();
             self.render();
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
-                //let before = std::time::Instant::now();
-                println!("message received: {:?}", message.message);
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
-                //std::thread::sleep(std::time::Duration::from_millis(10));
-                //println!("Elapsed time (message loop): {:.2?}", before.elapsed());
             }
         }
 
         return Ok(());
     }
 
-    pub fn create_render_targets(&mut self) {
+    pub fn create_render_targets(&mut self) -> Result<()> {
         self.dpi = 96.0;
         self.render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -130,30 +109,68 @@ impl WindowBorder {
             dpiX: self.dpi,
             dpiY: self.dpi,
             ..Default::default() };
-
         self.hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
             hwnd: self.border_window, 
             pixelSize: Default::default(), 
             presentOptions: D2D1_PRESENT_OPTIONS_IMMEDIATELY 
         };
-
         self.border_brush = D2D1_BRUSH_PROPERTIES { 
             opacity: 1.0 as f32, 
             transform: Default::default() 
         };
 
+        // Create a rounded_rect with radius depending on the tracking window corner preference 
+        let mut border_radius = 0.0;
+        let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
+        let result = unsafe { DwmGetWindowAttribute(
+            self.tracking_window,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::addr_of_mut!(corner_preference) as *mut _,
+            size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32
+        ) }; 
+        if result.is_err() {
+            println!("Error getting window corner preference!");
+        }
+        match corner_preference.0 {
+            0 => border_radius = 6.0 + ((self.border_size/2) as f32),
+            1 => border_radius = 0.0,
+            2 => border_radius = 6.0 + ((self.border_size/2) as f32),
+            3 => border_radius = 3.0 + ((self.border_size/2) as f32),
+            _ => {}
+        }
+
         self.rounded_rect = D2D1_ROUNDED_RECT { 
             rect: Default::default(), 
-            radiusX: 6.0 + ((self.border_size/2) as f32), 
-            radiusY: 6.0 + ((self.border_size/2) as f32)
+            radiusX: border_radius, 
+            radiusY: border_radius 
         };
 
-        self.color = D2D1_COLOR_F { 
-            r: 0.0, 
-            g: 0.0, 
-            b: 0.0, 
-            a: 1.0 
+        // Get the Windows accent color
+        let mut pcr_colorization: u32 = 0;
+        let mut pf_opaqueblend: BOOL = BOOL(0);
+        let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
+        if result.is_err() {
+            println!("Error getting Windows accent color!");
+        }
+        let red = ((pcr_colorization & 0x00FF0000) >> 16) as f32/255.0;
+        let green = ((pcr_colorization & 0x0000FF00) >> 8) as f32/255.0;
+        let blue = ((pcr_colorization & 0x000000FF) >> 0) as f32/255.0;
+        let avg = (red + green + blue)/3.0;
+
+        self.active_color = D2D1_COLOR_F {
+            r: red,
+            g: green,
+            b: blue,
+            a: 1.0
         };
+        self.inactive_color = D2D1_COLOR_F {
+            r: avg/1.5 + red/10.0,
+            g: avg/1.5 + green/10.0,
+            b: avg/1.5 + blue/10.0,
+            a: 1.0
+        };
+        // Initialize the actual border color assuming it is in focus
+        self.current_color = self.active_color;
 
         unsafe {
             let factory = &*RENDER_FACTORY;
@@ -165,61 +182,21 @@ impl WindowBorder {
         self.update_color();
         self.update_window_rect();
         self.update_position();
-    }
 
-    pub fn render(&mut self) -> Result<()> {
-        //let before = std::time::Instant::now();
-        let render_target_option = self.render_target.get();
-        if render_target_option.is_none() {
-            return Ok(()); 
-        }
-        let render_target = render_target_option.unwrap();
-        //println!("Elapsed time to get render_target: {:?}", before.elapsed());
-
-        self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U { 
-            width: (self.window_rect.right - self.window_rect.left) as u32,
-            height: (self.window_rect.bottom - self.window_rect.top) as u32
-        };
-
-        unsafe {
-            //let before = std::time::Instant::now();
-            render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
-            // I'm not even sure what SetAntiAliasMode does because without the line, the corners are still anti-aliased.
-            // Maybe there's an ever so slight bit more anti-aliasing with it but I could just be crazy. 
-            //render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-            let brush = render_target.CreateSolidColorBrush(&self.color, Some(&self.border_brush))?;
-            //println!("Time it takes to create render target and brush: {:.2?}", before.elapsed());
-            
-            // Goofy size calculations
-            self.rounded_rect.rect = D2D_RECT_F { 
-                left: (self.border_size/2 + self.border_offset) as f32, 
-                top: (self.border_size/2 + self.border_offset) as f32, 
-                right: (self.window_rect.right - self.window_rect.left - self.border_size/2 - self.border_offset) as f32, 
-                bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 - self.border_offset) as f32
-            };
-
-
-            //let before = std::time::Instant::now();
-            render_target.BeginDraw();
-            render_target.Clear(None);
-            render_target.DrawRoundedRectangle(
-                &self.rounded_rect,
-                &brush,
-                self.border_size as f32,
-                None
-            );
-            render_target.EndDraw(None, None);
-            //println!("Time it takes to render: {:.2?}", before.elapsed());
-        }
-
-        Ok(())
+        return Ok(());
     }
 
     pub fn update_window_rect(&mut self) -> Result<()> {
-        if unsafe { DwmGetWindowAttribute(self.tracking_window, DWMWA_EXTENDED_FRAME_BOUNDS, &mut self.window_rect as *mut _ as *mut c_void, size_of::<RECT>() as u32).is_err() } {
+        let result = unsafe { DwmGetWindowAttribute(
+            self.tracking_window, 
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut self.window_rect as *mut _ as *mut c_void,
+            size_of::<RECT>() as u32
+        ) }; 
+        if result.is_err() {
             println!("Error getting frame rect!");
-            //unsafe { ExitThread(0) };
+            // I have not tested if this actually works yet
+            unsafe { SendMessageW(self.border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
         }
 
         self.window_rect.top -= self.border_size;
@@ -230,38 +207,31 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn update_position(&mut self) {
-        //let before = std::time::Instant::now();
+    pub fn update_position(&mut self) -> Result<()> {
         unsafe {
-            // Half of this code is to put the window border on top of the tracking window without
-            // having to call SetWindowPos twice, once for the tracking_window and once for the
-            // window border, because that function takes up the majority of the border update
-            // processing time.
+            // Place the window border above the tracking window so that it looks nice with window
+            // drop shadows enabled.
             let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
             let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW;
 
-            if !IsWindowVisible(self.border_window).as_bool() {
+            // If the tracking window does not have a window edge, don't show the window border. 
+            let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
+            if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
+                u_flags = u_flags | SWP_HIDEWINDOW;
+            } else {
                 u_flags = u_flags | SWP_SHOWWINDOW;
             }
 
-            // If the top left corner of a tracking window is at the screen's corner, it's likely
-            //  the tracking window is fullscreen or maximized. So I just set the position of the
-            //  window border under the tracking window. This is lowkey SUPER janky TODO 
-            // If hwnd_above_tracking is just the window border itself, then we have what we want
-            //  and there's no need to update the z-order (plus it breaks if we try to do so here).
-            // Else, if the hwnd_above_tracking returns an error, that likely means that
-            //  tracking_window is already the highest window in the z-order, so we use HWND_TOP to
-            //  place the window border above.
-            if self.window_rect.top + self.border_size == 0 && self.window_rect.left + self.border_size == 0 {
-                hwnd_above_tracking = Ok(self.tracking_window);
-            } else if hwnd_above_tracking == Ok(self.border_window) {
+            // If hwnd_above_tracking is the window border itself, we have what we want and there's
+            // no need to change the z-order. If hwnd_above_tracking returns an error, it's likely
+            // that tracking window is already the highest in z-order, so we use HWND_TOP to place
+            // the window border above.
+            if hwnd_above_tracking == Ok(self.border_window) {
                 u_flags = u_flags | SWP_NOZORDER;
             } else if hwnd_above_tracking.is_err() {
                 hwnd_above_tracking = Ok(HWND_TOP);
             }
 
-            //println!("getting hwnd_above_tracking: {:?}", before.elapsed());
-            
             SetWindowPos(self.border_window,
                 hwnd_above_tracking.unwrap(),
                 self.window_rect.left,
@@ -271,31 +241,56 @@ impl WindowBorder {
                 u_flags 
             );
         }
-        //println!("setting window position: {:?}", before.elapsed());
+        return Ok(());
     }
 
-    // TODO create active_color and inactive_color variables so that we don't have to recalculate
-    // these values everytime the window changes focus
     pub fn update_color(&mut self) {
-        let mut pcr_colorization: u32 = 0;
-        let mut pf_opaqueblend: BOOL = BOOL(0);
-        //TODO should check whether DwmGetColorzationColor was successful or not. 
-        unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
-
-        let r = ((pcr_colorization & 0x00FF0000) >> 16) as f32;
-        let g = ((pcr_colorization & 0x0000FF00) >> 8) as f32;
-        let b = ((pcr_colorization & 0x000000FF) >> 0) as f32;
-
         if unsafe { GetForegroundWindow() } == self.tracking_window {
-            self.color.r = r/255.0;
-            self.color.g = g/255.0;
-            self.color.b = b/255.0;
+            self.current_color = self.active_color;
         } else {
-            let avg = (r + g + b)/3.0/255.0;
-            self.color.r = avg/1.5 + r/255.0/10.0;
-            self.color.g = avg/1.5 + g/255.0/10.0;
-            self.color.b = avg/1.5 + b/255.0/10.0;
+            self.current_color = self.inactive_color; 
         }
+    }
+
+    pub fn render(&mut self) -> Result<()> {
+        // Get the render target
+        let render_target_option = self.render_target.get();
+        if render_target_option.is_none() {
+            return Ok(()); 
+        }
+        let render_target = render_target_option.unwrap();
+
+        self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U { 
+            width: (self.window_rect.right - self.window_rect.left) as u32,
+            height: (self.window_rect.bottom - self.window_rect.top) as u32
+        };
+
+        unsafe {
+            render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
+            render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+            let brush = render_target.CreateSolidColorBrush(&self.current_color, Some(&self.border_brush))?;
+            
+            self.rounded_rect.rect = D2D_RECT_F { 
+                left: (self.border_size/2 - self.border_offset) as f32, 
+                top: (self.border_size/2 - self.border_offset) as f32, 
+                right: (self.window_rect.right - self.window_rect.left - self.border_size/2 + self.border_offset) as f32, 
+                bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 + self.border_offset) as f32
+            };
+
+
+            render_target.BeginDraw();
+            render_target.Clear(None);
+            render_target.DrawRoundedRectangle(
+                &self.rounded_rect,
+                &brush,
+                self.border_size as f32,
+                None
+            );
+            render_target.EndDraw(None, None);
+        }
+
+        Ok(())
     }
 
     // When CreateWindowExW is called, we can optionally pass a value to its LPARAM field which will
@@ -317,22 +312,17 @@ impl WindowBorder {
         }                                          
     }
 
-    // TODO event_hook will send more messages than necessary if I do an action for long enough. I
-    // should find a way to fix that.
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
             // TODO maybe switch out WM_MOVE with WM_WINDOWPOSCHANGING because that seems like the
-            // more correct way to do it. But if I do it that way, I have to pass a WINDOWPOS
-            // structure which I'm too lazy to deal with right now.
+            // more "correct" way to do it. But if I do it that way, I have to pass a WINDOWPOS
+            // structure and I don't wanna deal with that rn.
             WM_MOVE => {
-                //let before = std::time::Instant::now();
                 self.update_window_rect();
                 self.update_position();
                 self.render();
-                //println!("Elapsed time (update): {:.2?}", before.elapsed());
             },
             WM_SETFOCUS => {
-                //println!("Focus set: {:?}", self.tracking_window);
                 self.update_color();
                 if self.tracking_window == GetForegroundWindow() {
                     self.update_position();

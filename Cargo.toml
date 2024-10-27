@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+serde = "1.0.213"
+serde_yaml = "0.9.34"
 tray-icon = "0.19.1"
+image = "0.25.4"
 
 [dependencies.windows]
 version = "0.58.0"
