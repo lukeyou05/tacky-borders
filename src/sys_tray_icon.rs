@@ -6,7 +6,7 @@ use windows::Win32::UI::WindowsAndMessaging::WM_CLOSE;
 use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
 
 pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> {
-    let image = ImageReader::open("resources/icon.png").expect("could not open icon.png").decode().expect("could not open icon.png").into_bytes();
+    let image = ImageReader::open("src/resources/icon.png").expect("could not open icon.png").decode().expect("could not open icon.png").into_bytes();
     let icon = Icon::from_rgba(image, 32, 32).expect("could not convert icon.png into Icon");
 
     let tray_menu = Menu::new();

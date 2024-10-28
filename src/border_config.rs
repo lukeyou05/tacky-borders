@@ -10,7 +10,7 @@ pub struct Config {
 }
 
 pub fn create_config() -> Config {
-    let contents = match fs::read_to_string("resources/config.yaml") {
+    let contents = match fs::read_to_string("src/resources/config.yaml") {
         Ok(contents) => contents,
         _ => panic!("could not read config.yaml!"),
     }; 

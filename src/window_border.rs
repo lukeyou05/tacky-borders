@@ -99,10 +99,10 @@ impl WindowBorder {
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
-                //println!("message received in window border thread");
+                //println!("message received in window border thread: {:?}", message.message);
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
         }
 
@@ -374,6 +374,7 @@ impl WindowBorder {
                 self.render();
             },
             WM_SETFOCUS => {
+                //println!("setting focus");
                 let mut is_cloaked = FALSE;
                 let result = unsafe { DwmGetWindowAttribute(
                     self.tracking_window, 
@@ -389,6 +390,28 @@ impl WindowBorder {
                 if self.tracking_window == GetForegroundWindow() {
                     self.update_position();
                 }
+                self.render();
+            },
+            WM_QUERYOPEN => {
+                SetWindowPos(self.border_window,
+                    self.tracking_window,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW 
+                );
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                SetWindowPos(self.border_window,
+                    self.tracking_window,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW 
+                );
+                self.update_window_rect();
+                self.update_position();
                 self.render();
             },
             WM_DESTROY => {
