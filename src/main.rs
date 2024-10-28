@@ -1,7 +1,7 @@
 // TODO remove allow unused and fix all the warnings generated
 #![allow(unused)]
 // This hides the console when running the app. Comment it out to debug.
-//#![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 
 use std::sync::{Arc, Mutex, LazyLock};
 use std::collections::HashMap;

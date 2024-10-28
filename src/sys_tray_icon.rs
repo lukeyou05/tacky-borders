@@ -4,10 +4,23 @@ use windows::Win32::Foundation::WPARAM;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::UI::WindowsAndMessaging::WM_CLOSE;
 use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+use dirs::home_dir;
+
 
 pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> {
-    let image = ImageReader::open("resources/icon.png").expect("could not open icon.png").decode().expect("could not open icon.png").into_bytes();
-    let icon = Icon::from_rgba(image, 32, 32).expect("could not convert icon.png into Icon");
+    let home_dir = home_dir().expect("can't find home path");
+    let image_path = home_dir.join(".config").join("tacky-borders").join("icon.png");
+
+    let image = match ImageReader::open(&image_path) {
+        Ok(reader) => match reader.decode() {
+            Ok(img) => img,
+            Err(_) => panic!("can't decode image: {}", image_path.display()),
+        },
+        Err(_) => panic!("can't open image: {}", image_path.display()),
+    };
+
+    let image_bytes = image.into_bytes();
+    let icon = Icon::from_rgba(image_bytes, 32, 32).expect(&format!("could not convert icon.png into Icon Icon: {}", image_path.display()));
 
     let tray_menu = Menu::new();
     tray_menu.append(&MenuItem::with_id("0", "Close", true, None));
