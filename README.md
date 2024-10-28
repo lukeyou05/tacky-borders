@@ -4,7 +4,7 @@ tacky-borders lets you customize the borders on Windows 10 and 11. It was develo
 
 # install
 - 1. download the release
-- 2. copy the copy all the contents of the resource directory to this path `%HOMEPATH%\.config\tacky-borders`
+- 2. copy all the contents of the resource directory to this path `%HOMEPATH%\.config\tacky-borders`
 ```
 -- tacky-borders
     |-- graphicdesignismypassion.jpg
