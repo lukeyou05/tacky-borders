@@ -159,31 +159,7 @@ impl WindowBorder {
             radiusX: border_radius, 
             radiusY: border_radius 
         };
-
-        // Get the Windows accent color
-        let mut pcr_colorization: u32 = 0;
-        let mut pf_opaqueblend: BOOL = FALSE;
-        let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
-        if result.is_err() {
-            println!("Error getting Windows accent color!");
-        }
-        let red = ((pcr_colorization & 0x00FF0000) >> 16) as f32/255.0;
-        let green = ((pcr_colorization & 0x0000FF00) >> 8) as f32/255.0;
-        let blue = ((pcr_colorization & 0x000000FF) >> 0) as f32/255.0;
-        let avg = (red + green + blue)/3.0;
-
-        self.active_color = D2D1_COLOR_F {
-            r: red,
-            g: green,
-            b: blue,
-            a: 1.0
-        };
-        self.inactive_color = D2D1_COLOR_F {
-            r: avg/1.5 + red/10.0,
-            g: avg/1.5 + green/10.0,
-            b: avg/1.5 + blue/10.0,
-            a: 1.0
-        };
+        
         // Initialize the actual border color assuming it is in focus
         self.current_color = self.active_color;
 

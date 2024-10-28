@@ -13,6 +13,7 @@ use windows::{
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
     Win32::Graphics::Dwm::*,
+    Win32::Graphics::Direct2D::Common::*,
 };
 
 extern "C" {
@@ -132,11 +133,37 @@ pub fn spawn_border_thread(tracking_window: HWND, delay: u64) -> Result<()> {
             return;
         }
 
+        let red = ((config.active_color & 0x00FF0000) >> 16) as f32/255.0;
+        let green = ((config.active_color & 0x0000FF00) >> 8) as f32/255.0;
+        let blue = ((config.active_color & 0x000000FF) >> 0) as f32/255.0;
+        let avg = (red + green + blue)/3.0;
+
+        let active_color = D2D1_COLOR_F {
+            r: red,
+            g: green,
+            b: blue,
+            a: 1.0
+        };
+
+        let red = ((config.inactive_color & 0x00FF0000) >> 16) as f32/255.0;
+        let green = ((config.inactive_color & 0x0000FF00) >> 8) as f32/255.0;
+        let blue = ((config.inactive_color & 0x000000FF) >> 0) as f32/255.0;
+        let avg = (red + green + blue)/3.0;
+
+        let inactive_color = D2D1_COLOR_F {
+            r: red,
+            g: green,
+            b: blue,
+            a: 1.0
+        };
+
         let mut border = window_border::WindowBorder { 
             tracking_window: window_sent.0, 
             border_size: config.border_size, 
             border_offset: config.border_offset,
             force_border_radius: config.border_radius,
+            active_color: active_color,
+            inactive_color: inactive_color,
             ..Default::default()
         };
 

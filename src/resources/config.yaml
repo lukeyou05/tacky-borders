@@ -6,3 +6,9 @@ border_offset: -1
 
 # border_radius lets you set your own custom radius for the border in pixels. Leave it at -1 to let the program handle the radius, or set it to anything other than -1 to use as the radius.
 border_radius: -1
+
+# border color for active window
+active_color: 0xc25dde
+
+# border color for inactive window
+inactive_color: 0x1f1f1f

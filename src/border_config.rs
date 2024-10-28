@@ -7,6 +7,8 @@ pub struct Config {
     pub border_size: i32,
     pub border_offset: i32,
     pub border_radius: f32,
+    pub active_color: u32,
+    pub inactive_color: u32,
 }
 
 pub fn create_config() -> Config {
