@@ -139,25 +139,12 @@ pub fn restart_borders() {
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
     if IsWindowVisible(hwnd).as_bool() {
-        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-        let mut is_cloaked = FALSE;
-        let result = unsafe { DwmGetWindowAttribute(
-            hwnd, 
-            DWMWA_CLOAKED,
-            std::ptr::addr_of_mut!(is_cloaked) as *mut _,
-            size_of::<BOOL>() as u32
-        ) };
-        if result.is_err() {
-            return FALSE;
+        if has_filtered_style(hwnd) || is_cloaked(hwnd) {
+            return TRUE;
         }
 
-        // Exclude certain window styles
-        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
-            let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
-            println!("visible_windows: {:?}", visible_windows);
-            visible_windows.push(hwnd);
-        }
+        let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
+        visible_windows.push(hwnd);
     }
     TRUE 
 }

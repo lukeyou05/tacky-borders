@@ -1,8 +1,9 @@
-use tray_icon::{TrayIconBuilder, TrayIconEvent, menu::Menu, menu::MenuEvent, menu::MenuId, menu::MenuItem, Icon, TrayIcon};
 use windows::Win32::Foundation::WPARAM;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::UI::WindowsAndMessaging::WM_CLOSE;
 use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+use tray_icon::{TrayIconBuilder, TrayIconEvent, menu::Menu, menu::MenuEvent, menu::MenuId, menu::MenuItem, Icon, TrayIcon};
+use dirs::home_dir;
 
 use crate::border_config::Config;
 use crate::restart_borders;
@@ -31,7 +32,9 @@ pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> 
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         match event.id.0.as_str() {
             "0" => {
-                let _ = open::that("src/resources/config.yaml");
+                let home_dir = home_dir().expect("can't find home path");
+                let config_path = home_dir.join(".config").join("tacky-borders").join("config.yaml");
+                let _ = open::that(config_path);
             },
             "1" => {
                 Config::reload_config();

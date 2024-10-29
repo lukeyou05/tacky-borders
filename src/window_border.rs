@@ -11,6 +11,7 @@ use windows::{
     Win32::Graphics::Dxgi::Common::*,
     Win32::UI::WindowsAndMessaging::*,
 };
+use crate::utils::*;
 
 pub static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe { LazyLock::new(|| 
     D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None).expect("creating RENDER_FACTORY failed")) 
@@ -87,6 +88,7 @@ impl WindowBorder {
             
             self.create_render_targets();
             self.render();
+            ShowWindow(self.border_window, SW_SHOWNA);
             
             // TODO Here im running all the render commands again because it sometimes doesn't
             // render properly at first and I'm too lazy to figure out why. Definitely should be
@@ -205,20 +207,6 @@ impl WindowBorder {
             let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
             let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW;
 
-            // If the tracking window does not have a window edge, don't show the window border.
-            // The reason I'm not just destroying the window border is because going into
-            // fullscreen in browsers also gets rid of the WINDOWEDGE style, but I want to keep the
-            // window border for when they exit fullscreen.
-            let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
-            if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
-                //u_flags = u_flags | SWP_HIDEWINDOW;
-                ShowWindow(self.border_window, SW_HIDE);
-                return Ok(());
-            } else if !IsWindowVisible(self.border_window).as_bool() {
-                //u_flags = u_flags | SWP_SHOWWINDOW;
-                ShowWindow(self.border_window, SW_SHOWNA);
-            }
-
             // If hwnd_above_tracking is the window border itself, we have what we want and there's
             // no need to change the z-order. If hwnd_above_tracking returns an error, it's likely
             // that tracking window is already the highest in z-order, so we use HWND_TOP to place
@@ -317,31 +305,34 @@ impl WindowBorder {
                 // whether the window is cloaked/visible or not. It doesn't take up much processing
                 // time so it's totally fine to leave as is, but it might still be worth trying to
                 // make better.
-                let mut is_cloaked = FALSE;
-                let result = unsafe { DwmGetWindowAttribute(
-                    self.tracking_window, 
-                    DWMWA_CLOAKED,
-                    std::ptr::addr_of_mut!(is_cloaked) as *mut _,
-                    size_of::<BOOL>() as u32
-                ) };
-                if result.is_err() || is_cloaked.as_bool() || !IsWindowVisible(self.tracking_window).as_bool() {
+                if is_cloaked(self.tracking_window) || !IsWindowVisible(self.tracking_window).as_bool() {
                     return LRESULT(0);
                 }
 
+                // If the tracking window does not have a window edge, don't show the window border.
+                // The reason I'm not just destroying the window border is because going into
+                // fullscreen in browsers also gets rid of the WINDOWEDGE style, but I want to keep the
+                // window border for when they exit fullscreen.
+                let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
+                if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
+                    ShowWindow(self.border_window, SW_HIDE);
+                    return LRESULT(0);
+                } else if !IsWindowVisible(self.border_window).as_bool() {
+                    ShowWindow(self.border_window, SW_SHOWNA);
+                }
+
+                let old_rect = self.window_rect.clone();
                 self.update_window_rect();
                 self.update_position();
-                self.render();
+                
+                if get_width(self.window_rect) != get_width(old_rect)
+                || get_height(self.window_rect) != get_height(old_rect) {
+                    self.render();
+                }
             },
             WM_SETFOCUS => {
                 //println!("setting focus");
-                let mut is_cloaked = FALSE;
-                let result = unsafe { DwmGetWindowAttribute(
-                    self.tracking_window, 
-                    DWMWA_CLOAKED,
-                    std::ptr::addr_of_mut!(is_cloaked) as *mut _,
-                    size_of::<BOOL>() as u32
-                ) };
-                if result.is_err() || is_cloaked.as_bool() || !IsWindowVisible(self.tracking_window).as_bool() {
+                if is_cloaked(self.tracking_window) || !IsWindowVisible(self.tracking_window).as_bool() {
                     return LRESULT(0);
                 }
 
@@ -369,7 +360,7 @@ impl WindowBorder {
             WM_WINDOWPOSCHANGED => {},
             _ => {
                 //let before = std::time::Instant::now();
-                DefWindowProcW(window, message, wparam, lparam);
+                return DefWindowProcW(window, message, wparam, lparam);
                 //println!("other message and elapsed time: {:?}, {:?}", message, before.elapsed());
             }
         }

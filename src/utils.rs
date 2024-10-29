@@ -10,14 +10,37 @@ use crate::border_config::CONFIG;
 
 // TODO THE CODE IS STILL A MESS
 
+pub fn get_width(rect: RECT) -> i32 {
+    return rect.right - rect.left;
+}
+
+pub fn get_height(rect: RECT) -> i32{
+    return rect.bottom - rect.top;
+}
+
 pub fn has_filtered_style(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
     let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
 
-    if style & WS_CHILD.0 != 0 || ex_style & WS_EX_TOOLWINDOW.0 != 0  {
+    if style & WS_CHILD.0 != 0 || ex_style & WS_EX_TOOLWINDOW.0 != 0 || ex_style & WS_EX_NOACTIVATE.0 != 0 {
         return true;
     }
     return false;
+}
+
+pub fn is_cloaked(hwnd: HWND) -> bool {
+    let mut is_cloaked = FALSE;
+    let result = unsafe { DwmGetWindowAttribute(
+        hwnd, 
+        DWMWA_CLOAKED,
+        std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+        size_of::<BOOL>() as u32
+    ) };
+    if result.is_err() {
+        println!("error getting is_cloaked");
+        return true;
+    }
+    return is_cloaked.as_bool(); 
 }
 
 pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()> {
@@ -114,7 +137,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
     return Ok(());
 }
 
-pub fn destroy_border_of_window(tracking_window: HWND) -> Result<()> {
+pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
     let mutex = unsafe { &*BORDERS };
     let window = SendHWND(tracking_window);
 
@@ -169,24 +192,11 @@ pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
         return true;
     } else {
         drop(borders);
-        // Check if the window is a tool window or popup
-        let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
-        let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
-        let mut is_cloaked = FALSE;
-        let result = unsafe { DwmGetWindowAttribute(
-            hwnd, 
-            DWMWA_CLOAKED,
-            std::ptr::addr_of_mut!(is_cloaked) as *mut _,
-            size_of::<BOOL>() as u32
-        ) };
-        if result.is_err() {
-            return false;
-        }
-
         // When a popup window is created, it can mess up the z-order of the border so we
         // reset it here. I also wait a milisecond for the popup window to set its
-        // position. THIS IS SO TACKY LMAO. TODO
-        if style & WS_POPUP.0 != 0 {
+        // position. THIS IS SO TACKY LMAO. TODO YOU DON'T NEED THIS IF YOU'RE USING
+        // EVENT_OBJECT_REORDER
+        /*if style & WS_POPUP.0 != 0 {
             //println!("popup window created!");
             std::thread::sleep(std::time::Duration::from_millis(1));
             let borders = mutex.lock().unwrap();
@@ -203,17 +213,17 @@ pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
                 }
             }
             drop(borders);
-        }
+        }*/
 
-        if ex_style & WS_EX_TOOLWINDOW.0 == 0 && style & WS_CHILD.0 == 0 && !is_cloaked.as_bool() {
-            //println!("creating window border for: {:?}", hwnd);
-            create_border_for_window(hwnd, delay);
+        if is_cloaked(hwnd) || has_filtered_style(hwnd) {
+            return false;
         }
+        create_border_for_window(hwnd, delay);
         return false;
     }
 }
 
-pub fn hide_border_of_window(hwnd: HWND) -> bool {
+pub fn hide_border_for_window(hwnd: HWND) -> bool {
     let mutex = unsafe { &*BORDERS };
     let window = SendHWND(hwnd);
 

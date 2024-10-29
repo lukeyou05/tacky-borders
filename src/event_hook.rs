@@ -29,13 +29,16 @@ pub extern "system" fn handle_win_event_main(
             if has_filtered_style(hwnd) {
                 return;
             }
-
+            //let before = std::time::Instant::now();
             let border_window = get_border_from_window(hwnd); 
             if border_window.is_some() {
-                unsafe { SendMessageW(border_window.unwrap(), WM_MOVE, WPARAM(0), LPARAM(0)); }
+                //unsafe { SendMessageW(border_window.unwrap(), WM_MOVE, WPARAM(0), LPARAM(0)); }
+                unsafe { SendNotifyMessageW(border_window.unwrap(), WM_MOVE, WPARAM(0), LPARAM(0)); }
             }
+            //println!("elapsed time for location change: {:?}", before.elapsed());
         },
-        EVENT_OBJECT_FOCUS => {
+        /*EVENT_OBJECT_FOCUS => {
+            //println!("focus received!");
             let mutex = unsafe { &*BORDERS };
             let borders = mutex.lock().unwrap();
            
@@ -48,6 +51,27 @@ pub extern "system" fn handle_win_event_main(
                 }
             }
             drop(borders);
+        },*/
+        EVENT_OBJECT_REORDER => {
+            //let before = std::time::Instant::now();
+            if has_filtered_style(hwnd) {
+                //println!("time elapsed: {:?}, {:?}", before.elapsed(), hwnd);
+                return;
+            }
+
+            let mutex = unsafe { &*BORDERS };
+            let borders = mutex.lock().unwrap();
+           
+            // I have to loop through because for whatever reason, EVENT_OBJECT_REORDER only gets
+            // sent with some random memory address that might be important but idk.
+            for value in borders.values() {
+                let border_window: HWND = HWND(*value as _);
+                if unsafe { IsWindowVisible(border_window).as_bool() } {
+                    unsafe { PostMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
+                }
+            }
+            drop(borders);
+            //println!("time elapsed: {:?}, {:?}", before.elapsed(), hwnd);
         },
         EVENT_OBJECT_SHOW => {
             show_border_for_window(hwnd, 300);
@@ -56,14 +80,14 @@ pub extern "system" fn handle_win_event_main(
             // I have to check IsWindowVisible because for some reason, EVENT_OBJECT_HIDE can be
             // sent even while the window is still visible (it does this for Vesktop)
             if unsafe { !IsWindowVisible(hwnd).as_bool() } {
-                hide_border_of_window(hwnd);
+                hide_border_for_window(hwnd);
             } 
         },
         EVENT_OBJECT_UNCLOAKED => {
             show_border_for_window(hwnd, 0);
         },
         EVENT_OBJECT_CLOAKED => {
-            hide_border_of_window(hwnd);
+            hide_border_for_window(hwnd);
         },
         EVENT_SYSTEM_MINIMIZEEND => {
             let border_window = get_border_from_window(hwnd); 
@@ -77,14 +101,18 @@ pub extern "system" fn handle_win_event_main(
             if has_filtered_style(hwnd) {
                 return;
             } else {
-                destroy_border_of_window(hwnd);
+                destroy_border_for_window(hwnd);
 
                 // Use below to debug whether window borders are properly destroyed
-                let mutex = unsafe { &*BORDERS };
+                // TODO it does not seem to properly destroy everything
+                /*let mutex = unsafe { &*BORDERS };
                 let borders = mutex.lock().unwrap();
                 println!("borders after destroying window: {:?}", borders);
-                drop(borders);
+                drop(borders);*/
             }
+        },
+        EVENT_SYSTEM_MENUPOPUPSTART => {
+            println!("menu pop up!");
         },
         _ => {}
     }
