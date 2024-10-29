@@ -160,30 +160,6 @@ impl WindowBorder {
             radiusY: border_radius 
         };
 
-        // Get the Windows accent color
-        let mut pcr_colorization: u32 = 0;
-        let mut pf_opaqueblend: BOOL = FALSE;
-        let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
-        if result.is_err() {
-            println!("Error getting Windows accent color!");
-        }
-        let red = ((pcr_colorization & 0x00FF0000) >> 16) as f32/255.0;
-        let green = ((pcr_colorization & 0x0000FF00) >> 8) as f32/255.0;
-        let blue = ((pcr_colorization & 0x000000FF) >> 0) as f32/255.0;
-        let avg = (red + green + blue)/3.0;
-
-        self.active_color = D2D1_COLOR_F {
-            r: red,
-            g: green,
-            b: blue,
-            a: 1.0
-        };
-        self.inactive_color = D2D1_COLOR_F {
-            r: avg/1.5 + red/10.0,
-            g: avg/1.5 + green/10.0,
-            b: avg/1.5 + blue/10.0,
-            a: 1.0
-        };
         // Initialize the actual border color assuming it is in focus
         self.current_color = self.active_color;
 
@@ -235,9 +211,12 @@ impl WindowBorder {
             // window border for when they exit fullscreen.
             let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
             if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
-                u_flags = u_flags | SWP_HIDEWINDOW;
-            } else {
-                u_flags = u_flags | SWP_SHOWWINDOW;
+                //u_flags = u_flags | SWP_HIDEWINDOW;
+                ShowWindow(self.border_window, SW_HIDE);
+                return Ok(());
+            } else if !IsWindowVisible(self.border_window).as_bool() {
+                //u_flags = u_flags | SWP_SHOWWINDOW;
+                ShowWindow(self.border_window, SW_SHOWNA);
             }
 
             // If hwnd_above_tracking is the window border itself, we have what we want and there's
@@ -332,26 +311,6 @@ impl WindowBorder {
 
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
-            WM_SHOWWINDOW => {
-                SetWindowPos(self.border_window,
-                    self.tracking_window,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW 
-                );
-            }
-            WM_CLOSE => {
-                SetWindowPos(self.border_window,
-                    self.tracking_window,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW 
-                );
-            }
             WM_MOVE => {
                 // TODO WM_MOVE and WM_SETFOCUS may be called after WM_CLOSE, causing the window to
                 // be visible again which is not what we want. That's why I check here to make sure
@@ -393,23 +352,10 @@ impl WindowBorder {
                 self.render();
             },
             WM_QUERYOPEN => {
-                SetWindowPos(self.border_window,
-                    self.tracking_window,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW 
-                );
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                SetWindowPos(self.border_window,
-                    self.tracking_window,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW 
-                );
+                ShowWindow(self.border_window, SW_HIDE);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                ShowWindow(self.border_window, SW_SHOWNA);
+
                 self.update_window_rect();
                 self.update_position();
                 self.render();
@@ -418,7 +364,14 @@ impl WindowBorder {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
                 PostQuitMessage(0);
             },
-            _ => { /*println!("message: {:?}", message)*/ }
+            // Ignore these window position messages
+            WM_WINDOWPOSCHANGING => {},
+            WM_WINDOWPOSCHANGED => {},
+            _ => {
+                //let before = std::time::Instant::now();
+                DefWindowProcW(window, message, wparam, lparam);
+                //println!("other message and elapsed time: {:?}, {:?}", message, before.elapsed());
+            }
         }
         LRESULT(0)
     }
