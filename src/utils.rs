@@ -8,12 +8,16 @@ use crate::*;
 
 // TODO THE CODE IS STILL A MESS
 
-pub fn get_width(rect: RECT) -> i32 {
+pub fn get_rect_width(rect: RECT) -> i32 {
     return rect.right - rect.left;
 }
 
-pub fn get_height(rect: RECT) -> i32 {
+pub fn get_rect_height(rect: RECT) -> i32 {
     return rect.bottom - rect.top;
+}
+
+pub fn is_window_visible(hwnd: HWND) -> bool {
+    return unsafe { IsWindowVisible(hwnd).as_bool() };
 }
 
 pub fn has_filtered_style(hwnd: HWND) -> bool {
@@ -26,6 +30,43 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
     {
         return true;
     }
+
+    return false;
+}
+
+// TODO add config options to filter classes 
+pub fn has_filtered_class(hwnd: HWND) -> bool {
+    let mut class_arr: [u16; 256] = [0; 256];
+    if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
+        println!("error getting class name!");
+        return true;
+    }
+
+    let binding = String::from_utf16_lossy(&class_arr);
+    let class_name = binding.split_once("\0").unwrap().0;
+
+    if class_name == "Windows.UI.Core.CoreWindow" {
+        return true;
+    }
+
+    return false;
+}
+
+// TODO add config options to filter titles
+pub fn has_filtered_title(hwnd: HWND) -> bool {
+    let mut title_arr: [u16; 256] = [0; 256]; 
+    if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
+        println!("error getting window title!");
+        return true;
+    }
+
+    let binding = String::from_utf16_lossy(&title_arr);
+    let title = binding.split_once("\0").unwrap().0;
+
+    if title == "Flow.Launcher" || title == "Zebar" {
+        return true;
+    }
+
     return false;
 }
 
@@ -47,21 +88,20 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
 }
 
 pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()> {
-    let borders_mutex = unsafe { &*BORDERS };
-    let config_mutex = unsafe { &*CONFIG };
+    let borders_mutex = &*BORDERS;
+    let config_mutex = &*CONFIG;
     let window = SendHWND(tracking_window);
 
-    let thread = std::thread::spawn(move || {
+    let _ = std::thread::spawn(move || {
         let window_sent = window;
 
         // This delay can be used to wait for a window to finish its opening animation or for it to
         // become visible if it is not so at first
         std::thread::sleep(std::time::Duration::from_millis(delay));
-        if unsafe { !IsWindowVisible(window_sent.0).as_bool() } {
+        if !is_window_visible(window_sent.0) {
             return;
         }
 
-        //let before = std::time::Instant::now();
         let active_color: D2D1_COLOR_F;
         let inactive_color: D2D1_COLOR_F;
         let config = config_mutex.lock().unwrap();
@@ -105,7 +145,6 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             active_color = get_color_from_hex(config.active_color.as_str());
             inactive_color = get_color_from_hex(config.inactive_color.as_str());
         }
-        //println!("time it takes to get colors: {:?}", before.elapsed());
 
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
@@ -125,27 +164,26 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         // adding the key and initializing the border. This is important because sometimes, the
         // event_hook function will call spawn_border_thread multiple times for the same window.
         if borders_hashmap.contains_key(&window_isize) {
-            //println!("Duplicate window: {:?}", borders_hashmap);
             drop(borders_hashmap);
             return;
         }
 
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
-        border.create_border_window(hinstance);
+        let _ = border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
         drop(borders_hashmap);
 
-        border.init(hinstance);
+        let _ = border.init();
     });
 
     return Ok(());
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
-    let mutex = unsafe { &*BORDERS };
+    let mutex = &*BORDERS;
     let window = SendHWND(tracking_window);
 
-    let thread = std::thread::spawn(move || {
+    let _ = std::thread::spawn(move || {
         let window_sent = window;
         let mut borders_hashmap = mutex.lock().unwrap();
         let window_isize = window_sent.0 .0 as isize;
@@ -154,8 +192,6 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
         if border_option.is_some() {
             let border_window: HWND = HWND((*border_option.unwrap()) as *mut _);
             unsafe { SendMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
-            // TODO figure out why DestroyWindow doesn't work
-            //unsafe { DestroyWindow(border_window) };
             borders_hashmap.remove(&window_isize);
         }
 
@@ -166,7 +202,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
 }
 
 pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
-    let mutex = unsafe { &*BORDERS };
+    let mutex = &*BORDERS;
     let borders = mutex.lock().unwrap();
     let hwnd_isize = hwnd.0 as isize;
     let border_option = borders.get(&hwnd_isize);
@@ -181,57 +217,29 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
     }
 }
 
-// Return true if the border exists in the border hashmap. Otherwise, return false.
-// Specify a delay to prevent the border from appearing while a window is in its opening animation.
+// Return true if the border exists in the border hashmap. Otherwise, create a new border and
+// return false. 
+// We can also specify a delay to prevent the border from appearing while a window is in its
+// opening animation. 
 pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
-    let mutex = unsafe { &*BORDERS };
-    let borders = mutex.lock().unwrap();
-    let hwnd_isize = hwnd.0 as isize;
-    let border_option = borders.get(&hwnd_isize);
-
-    if border_option.is_some() {
-        let border_window: HWND = HWND(*border_option.unwrap() as _);
-        drop(borders);
-        unsafe { ShowWindow(border_window, SW_SHOWNA) };
+    let border_window = get_border_from_window(hwnd);
+    if border_window.is_some() {
+        unsafe { let _ = ShowWindow(border_window.unwrap(), SW_SHOWNA); }
         return true;
     } else {
-        drop(borders);
-        // When a popup window is created, it can mess up the z-order of the border so we
-        // reset it here. I also wait a milisecond for the popup window to set its
-        // position. THIS IS SO TACKY LMAO. TODO YOU DON'T NEED THIS IF YOU'RE USING
-        // EVENT_OBJECT_REORDER
-        /*if style & WS_POPUP.0 != 0 {
-            //println!("popup window created!");
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            let borders = mutex.lock().unwrap();
-
-            // Get the parent window of the popup so we can find the border window and reset its
-            // position
-            let parent = unsafe { GetParent(hwnd) };
-            if parent.is_ok() {
-                let parent_isize = parent.unwrap().0 as isize;
-                let border_option = borders.get(&parent_isize);
-                if border_option.is_some() {
-                    let border_window = HWND(*border_option.unwrap() as *mut _);
-                    unsafe { PostMessageW(border_window, WM_SETFOCUS, WPARAM(0), LPARAM(0)) };
-                }
-            }
-            drop(borders);
-        }*/
-
-        if is_cloaked(hwnd) || has_filtered_style(hwnd) {
+        if is_cloaked(hwnd) || has_filtered_style(hwnd) || has_filtered_class(hwnd) || has_filtered_title(hwnd) {
             return false;
         }
-        create_border_for_window(hwnd, delay);
+        let _ = create_border_for_window(hwnd, delay);
         return false;
     }
 }
 
 pub fn hide_border_for_window(hwnd: HWND) -> bool {
-    let mutex = unsafe { &*BORDERS };
+    let mutex = &*BORDERS;
     let window = SendHWND(hwnd);
 
-    let thread = std::thread::spawn(move || {
+    let _ = std::thread::spawn(move || {
         let window_sent = window;
         let borders = mutex.lock().unwrap();
         let window_isize = window_sent.0 .0 as isize;
@@ -240,7 +248,7 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
         if border_option.is_some() {
             let border_window: HWND = HWND(*border_option.unwrap() as _);
             drop(borders);
-            unsafe { ShowWindow(border_window, SW_HIDE) };
+            unsafe { let _ = ShowWindow(border_window, SW_HIDE); }
         } else {
             drop(borders);
         }

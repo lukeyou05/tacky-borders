@@ -1,11 +1,10 @@
-// TODO remove allow unused and fix all the warnings generated
-#![allow(unused)]
+//#![allow(unused)]
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
 
-use std::sync::{Arc, Mutex, LazyLock};
+use std::sync::{Mutex, LazyLock};
 use std::collections::HashMap;
 use windows::{
     core::*,
@@ -14,7 +13,6 @@ use windows::{
     Win32::System::Threading::*,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
-    Win32::Graphics::Dwm::*,
 };
 
 extern "C" {
@@ -29,17 +27,17 @@ mod utils;
 
 use crate::utils::*;
 
-pub static mut BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// This shit supposedly unsafe af but it works so idgaf. 
+// This is supposedly unsafe af but it works soo 
 pub struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    register_window_class();
+    let _ = register_window_class();
     println!("window class is registered!");
-    enum_windows();
+    let _ = enum_windows();
 
     let main_thread = unsafe { GetCurrentThreadId() };
     let tray_icon_option = sys_tray_icon::create_tray_icon(main_thread);
@@ -61,7 +59,7 @@ fn main() {
                 }
             }
 
-            TranslateMessage(&message);
+            let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
             std::thread::sleep(std::time::Duration::from_millis(16))
         }
@@ -74,7 +72,7 @@ pub fn register_window_class() -> Result<()> {
         let window_class = w!("tacky-border");
         let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
 
-        let mut wcex = WNDCLASSEXW {
+        let wcex = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(window_border::WindowBorder::s_wnd_proc),
             hInstance: hinstance,
@@ -107,44 +105,35 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
     }
 }
 
-pub fn enum_windows() {
-    let mut windows: Vec<HWND> = Vec::new();
+pub fn enum_windows() -> Result<()> {
     unsafe {
-        EnumWindows(
+        let _ = EnumWindows(
             Some(enum_windows_callback),
-            LPARAM(&mut windows as *mut _ as isize),
+            LPARAM::default(),
         );
     }
     println!("Windows have been enumerated!");
-    println!("Windows: {:?}", windows);
-
-    for hwnd in windows {
-        create_border_for_window(hwnd, 0);
-    }
+    return Ok(());
 }
 
 pub fn restart_borders() {
-    let mutex = unsafe { &*BORDERS };
+    let mutex = &*BORDERS;
     let mut borders = mutex.lock().unwrap();
     for value in borders.values() {
         let border_window = HWND(*value as *mut _);
         unsafe { SendMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
-        // TODO figure out why DestroyWindow doesn't work
-        //unsafe { DestroyWindow(border_window) };
     }
     let _ = borders.drain();
     drop(borders);
-    enum_windows();
+    let _ = enum_windows();
 }
 
-unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    if IsWindowVisible(hwnd).as_bool() {
-        if has_filtered_style(hwnd) || is_cloaked(hwnd) {
-            return TRUE;
-        }
-
-        let visible_windows: &mut Vec<HWND> = std::mem::transmute(lparam.0);
-        visible_windows.push(hwnd);
+unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
+    // Returning FALSE will exit the EnumWindows loop so we must return TRUE here
+    if !is_window_visible(_hwnd) || is_cloaked(_hwnd) || has_filtered_style(_hwnd) || has_filtered_class(_hwnd) || has_filtered_title(_hwnd) {
+        return TRUE;
     }
-    TRUE 
+
+    let _ = create_border_for_window(_hwnd, 0);
+    return TRUE; 
 }

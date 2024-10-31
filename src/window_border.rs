@@ -1,8 +1,9 @@
-use std::ffi::c_ulong;
+// TODO Add result handling. There's so many let _ = lmao it's so bad.
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use windows::{
     core::*,
+    Foundation::Numerics::*,
     Win32::Foundation::*,
     Win32::Graphics::Gdi::*,
     Win32::Graphics::Dwm::*,
@@ -63,11 +64,11 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn init(&mut self, hinstance: HINSTANCE) -> Result<()> {
+    pub fn init(&mut self) -> Result<()> {
         unsafe {
             // Make the window border transparent 
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
-            let hrgn = CreateRectRgn(pos, 0, (pos + 1), 1);
+            let hrgn = CreateRectRgn(pos, 0, pos + 1, 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
             if !hrgn.is_invalid() {
                 bh = DWM_BLURBEHIND {
@@ -78,7 +79,7 @@ impl WindowBorder {
                 };
             }
 
-            DwmEnableBlurBehindWindow(self.border_window, &bh);
+            let _ = DwmEnableBlurBehindWindow(self.border_window, &bh);
             if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 0, LWA_COLORKEY).is_err() {
                 println!("Error Setting Layered Window Attributes!");
             }
@@ -86,23 +87,28 @@ impl WindowBorder {
                 println!("Error Setting Layered Window Attributes!");
             }
             
-            self.create_render_targets();
-            self.render();
-            ShowWindow(self.border_window, SW_SHOWNA);
+            let _ = self.create_render_targets();
+            let _ = self.render();
+
+            // If the tracking window does not have a window edge (i.e. when it switches to
+            // fullscreen), don't show the window border. 
+            let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
+            if ex_style & WS_EX_WINDOWEDGE.0 != 0 {
+                let _ = ShowWindow(self.border_window, SW_SHOWNA);
+            }
             
             // TODO Here im running all the render commands again because it sometimes doesn't
             // render properly at first and I'm too lazy to figure out why. Definitely should be
             // looked into in the future.
             std::thread::sleep(std::time::Duration::from_millis(5));
-            self.update_color();
-            self.update_window_rect();
-            self.update_position();
-            self.render();
+            let _ = self.update_color();
+            let _ = self.update_window_rect();
+            let _ = self.update_position();
+            let _ = self.render();
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
-                //println!("message received in window border thread: {:?}", message.message);
-                TranslateMessage(&message);
+                let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
@@ -121,7 +127,8 @@ impl WindowBorder {
             },
             dpiX: self.dpi,
             dpiY: self.dpi,
-            ..Default::default() };
+            ..Default::default()
+        };
         self.hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
             hwnd: self.border_window, 
             pixelSize: Default::default(), 
@@ -129,7 +136,7 @@ impl WindowBorder {
         };
         self.border_brush = D2D1_BRUSH_PROPERTIES { 
             opacity: 1.0 as f32, 
-            transform: Default::default() 
+            transform: Matrix3x2::identity() 
         };
 
         // Create a rounded_rect with radius depending on the force_border_radius variable 
@@ -167,14 +174,16 @@ impl WindowBorder {
 
         unsafe {
             let factory = &*RENDER_FACTORY;
-            self.render_target.set(
+            let _ = self.render_target.set(
                 factory.CreateHwndRenderTarget(&self.render_target_properties, &self.hwnd_render_target_properties).expect("creating self.render_target failed")
             );
+            let render_target = self.render_target.get().unwrap();
+            render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         }
 
-        self.update_color();
-        self.update_window_rect();
-        self.update_position();
+        let _ = self.update_color();
+        let _ = self.update_window_rect();
+        let _ = self.update_position();
 
         return Ok(());
     }
@@ -217,7 +226,7 @@ impl WindowBorder {
                 hwnd_above_tracking = Ok(HWND_TOP);
             }
 
-            SetWindowPos(self.border_window,
+            let _ = SetWindowPos(self.border_window,
                 hwnd_above_tracking.unwrap(),
                 self.window_rect.left,
                 self.window_rect.top,
@@ -229,12 +238,13 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn update_color(&mut self) {
+    pub fn update_color(&mut self) -> Result<()> {
         if unsafe { GetForegroundWindow() } == self.tracking_window {
             self.current_color = self.active_color;
         } else {
             self.current_color = self.inactive_color; 
         }
+        return Ok(());
     }
 
     pub fn render(&mut self) -> Result<()> {
@@ -251,8 +261,7 @@ impl WindowBorder {
         };
 
         unsafe {
-            render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
-            render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            let _ = render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
 
             let brush = render_target.CreateSolidColorBrush(&self.current_color, Some(&self.border_brush))?;
             
@@ -263,7 +272,6 @@ impl WindowBorder {
                 bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 + self.border_offset) as f32
             };
 
-
             render_target.BeginDraw();
             render_target.Clear(None);
             render_target.DrawRoundedRectangle(
@@ -272,9 +280,8 @@ impl WindowBorder {
                 self.border_size as f32,
                 None
             );
-            render_target.EndDraw(None, None);
+            let _ = render_target.EndDraw(None, None);
         }
-
         Ok(())
     }
 
@@ -286,7 +293,6 @@ impl WindowBorder {
         let mut border_pointer: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
         
         if border_pointer == std::ptr::null_mut() && message == WM_CREATE {
-            //println!("ref is null, assigning new ref");
             let create_struct: *mut CREATESTRUCTW = lparam.0 as *mut _;
             border_pointer = (*create_struct).lpCreateParams as *mut _;
             SetWindowLongPtrW(window, GWLP_USERDATA, border_pointer as _);
@@ -300,56 +306,48 @@ impl WindowBorder {
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
             WM_MOVE => {
-                // TODO WM_MOVE and WM_SETFOCUS may be called after WM_CLOSE, causing the window to
-                // be visible again which is not what we want. That's why I check here to make sure
-                // whether the window is cloaked/visible or not. It doesn't take up much processing
-                // time so it's totally fine to leave as is, but it might still be worth trying to
-                // make better.
-                if is_cloaked(self.tracking_window) || !IsWindowVisible(self.tracking_window).as_bool() {
+                if is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
-                // If the tracking window does not have a window edge, don't show the window border.
-                // The reason I'm not just destroying the window border is because going into
-                // fullscreen in browsers also gets rid of the WINDOWEDGE style, but I want to keep the
-                // window border for when they exit fullscreen.
+                // If the tracking window does not have a window edge (i.e. when it switches to
+                // fullscreen), don't show the window border. 
                 let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
                 if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
-                    ShowWindow(self.border_window, SW_HIDE);
+                    let _ = ShowWindow(self.border_window, SW_HIDE);
                     return LRESULT(0);
-                } else if !IsWindowVisible(self.border_window).as_bool() {
-                    ShowWindow(self.border_window, SW_SHOWNA);
+                } else if !is_window_visible(self.border_window) {
+                    let _ = ShowWindow(self.border_window, SW_SHOWNA);
                 }
 
                 let old_rect = self.window_rect.clone();
-                self.update_window_rect();
-                self.update_position();
-                
-                if get_width(self.window_rect) != get_width(old_rect)
-                || get_height(self.window_rect) != get_height(old_rect) {
-                    self.render();
+                let _ = self.update_window_rect();
+                let _ = self.update_position();
+               
+                if get_rect_width(self.window_rect) != get_rect_width(old_rect)
+                || get_rect_height(self.window_rect) != get_rect_height(old_rect) {
+                    let _ = self.render();
                 }
             },
             WM_SETFOCUS => {
-                //println!("setting focus");
-                if is_cloaked(self.tracking_window) || !IsWindowVisible(self.tracking_window).as_bool() {
+                if is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
-                self.update_color();
+                let _ = self.update_color();
                 if self.tracking_window == GetForegroundWindow() {
-                    self.update_position();
+                    let _ = self.update_position();
                 }
-                self.render();
+                let _ = self.render();
             },
             WM_QUERYOPEN => {
-                ShowWindow(self.border_window, SW_HIDE);
+                let _ = ShowWindow(self.border_window, SW_HIDE);
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                ShowWindow(self.border_window, SW_SHOWNA);
+                let _ = ShowWindow(self.border_window, SW_SHOWNA);
 
-                self.update_window_rect();
-                self.update_position();
-                self.render();
+                let _ = self.update_window_rect();
+                let _ = self.update_position();
+                let _ = self.render();
             },
             WM_DESTROY => {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
@@ -359,9 +357,7 @@ impl WindowBorder {
             WM_WINDOWPOSCHANGING => {},
             WM_WINDOWPOSCHANGED => {},
             _ => {
-                //let before = std::time::Instant::now();
                 return DefWindowProcW(window, message, wparam, lparam);
-                //println!("other message and elapsed time: {:?}, {:?}", message, before.elapsed());
             }
         }
         LRESULT(0)
