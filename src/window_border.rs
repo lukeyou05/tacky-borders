@@ -305,15 +305,19 @@ impl WindowBorder {
 
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
-            WM_MOVE => {
+            // EVENT_OBJECT_LOCATIONCHANGE
+            5000 => {
                 if is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
                 // If the tracking window does not have a window edge (i.e. when it switches to
-                // fullscreen), don't show the window border. 
+                // fullscreen), don't show the window border. Additionally, if it is maximized, we
+                // also don't show the border.
+                let style = GetWindowLongW(self.tracking_window, GWL_STYLE) as u32;
                 let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
-                if ex_style & WS_EX_WINDOWEDGE.0 == 0 {
+
+                if ex_style & WS_EX_WINDOWEDGE.0 == 0 || style & WS_MAXIMIZE.0 != 0 {
                     let _ = ShowWindow(self.border_window, SW_HIDE);
                     return LRESULT(0);
                 } else if !is_window_visible(self.border_window) {
@@ -323,24 +327,28 @@ impl WindowBorder {
                 let old_rect = self.window_rect.clone();
                 let _ = self.update_window_rect();
                 let _ = self.update_position();
-               
+              
+                // Only re-render the border when its size changes
                 if get_rect_width(self.window_rect) != get_rect_width(old_rect)
                 || get_rect_height(self.window_rect) != get_rect_height(old_rect) {
                     let _ = self.render();
                 }
             },
-            WM_SETFOCUS => {
+            // EVENT_OBJECT_REORDER
+            5001 => {
                 if is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
                 let _ = self.update_color();
-                if self.tracking_window == GetForegroundWindow() {
-                    let _ = self.update_position();
-                }
+                let _ = self.update_position();
                 let _ = self.render();
             },
-            WM_QUERYOPEN => {
+            // EVENT_SYSTEM_MINIMIZEEND
+            // When a window is about to be unminimized, hide the border and let the thread sleep
+            // for 200ms to wait for the window animation to finish, then show the border.
+            // TODO still does not work perfectly!
+            5002 => {
                 let _ = ShowWindow(self.border_window, SW_HIDE);
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 let _ = ShowWindow(self.border_window, SW_SHOWNA);

@@ -16,10 +16,6 @@ pub fn get_rect_height(rect: RECT) -> i32 {
     return rect.bottom - rect.top;
 }
 
-pub fn is_window_visible(hwnd: HWND) -> bool {
-    return unsafe { IsWindowVisible(hwnd).as_bool() };
-}
-
 pub fn has_filtered_style(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
     let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
@@ -70,6 +66,10 @@ pub fn has_filtered_title(hwnd: HWND) -> bool {
     return false;
 }
 
+pub fn is_window_visible(hwnd: HWND) -> bool {
+    return unsafe { IsWindowVisible(hwnd).as_bool() };
+}
+
 pub fn is_cloaked(hwnd: HWND) -> bool {
     let mut is_cloaked = FALSE;
     let result = unsafe {
@@ -85,6 +85,16 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
         return true;
     }
     return is_cloaked.as_bool();
+}
+
+pub fn get_show_cmd(hwnd: HWND) -> u32 {
+    let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
+    let result = unsafe { GetWindowPlacement(hwnd, std::ptr::addr_of_mut!(wp)) };
+    if result.is_err() {
+        println!("error getting window_placement!");
+        return 0; 
+    }
+    return wp.showCmd;
 }
 
 pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()> {
