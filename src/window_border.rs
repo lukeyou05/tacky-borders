@@ -1,4 +1,4 @@
-// TODO Add result handling. There's so many let _ = lmao it's so bad.
+// TODO Add result handling. There's so many let _ = 
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use windows::{
@@ -25,17 +25,16 @@ pub struct WindowBorder {
     pub window_rect: RECT,
     pub border_size: i32,
     pub border_offset: i32,
-    pub force_border_radius: f32,
-    pub dpi: f32,
+    pub border_radius: f32,
     pub render_target_properties: D2D1_RENDER_TARGET_PROPERTIES,
     pub hwnd_render_target_properties: D2D1_HWND_RENDER_TARGET_PROPERTIES,
+    pub brush_properties: D2D1_BRUSH_PROPERTIES,
     pub render_target: OnceLock<ID2D1HwndRenderTarget>,
-    pub border_brush: D2D1_BRUSH_PROPERTIES,
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: D2D1_COLOR_F,
     pub inactive_color: D2D1_COLOR_F,
     pub current_color: D2D1_COLOR_F,
-    pub tracking_is_minimized: bool,
+    pub pause: bool,
 }
 
 impl WindowBorder {
@@ -92,6 +91,13 @@ impl WindowBorder {
             if has_native_border(self.tracking_window) {
                 let _ = self.update_position(Some(SWP_SHOWWINDOW));
                 let _ = self.render();
+
+                // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
+                // This is very hacky and needs to be looked into. It may be related to the issue
+                // detailed in update_window_rect. TODO
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                let _ = self.update_position(Some(SWP_SHOWWINDOW));
+                let _ = self.render();
             }
 
             let mut message = MSG::default();
@@ -106,15 +112,12 @@ impl WindowBorder {
     }
 
     pub fn create_render_targets(&mut self) -> Result<()> {
-        self.dpi = 96.0;
         self.render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT { 
                 format: DXGI_FORMAT_UNKNOWN, 
                 alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED 
             },
-            dpiX: self.dpi,
-            dpiY: self.dpi,
             ..Default::default()
         };
         self.hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
@@ -122,15 +125,15 @@ impl WindowBorder {
             pixelSize: Default::default(), 
             presentOptions: D2D1_PRESENT_OPTIONS_IMMEDIATELY 
         };
-        self.border_brush = D2D1_BRUSH_PROPERTIES { 
+        self.brush_properties = D2D1_BRUSH_PROPERTIES { 
             opacity: 1.0 as f32, 
             transform: Matrix3x2::identity() 
         };
 
-        // Create a rounded_rect with radius depending on the force_border_radius variable 
+        // Create a rounded_rect with radius depending on the border_radius variable 
         let mut border_radius = 0.0;
         let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
-        if self.force_border_radius == -1.0 {
+        if self.border_radius == -1.0 {
             let result = unsafe { DwmGetWindowAttribute(
                 self.tracking_window,
                 DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -148,7 +151,7 @@ impl WindowBorder {
                 _ => {}
             }
         } else {
-            border_radius = self.force_border_radius;
+            border_radius = self.border_radius;
         }
         
         self.rounded_rect = D2D1_ROUNDED_RECT { 
@@ -280,7 +283,7 @@ impl WindowBorder {
         unsafe {
             let _ = render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
 
-            let brush = render_target.CreateSolidColorBrush(&self.current_color, Some(&self.border_brush))?;
+            let brush = render_target.CreateSolidColorBrush(&self.current_color, Some(&self.brush_properties))?;
 
             render_target.BeginDraw();
             render_target.Clear(None);
@@ -317,7 +320,7 @@ impl WindowBorder {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
             5000 => {
-                if self.tracking_is_minimized || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
+                if self.pause || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
@@ -340,7 +343,7 @@ impl WindowBorder {
             },
             // EVENT_OBJECT_REORDER
             5001 => {
-                if self.tracking_is_minimized || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
+                if self.pause || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
@@ -350,7 +353,7 @@ impl WindowBorder {
             },
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
             5002 => {
-                if self.tracking_is_minimized {
+                if self.pause {
                     return LRESULT(0);
                 }
 
@@ -367,7 +370,7 @@ impl WindowBorder {
             // EVENT_OBJECT_MINIMIZESTART
             5004 => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
-                self.tracking_is_minimized = true;
+                self.pause = true;
             },
             // EVENT_SYSTEM_MINIMIZEEND
             // When a window is about to be unminimized, hide the border and let the thread sleep
@@ -380,7 +383,7 @@ impl WindowBorder {
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
-                self.tracking_is_minimized = false;
+                self.pause = false;
             },
             WM_DESTROY => {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);

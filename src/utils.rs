@@ -181,7 +181,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             tracking_window: window_sent.0,
             border_size: config.border_size,
             border_offset: config.border_offset,
-            force_border_radius: config.border_radius,
+            border_radius: config.border_radius,
             active_color: active_color,
             inactive_color: inactive_color,
             ..Default::default()
