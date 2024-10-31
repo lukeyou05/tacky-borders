@@ -50,7 +50,7 @@ pub extern "system" fn handle_win_event_main(
             drop(borders);
         },
         EVENT_OBJECT_SHOW => {
-            show_border_for_window(_hwnd, 300);
+            show_border_for_window(_hwnd, 250);
         },
         EVENT_OBJECT_HIDE => {
             // I have to check IsWindowVisible because for some reason, EVENT_OBJECT_HIDE can be

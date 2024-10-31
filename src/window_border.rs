@@ -118,6 +118,8 @@ impl WindowBorder {
                 format: DXGI_FORMAT_UNKNOWN, 
                 alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED 
             },
+            dpiX: 96.0,
+            dpiY: 96.0,
             ..Default::default()
         };
         self.hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES { 
