@@ -59,7 +59,7 @@ pub fn has_filtered_title(hwnd: HWND) -> bool {
     let binding = String::from_utf16_lossy(&title_arr);
     let title = binding.split_once("\0").unwrap().0;
 
-    if title == "Flow.Launcher" || title == "Zebar" {
+    if title == "Flow.Launcher" || title == "Zebar" || title == "keyviz" {
         return true;
     }
 
