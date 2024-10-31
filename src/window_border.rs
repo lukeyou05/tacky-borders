@@ -35,6 +35,7 @@ pub struct WindowBorder {
     pub active_color: D2D1_COLOR_F,
     pub inactive_color: D2D1_COLOR_F,
     pub current_color: D2D1_COLOR_F,
+    pub tracking_is_minimized: bool,
 }
 
 impl WindowBorder {
@@ -88,23 +89,10 @@ impl WindowBorder {
             }
             
             let _ = self.create_render_targets();
-            let _ = self.render();
-
-            // If the tracking window does not have a window edge (i.e. when it switches to
-            // fullscreen), don't show the window border. 
-            let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
-            if ex_style & WS_EX_WINDOWEDGE.0 != 0 {
-                let _ = ShowWindow(self.border_window, SW_SHOWNA);
+            if has_native_border(self.tracking_window) {
+                let _ = self.update_position(Some(SWP_SHOWWINDOW));
+                let _ = self.render();
             }
-            
-            // TODO Here im running all the render commands again because it sometimes doesn't
-            // render properly at first and I'm too lazy to figure out why. Definitely should be
-            // looked into in the future.
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            let _ = self.update_color();
-            let _ = self.update_window_rect();
-            let _ = self.update_position();
-            let _ = self.render();
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
@@ -183,12 +171,15 @@ impl WindowBorder {
 
         let _ = self.update_color();
         let _ = self.update_window_rect();
-        let _ = self.update_position();
+        let _ = self.update_position(None);
 
         return Ok(());
     }
 
     pub fn update_window_rect(&mut self) -> Result<()> {
+        // TODO fix render issue (read further below)
+        let old_rect = self.window_rect.clone();
+
         let result = unsafe { DwmGetWindowAttribute(
             self.tracking_window, 
             DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -197,8 +188,20 @@ impl WindowBorder {
         ) }; 
         if result.is_err() {
             println!("Error getting frame rect!");
-            // I have not tested if this actually works yet
-            unsafe { SendMessageW(self.border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+            unsafe { let _ = ShowWindow(self.border_window, SW_HIDE); }
+        }
+
+        // TODO When a window is minimized, all four of these points go far below 0, and for some
+        // reason, render() will sometimes render at this minimized size, even when the
+        // render_target size and rounded_rect.rect are changed correctly after an
+        // update_window_rect call. So, this is a temporary solution but it should absolutely be
+        // looked further into.
+        if self.window_rect.top <= 0
+        && self.window_rect.left <= 0
+        && self.window_rect.right <= 0
+        && self.window_rect.bottom <= 0 {
+            self.window_rect = old_rect;
+            return Ok(());
         }
 
         self.window_rect.top -= self.border_size;
@@ -209,24 +212,27 @@ impl WindowBorder {
         return Ok(());
     }
 
-    pub fn update_position(&mut self) -> Result<()> {
+    pub fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> Result<()> {
         unsafe {
-            // Place the window border above the tracking window so that it looks nice with window
-            // drop shadows enabled.
+            // Place the window border above the tracking window
             let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
-            let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW;
+            let custom_flags = match c_flags {
+                Some(flags) => flags,
+                None => SET_WINDOW_POS_FLAGS::default(),
+            };
+            let mut u_flags = SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | custom_flags;
 
             // If hwnd_above_tracking is the window border itself, we have what we want and there's
-            // no need to change the z-order. If hwnd_above_tracking returns an error, it's likely
-            // that tracking window is already the highest in z-order, so we use HWND_TOP to place
-            // the window border above.
+            //  no need to change the z-order (plus it results in an error if we try it). 
+            // If hwnd_above_tracking returns an error, it's likely that tracking_window is already
+            //  the highest in z-order, so we use HWND_TOP to place the window border above.
             if hwnd_above_tracking == Ok(self.border_window) {
                 u_flags = u_flags | SWP_NOZORDER;
             } else if hwnd_above_tracking.is_err() {
                 hwnd_above_tracking = Ok(HWND_TOP);
             }
 
-            let _ = SetWindowPos(self.border_window,
+            let result = SetWindowPos(self.border_window,
                 hwnd_above_tracking.unwrap(),
                 self.window_rect.left,
                 self.window_rect.top,
@@ -234,12 +240,16 @@ impl WindowBorder {
                 self.window_rect.bottom - self.window_rect.top,
                 u_flags 
             );
+            if result.is_err() {
+                println!("Error setting window pos!");
+                let _ = ShowWindow(self.border_window, SW_HIDE);
+            }
         }
         return Ok(());
     }
 
     pub fn update_color(&mut self) -> Result<()> {
-        if unsafe { GetForegroundWindow() } == self.tracking_window {
+        if is_active_window(self.tracking_window) {
             self.current_color = self.active_color;
         } else {
             self.current_color = self.inactive_color; 
@@ -260,17 +270,17 @@ impl WindowBorder {
             height: (self.window_rect.bottom - self.window_rect.top) as u32
         };
 
+        self.rounded_rect.rect = D2D_RECT_F { 
+            left: (self.border_size/2 - self.border_offset) as f32, 
+            top: (self.border_size/2 - self.border_offset) as f32, 
+            right: (self.window_rect.right - self.window_rect.left - self.border_size/2 + self.border_offset) as f32, 
+            bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 + self.border_offset) as f32
+        };
+
         unsafe {
             let _ = render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
 
             let brush = render_target.CreateSolidColorBrush(&self.current_color, Some(&self.border_brush))?;
-            
-            self.rounded_rect.rect = D2D_RECT_F { 
-                left: (self.border_size/2 - self.border_offset) as f32, 
-                top: (self.border_size/2 - self.border_offset) as f32, 
-                right: (self.window_rect.right - self.window_rect.left - self.border_size/2 + self.border_offset) as f32, 
-                bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size/2 + self.border_offset) as f32
-            };
 
             render_target.BeginDraw();
             render_target.Clear(None);
@@ -282,7 +292,7 @@ impl WindowBorder {
             );
             let _ = render_target.EndDraw(None, None);
         }
-        Ok(())
+        return Ok(());
     }
 
     // When CreateWindowExW is called, we can optionally pass a value to its LPARAM field which will
@@ -307,26 +317,20 @@ impl WindowBorder {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
             5000 => {
-                if is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
+                if self.tracking_is_minimized || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
-                // If the tracking window does not have a window edge (i.e. when it switches to
-                // fullscreen), don't show the window border. Additionally, if it is maximized, we
-                // also don't show the border.
-                let style = GetWindowLongW(self.tracking_window, GWL_STYLE) as u32;
-                let ex_style = GetWindowLongW(self.tracking_window, GWL_EXSTYLE) as u32;
-
-                if ex_style & WS_EX_WINDOWEDGE.0 == 0 || style & WS_MAXIMIZE.0 != 0 {
-                    let _ = ShowWindow(self.border_window, SW_HIDE);
+                if !has_native_border(self.tracking_window) {
+                    let _ = self.update_position(Some(SWP_HIDEWINDOW));
                     return LRESULT(0);
                 } else if !is_window_visible(self.border_window) {
-                    let _ = ShowWindow(self.border_window, SW_SHOWNA);
+                    let _ = self.update_position(Some(SWP_SHOWWINDOW));
                 }
 
                 let old_rect = self.window_rect.clone();
                 let _ = self.update_window_rect();
-                let _ = self.update_position();
+                let _ = self.update_position(None);
               
                 // Only re-render the border when its size changes
                 if get_rect_width(self.window_rect) != get_rect_width(old_rect)
@@ -336,26 +340,47 @@ impl WindowBorder {
             },
             // EVENT_OBJECT_REORDER
             5001 => {
-                if is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
+                if self.tracking_is_minimized || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
                     return LRESULT(0);
                 }
 
                 let _ = self.update_color();
-                let _ = self.update_position();
+                let _ = self.update_position(None);
                 let _ = self.render();
+            },
+            // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
+            5002 => {
+                if self.tracking_is_minimized {
+                    return LRESULT(0);
+                }
+
+                if has_native_border(self.tracking_window) {
+                    let _ = self.update_window_rect();
+                    let _ = self.update_position(Some(SWP_SHOWWINDOW));
+                    let _ = self.render();
+                }
+            },
+            // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
+            5003 => {
+                let _ = self.update_position(Some(SWP_HIDEWINDOW));
+            }
+            // EVENT_OBJECT_MINIMIZESTART
+            5004 => {
+                let _ = self.update_position(Some(SWP_HIDEWINDOW));
+                self.tracking_is_minimized = true;
             },
             // EVENT_SYSTEM_MINIMIZEEND
             // When a window is about to be unminimized, hide the border and let the thread sleep
             // for 200ms to wait for the window animation to finish, then show the border.
-            // TODO still does not work perfectly!
-            5002 => {
-                let _ = ShowWindow(self.border_window, SW_HIDE);
+            5005 => {
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                let _ = ShowWindow(self.border_window, SW_SHOWNA);
 
-                let _ = self.update_window_rect();
-                let _ = self.update_position();
-                let _ = self.render();
+                if has_native_border(self.tracking_window) {
+                    let _ = self.update_window_rect();
+                    let _ = self.update_position(Some(SWP_SHOWWINDOW));
+                    let _ = self.render();
+                }
+                self.tracking_is_minimized = false;
             },
             WM_DESTROY => {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);

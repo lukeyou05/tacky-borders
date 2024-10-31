@@ -65,10 +65,16 @@ pub extern "system" fn handle_win_event_main(
         EVENT_OBJECT_CLOAKED => {
             hide_border_for_window(_hwnd);
         },
+        EVENT_SYSTEM_MINIMIZESTART => {
+            let border_window = get_border_from_window(_hwnd); 
+            if border_window.is_some() {
+                unsafe { let _ = PostMessageW(border_window.unwrap(), 5004, WPARAM(0), LPARAM(0)); }
+            }
+        }
         EVENT_SYSTEM_MINIMIZEEND => {
             let border_window = get_border_from_window(_hwnd); 
             if border_window.is_some() {
-                unsafe { let _ = SendMessageW(border_window.unwrap(), 5002, WPARAM(0), LPARAM(0)); }
+                unsafe { let _ = PostMessageW(border_window.unwrap(), 5005, WPARAM(0), LPARAM(0)); }
             }
         },
         // TODO this is called an unnecessary number of times which may hurt performance? 

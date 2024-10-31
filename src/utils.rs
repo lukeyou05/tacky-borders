@@ -35,7 +35,7 @@ pub fn has_filtered_class(hwnd: HWND) -> bool {
     let mut class_arr: [u16; 256] = [0; 256];
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
         println!("error getting class name!");
-        return true;
+        return false;
     }
 
     let binding = String::from_utf16_lossy(&class_arr);
@@ -53,7 +53,7 @@ pub fn has_filtered_title(hwnd: HWND) -> bool {
     let mut title_arr: [u16; 256] = [0; 256]; 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
         println!("error getting window title!");
-        return true;
+        return false;
     }
 
     let binding = String::from_utf16_lossy(&title_arr);
@@ -85,6 +85,27 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
         return true;
     }
     return is_cloaked.as_bool();
+}
+
+pub fn is_active_window(hwnd: HWND) -> bool {
+    unsafe {
+        return GetForegroundWindow() == hwnd;
+    }
+}
+
+// If the tracking window does not have a window edge or is maximized, then there should be no
+// border.
+pub fn has_native_border(hwnd: HWND) -> bool {
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+
+        if ex_style & WS_EX_WINDOWEDGE.0 == 0 || style & WS_MAXIMIZE.0 != 0 {
+            return false;
+        }
+
+        return true;
+    }
 }
 
 pub fn get_show_cmd(hwnd: HWND) -> u32 {
@@ -234,7 +255,7 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
 pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
     let border_window = get_border_from_window(hwnd);
     if border_window.is_some() {
-        unsafe { let _ = ShowWindow(border_window.unwrap(), SW_SHOWNA); }
+        unsafe { let _ = PostMessageW(border_window.unwrap(), 5002, WPARAM(0), LPARAM(0)); }
         return true;
     } else {
         if is_cloaked(hwnd) || has_filtered_style(hwnd) || has_filtered_class(hwnd) || has_filtered_title(hwnd) {
@@ -246,21 +267,13 @@ pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
 }
 
 pub fn hide_border_for_window(hwnd: HWND) -> bool {
-    let mutex = &*BORDERS;
     let window = SendHWND(hwnd);
 
     let _ = std::thread::spawn(move || {
         let window_sent = window;
-        let borders = mutex.lock().unwrap();
-        let window_isize = window_sent.0 .0 as isize;
-        let border_option = borders.get(&window_isize);
-
-        if border_option.is_some() {
-            let border_window: HWND = HWND(*border_option.unwrap() as _);
-            drop(borders);
-            unsafe { let _ = ShowWindow(border_window, SW_HIDE); }
-        } else {
-            drop(borders);
+        let border_window = get_border_from_window(window_sent.0);
+        if border_window.is_some() {
+            unsafe { let _ = PostMessageW(border_window.unwrap(), 5003, WPARAM(0), LPARAM(0)); }
         }
     });
     return true;
