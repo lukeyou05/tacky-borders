@@ -90,7 +90,7 @@ impl WindowBorder {
 
                 // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
                 // This is very hacky and needs to be looked into. It may be related to the issue
-                // detailed in update_window_rect. TODO
+                // detailed in the wnd_proc. TODO
                 /*std::thread::sleep(std::time::Duration::from_millis(5));
                 let _ = self.update_position(Some(SWP_SHOWWINDOW));
                 let _ = self.render();*/
@@ -179,9 +179,6 @@ impl WindowBorder {
     }
 
     pub fn update_window_rect(&mut self) -> Result<()> {
-        // TODO fix render issue (read further below)
-        //let old_rect = self.window_rect.clone();
-
         let result = unsafe { DwmGetWindowAttribute(
             self.tracking_window, 
             DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -192,19 +189,6 @@ impl WindowBorder {
             println!("Error getting frame rect!");
             unsafe { let _ = ShowWindow(self.border_window, SW_HIDE); }
         }
-
-        // TODO When a window is minimized, all four of these points go far below 0, and for some
-        // reason, render() will sometimes render at this minimized size, even when the
-        // render_target size and rounded_rect.rect are changed correctly after an
-        // update_window_rect call. So, this is a temporary solution but it should absolutely be
-        // looked further into.
-        /*if self.window_rect.top <= 0
-        && self.window_rect.left <= 0
-        && self.window_rect.right <= 0
-        && self.window_rect.bottom <= 0 {
-            self.window_rect = old_rect;
-            return Ok(());
-        }*/
 
         self.window_rect.top -= self.border_size;
         self.window_rect.left -= self.border_size;
@@ -319,7 +303,7 @@ impl WindowBorder {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
             5000 => {
-                if self.pause || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
+                if self.pause {
                     return LRESULT(0);
                 }
 
@@ -334,25 +318,25 @@ impl WindowBorder {
                 let _ = self.update_window_rect();
                 let _ = self.update_position(None);
 
-                // When a window is minimized, all four of these points go way below 0 and we end
-                // up with a weird rect that we don't want. So, we just swap out with old_rect.
+                // TODO When a window is minimized, all four of these points go way below 0, and for some
+                // reason, render() will sometimes render at this minimized size, even when the
+                // render_target size and rounded_rect.rect are changed correctly after an
+                // update_window_rect call. So, this is a temporary solution but it should absolutely be
+                // looked further into.
                 if self.window_rect.top <= 0
                 && self.window_rect.left <= 0
                 && self.window_rect.right <= 0
                 && self.window_rect.bottom <= 0 {
                     self.window_rect = old_rect;
-                    return LRESULT(0);
-                }
-              
-                // Only re-render the border when its size changes
-                if get_rect_width(self.window_rect) != get_rect_width(old_rect)
+                } else if get_rect_width(self.window_rect) != get_rect_width(old_rect)
                 || get_rect_height(self.window_rect) != get_rect_height(old_rect) {
+                    // Only re-render the border when its size changes
                     let _ = self.render();
                 }
             },
             // EVENT_OBJECT_REORDER
             5001 => {
-                if self.pause || is_cloaked(self.tracking_window) || !is_window_visible(self.tracking_window) {
+                if self.pause {
                     return LRESULT(0);
                 }
 
