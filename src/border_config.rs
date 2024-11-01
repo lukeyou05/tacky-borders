@@ -6,6 +6,7 @@ use std::fs::DirBuilder;
 use std::sync::{LazyLock, Mutex};
 
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::create_config()));
+pub const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
@@ -24,8 +25,7 @@ impl Config {
 
         // If .config/tacky-borders/config.yaml does not exist, create it
         if !fs::exists(&config_path).expect("couldn't check if config path exists") {
-            let default = Self::default();
-            let default_contents = serde_yaml::to_string(&default).expect("could not generate default config.yaml");
+            let default_contents = DEFAULT_CONFIG.as_bytes();
 
             // If .config/tacky-borders does not exist either, then create the directory too
             if !fs::exists(&config_dir).expect("couldn't check if config directory exists") {
@@ -36,8 +36,7 @@ impl Config {
 
             let _ = std::fs::write(&config_path, &default_contents).expect("could not generate default config.yaml");
 
-            println!("generating default config in C:/Users/<username>/.config/tacky-borders");
-            return default;
+            println!(r"generating default config in {}\.config\tacky-borders", home_dir.display());
         }
 
         let contents = match fs::read_to_string(&config_path) {
@@ -53,15 +52,5 @@ impl Config {
         let mut config = CONFIG.lock().unwrap();
         *config = Self::create_config();
         drop(config);
-    }
-
-    pub fn default() -> Config {
-        return Config {
-            border_size: 4,
-            border_offset: -1,
-            border_radius: -1.0,
-            active_color: String::from("accent"),
-            inactive_color: String::from("accent")
-        }
     }
 }

@@ -11,6 +11,7 @@ use windows::{
     Win32::Graphics::Direct2D::Common::*,
     Win32::Graphics::Dxgi::Common::*,
     Win32::UI::WindowsAndMessaging::*,
+    Win32::UI::HiDpi::*,
 };
 use crate::utils::*;
 
@@ -54,11 +55,6 @@ impl WindowBorder {
                 hinstance,
                 Some(std::ptr::addr_of!(*self) as *const _)
             )?;
-
-            let dpi_aware = SetProcessDPIAware();
-            if !dpi_aware.as_bool() {
-                println!("Failed to make process DPI aware");
-            }
         }
 
         Ok(())
@@ -95,9 +91,9 @@ impl WindowBorder {
                 // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
                 // This is very hacky and needs to be looked into. It may be related to the issue
                 // detailed in update_window_rect. TODO
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                /*std::thread::sleep(std::time::Duration::from_millis(5));
                 let _ = self.update_position(Some(SWP_SHOWWINDOW));
-                let _ = self.render();
+                let _ = self.render();*/
             }
 
             let mut message = MSG::default();
@@ -135,6 +131,7 @@ impl WindowBorder {
         // Create a rounded_rect with radius depending on the border_radius variable 
         let mut border_radius = 0.0;
         let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
+        let dpi = unsafe { GetDpiForWindow(self.tracking_window) } as f32;
         if self.border_radius == -1.0 {
             let result = unsafe { DwmGetWindowAttribute(
                 self.tracking_window,
@@ -145,15 +142,15 @@ impl WindowBorder {
             if result.is_err() {
                 println!("Error getting window corner preference!");
             }
-            match corner_preference.0 {
-                0 => border_radius = 6.0 + ((self.border_size/2) as f32),
-                1 => border_radius = 0.0,
-                2 => border_radius = 6.0 + ((self.border_size/2) as f32),
-                3 => border_radius = 3.0 + ((self.border_size/2) as f32),
+            match corner_preference {
+                DWMWCP_DEFAULT => border_radius = 8.0*dpi/96.0 + ((self.border_size/2) as f32),
+                DWMWCP_DONOTROUND => border_radius = 0.0,
+                DWMWCP_ROUND => border_radius = 8.0*dpi/96.0 + ((self.border_size/2) as f32),
+                DWMWCP_ROUNDSMALL => border_radius = 4.0*dpi/96.0 + ((self.border_size/2) as f32),
                 _ => {}
             }
         } else {
-            border_radius = self.border_radius;
+            border_radius = self.border_radius*dpi/96.0;
         }
         
         self.rounded_rect = D2D1_ROUNDED_RECT { 
@@ -183,7 +180,7 @@ impl WindowBorder {
 
     pub fn update_window_rect(&mut self) -> Result<()> {
         // TODO fix render issue (read further below)
-        let old_rect = self.window_rect.clone();
+        //let old_rect = self.window_rect.clone();
 
         let result = unsafe { DwmGetWindowAttribute(
             self.tracking_window, 
@@ -201,13 +198,13 @@ impl WindowBorder {
         // render_target size and rounded_rect.rect are changed correctly after an
         // update_window_rect call. So, this is a temporary solution but it should absolutely be
         // looked further into.
-        if self.window_rect.top <= 0
+        /*if self.window_rect.top <= 0
         && self.window_rect.left <= 0
         && self.window_rect.right <= 0
         && self.window_rect.bottom <= 0 {
             self.window_rect = old_rect;
             return Ok(());
-        }
+        }*/
 
         self.window_rect.top -= self.border_size;
         self.window_rect.left -= self.border_size;
@@ -283,7 +280,7 @@ impl WindowBorder {
         };
 
         unsafe {
-            let _ = render_target.Resize(&self.hwnd_render_target_properties.pixelSize as *const _);
+            let _ = render_target.Resize(std::ptr::addr_of!(self.hwnd_render_target_properties.pixelSize));
 
             let brush = render_target.CreateSolidColorBrush(&self.current_color, Some(&self.brush_properties))?;
 
@@ -336,6 +333,16 @@ impl WindowBorder {
                 let old_rect = self.window_rect.clone();
                 let _ = self.update_window_rect();
                 let _ = self.update_position(None);
+
+                // When a window is minimized, all four of these points go way below 0 and we end
+                // up with a weird rect that we don't want. So, we just swap out with old_rect.
+                if self.window_rect.top <= 0
+                && self.window_rect.left <= 0
+                && self.window_rect.right <= 0
+                && self.window_rect.bottom <= 0 {
+                    self.window_rect = old_rect;
+                    return LRESULT(0);
+                }
               
                 // Only re-render the border when its size changes
                 if get_rect_width(self.window_rect) != get_rect_width(old_rect)
@@ -355,19 +362,17 @@ impl WindowBorder {
             },
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
             5002 => {
-                if self.pause {
-                    return LRESULT(0);
-                }
-
                 if has_native_border(self.tracking_window) {
                     let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
+                self.pause = false;
             },
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             5003 => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
+                self.pause = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
             5004 => {

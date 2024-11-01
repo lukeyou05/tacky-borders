@@ -18,7 +18,7 @@ pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> 
     };
 
     let tray_menu = Menu::new();
-    let _ = tray_menu.append(&MenuItem::with_id("0", "Open Config", true, None));
+    let _ = tray_menu.append(&MenuItem::with_id("0", "Show Config", true, None));
     let _ = tray_menu.append(&MenuItem::with_id("1", "Reload Borders", true, None));
     let _ = tray_menu.append(&MenuItem::with_id("2", "Close", true, None));
 
@@ -32,8 +32,8 @@ pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> 
         match event.id.0.as_str() {
             "0" => {
                 let home_dir = home_dir().expect("can't find home path");
-                let config_path = home_dir.join(".config").join("tacky-borders").join("config.yaml");
-                let _ = open::that(config_path);
+                let config_dir = home_dir.join(".config").join("tacky-borders");
+                let _ = open::that(config_dir);
             },
             "1" => {
                 Config::reload_config();

@@ -13,6 +13,7 @@ use windows::{
     Win32::System::Threading::*,
     Win32::UI::WindowsAndMessaging::*,
     Win32::UI::Accessibility::*,
+    Win32::UI::HiDpi::*,
 };
 
 extern "C" {
@@ -35,6 +36,11 @@ unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
+    let dpi_aware = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if dpi_aware.is_err() {
+        println!("Failed to make process DPI aware");
+    }
+
     let _ = register_window_class();
     println!("window class is registered!");
     let _ = enum_windows();
