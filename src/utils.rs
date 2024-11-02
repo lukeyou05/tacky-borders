@@ -41,7 +41,7 @@ pub fn has_filtered_class(hwnd: HWND) -> bool {
     let binding = String::from_utf16_lossy(&class_arr);
     let class_name = binding.split_once("\0").unwrap().0;
 
-    if class_name == "Windows.UI.Core.CoreWindow" {
+    if class_name == "Windows.UI.Core.CoreWindow" || class_name == "XamlExplorerHostIslandWindow" {
         return true;
     }
 
