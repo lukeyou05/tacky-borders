@@ -8,13 +8,30 @@ use std::sync::{LazyLock, Mutex};
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::create_config()));
 pub const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub border_size: i32,
     pub border_offset: i32,
     pub border_radius: f32,
-    pub active_color: String,
-    pub inactive_color: String
+    pub window_rules: Vec<WindowRule>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WindowRule {
+  #[serde(rename = "match")]
+  pub rule_match: Kind,
+  pub contains: Option<String>,
+  pub active_color: Option<String>,
+  pub inactive_color: Option<String>,
+  pub enabled: Option<bool>
+}
+
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum Kind {
+  Global,
+  Title,
+  Class,
 }
 
 impl Config {

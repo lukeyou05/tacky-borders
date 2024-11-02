@@ -136,7 +136,7 @@ pub fn restart_borders() {
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
     // Returning FALSE will exit the EnumWindows loop so we must return TRUE here
-    if !is_window_visible(_hwnd) || is_cloaked(_hwnd) || has_filtered_style(_hwnd) || has_filtered_class(_hwnd) || has_filtered_title(_hwnd) {
+    if !is_window_visible(_hwnd) || is_cloaked(_hwnd) || has_filtered_style(_hwnd) {
         return TRUE;
     }
 

@@ -4,7 +4,17 @@ use windows::{
 };
 
 use crate::border_config::CONFIG;
+use crate::border_config::WindowRule;
+use crate::border_config::Kind;
 use crate::*;
+
+// I need these because Rust doesn't allow expressions for a match pattern
+pub const WM_APP_0: u32 = WM_APP;
+pub const WM_APP_1: u32 = WM_APP + 1;
+pub const WM_APP_2: u32 = WM_APP + 2;
+pub const WM_APP_3: u32 = WM_APP + 3;
+pub const WM_APP_4: u32 = WM_APP + 4;
+pub const WM_APP_5: u32 = WM_APP + 5;
 
 // TODO THE CODE IS STILL A MESS
 
@@ -30,39 +40,111 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
     return false;
 }
 
-// TODO add config options to filter classes 
-pub fn has_filtered_class(hwnd: HWND) -> bool {
+pub fn get_window_rule(hwnd: HWND) -> WindowRule {
+    let mut title_arr: [u16; 256] = [0; 256];
     let mut class_arr: [u16; 256] = [0; 256];
-    if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
-        println!("error getting class name!");
-        return false;
-    }
 
-    let binding = String::from_utf16_lossy(&class_arr);
-    let class_name = binding.split_once("\0").unwrap().0;
-
-    if class_name == "Windows.UI.Core.CoreWindow" {
-        return true;
-    }
-
-    return false;
-}
-
-// TODO add config options to filter titles
-pub fn has_filtered_title(hwnd: HWND) -> bool {
-    let mut title_arr: [u16; 256] = [0; 256]; 
+    // TODO figure out what happens if we run .contains("")
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
         println!("error getting window title!");
-        return false;
+    }
+    if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
+        println!("error getting class name!");
     }
 
-    let binding = String::from_utf16_lossy(&title_arr);
-    let title = binding.split_once("\0").unwrap().0;
+    let title_binding = String::from_utf16_lossy(&title_arr);
+    let title = title_binding.split_once("\0").unwrap().0;
 
-    if title == "Flow.Launcher" || title == "Zebar" || title == "keyviz" {
-        return true;
+    let class_binding = String::from_utf16_lossy(&class_arr);
+    let class = class_binding.split_once("\0").unwrap().0;
+
+    let config_mutex = &*CONFIG;
+    let config = config_mutex.lock().unwrap();
+
+    let mut condition = false;
+
+    let mut global_rule: WindowRule = WindowRule { 
+        rule_match: Kind::Global,
+        contains: None,
+        active_color: None,
+        inactive_color: None,
+        enabled: None
+    };
+
+    for rule in config.window_rules.iter() {
+        let name = match rule.rule_match {
+            Kind::Title => {
+                &title
+            },
+            Kind::Class => {
+                &class
+            },
+            Kind::Global => {
+                global_rule = rule.clone();
+                continue; 
+            }
+        };
+        if rule.contains.is_some() {
+            let contains_str = rule.contains.clone().unwrap().to_lowercase();
+            if name.to_lowercase().contains(&contains_str) {
+                // TODO not sure if I should use clone since it's a mutex or if I can just return
+                // a reference to the rule
+                return rule.clone(); 
+            }
+        } else {
+            println!("Expected `contains` for window rule but None found!");
+        }
+    }
+    drop(config);
+    return global_rule;
+}
+
+pub fn has_filtered_title_or_class(hwnd: HWND) -> bool {
+    let mut title_arr: [u16; 256] = [0; 256];
+    let mut class_arr: [u16; 256] = [0; 256];
+
+    // TODO figure out what happens if we run .contains("")
+    if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
+        println!("error getting window title!");
+        //return true;
+    }
+    if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
+        println!("error getting class name!");
+        //return true;
     }
 
+    let title_binding = String::from_utf16_lossy(&title_arr);
+    let title = title_binding.split_once("\0").unwrap().0;
+
+    let class_binding = String::from_utf16_lossy(&class_arr);
+    let class_name = class_binding.split_once("\0").unwrap().0;
+
+    let config_mutex = &*CONFIG;
+    let config = config_mutex.lock().unwrap();
+
+    let mut condition = false;
+
+    for rule in config.window_rules.iter() {
+        let name = match rule.rule_match {
+            Kind::Title => {
+                &title
+            },
+            Kind::Class => {
+                &class_name
+            },
+            _ => {
+                continue; 
+            }
+        };
+        if rule.contains.is_some() {
+            let contains_str = rule.contains.clone().unwrap().to_lowercase();
+            if name.to_lowercase().contains(&contains_str) && rule.enabled == Some(false) {
+                return true; 
+            }
+        } else {
+            println!("Expected `contains` for window rule but None found!");
+        }
+    }
     return false;
 }
 
@@ -133,11 +215,17 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             return;
         }
 
-        let active_color: D2D1_COLOR_F;
-        let inactive_color: D2D1_COLOR_F;
-        let config = config_mutex.lock().unwrap();
+        let window_rule = get_window_rule(window_sent.0);
 
-        if config.active_color == "accent" || config.inactive_color == "accent" {
+        if window_rule.enabled == Some(false) {
+            println!("border is disabled for this window, exiting!");
+            return;
+        }
+
+        let mut active_color = D2D1_COLOR_F::default();
+        let mut inactive_color = D2D1_COLOR_F::default();
+
+        if window_rule.active_color == Some("accent".to_string()) || window_rule.inactive_color == Some("accent".to_string()) {
             // Get the Windows accent color
             let mut pcr_colorization: u32 = 0;
             let mut pf_opaqueblend: BOOL = FALSE;
@@ -151,31 +239,36 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             let blue = ((pcr_colorization & 0x000000FF) >> 0) as f32 / 255.0;
             let avg = (red + green + blue) / 3.0;
 
-            if config.active_color == "accent" {
+            if window_rule.active_color == Some("accent".to_string()) {
                 active_color = D2D1_COLOR_F {
                     r: red,
                     g: green,
                     b: blue,
                     a: 1.0,
                 };
-            } else {
-                active_color = get_color_from_hex(config.active_color.as_str());
+            } else if window_rule.active_color.is_some() {
+                active_color = get_color_from_hex(window_rule.active_color.unwrap().as_str());
             }
 
-            if config.inactive_color == "accent" {
+            if window_rule.inactive_color == Some("accent".to_string()) {
                 inactive_color = D2D1_COLOR_F {
                     r: avg / 1.5 + red / 10.0,
                     g: avg / 1.5 + green / 10.0,
                     b: avg / 1.5 + blue / 10.0,
                     a: 1.0,
                 };
-            } else {
-                inactive_color = get_color_from_hex(config.inactive_color.as_str());
+            } else if window_rule.inactive_color.is_some() {
+                inactive_color = get_color_from_hex(window_rule.inactive_color.unwrap().as_str());
             }
+        } else if window_rule.active_color.is_some() && window_rule.inactive_color.is_some() {
+            active_color = get_color_from_hex(window_rule.active_color.unwrap().as_str());
+            inactive_color = get_color_from_hex(window_rule.inactive_color.unwrap().as_str());
         } else {
-            active_color = get_color_from_hex(config.active_color.as_str());
-            inactive_color = get_color_from_hex(config.inactive_color.as_str());
+            // TODO maybe return accent color instead of panicking
+            panic!("could not find global active and inactive colors!");
         }
+
+        let config = config_mutex.lock().unwrap();
 
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
@@ -186,6 +279,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             inactive_color: inactive_color,
             ..Default::default()
         };
+
         drop(config);
 
         let mut borders_hashmap = borders_mutex.lock().unwrap();
@@ -255,10 +349,10 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
 pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
     let border_window = get_border_from_window(hwnd);
     if border_window.is_some() {
-        unsafe { let _ = PostMessageW(border_window.unwrap(), 5002, WPARAM(0), LPARAM(0)); }
+        unsafe { let _ = PostMessageW(border_window.unwrap(), WM_APP_2, WPARAM(0), LPARAM(0)); }
         return true;
     } else {
-        if is_cloaked(hwnd) || has_filtered_style(hwnd) || has_filtered_class(hwnd) || has_filtered_title(hwnd) {
+        if is_cloaked(hwnd) || has_filtered_style(hwnd) {
             return false;
         }
         let _ = create_border_for_window(hwnd, delay);
@@ -273,7 +367,7 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
         let window_sent = window;
         let border_window = get_border_from_window(window_sent.0);
         if border_window.is_some() {
-            unsafe { let _ = PostMessageW(border_window.unwrap(), 5003, WPARAM(0), LPARAM(0)); }
+            unsafe { let _ = PostMessageW(border_window.unwrap(), WM_APP_3, WPARAM(0), LPARAM(0)); }
         }
     });
     return true;

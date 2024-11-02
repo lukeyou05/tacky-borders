@@ -7,8 +7,24 @@ border_offset: -1
 # Radius of the corners. Leave this at -1 to let tacky-borders handle the radius, or set it to any other number to use as the radius.
 border_radius: -1
 
-# Border color for active window. Hex values (e.g. "#ffffff") and "accent" are supported.
-active_color: "accent"
+# Customize some options on a per-application basis
+window_rules:
+  - match: "Global"
+    active_color: "accent"
+    inactive_color: "accent"
 
-# Border color for inactive window. Hex values (e.g. "#ffffff") are "accent" are supported.
-inactive_color: "accent"
+  - match: "Class"
+    contains: "Windows.UI.Core.CoreWindow"
+    enabled: false
+
+  - match: "Title"
+    contains: "Flow.Launcher"
+    enabled: false
+
+  - match: "Title"
+    contains: "Zebar"
+    enabled: false
+
+  - match: "Title"
+    contains: "keyviz"
+    enabled: false

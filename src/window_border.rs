@@ -302,7 +302,7 @@ impl WindowBorder {
     pub unsafe fn wnd_proc(&mut self, window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
-            5000 => {
+            WM_APP_0 => {
                 if self.pause {
                     return LRESULT(0);
                 }
@@ -335,7 +335,7 @@ impl WindowBorder {
                 }
             },
             // EVENT_OBJECT_REORDER
-            5001 => {
+            WM_APP_1 => {
                 if self.pause {
                     return LRESULT(0);
                 }
@@ -345,7 +345,7 @@ impl WindowBorder {
                 let _ = self.render();
             },
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
-            5002 => {
+            WM_APP_2 => {
                 if has_native_border(self.tracking_window) {
                     let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
@@ -354,19 +354,19 @@ impl WindowBorder {
                 self.pause = false;
             },
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
-            5003 => {
+            WM_APP_3 => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
                 self.pause = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
-            5004 => {
+            WM_APP_4 => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
                 self.pause = true;
             },
             // EVENT_SYSTEM_MINIMIZEEND
             // When a window is about to be unminimized, hide the border and let the thread sleep
             // for 200ms to wait for the window animation to finish, then show the border.
-            5005 => {
+            WM_APP_5 => {
                 std::thread::sleep(std::time::Duration::from_millis(200));
 
                 if has_native_border(self.tracking_window) {
