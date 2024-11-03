@@ -13,6 +13,8 @@ pub struct Config {
     pub border_size: i32,
     pub border_offset: i32,
     pub border_radius: f32,
+    pub active_color: String,
+    pub inactive_color: String,
     pub window_rules: Vec<WindowRule>,
 }
 
@@ -21,6 +23,9 @@ pub struct WindowRule {
   #[serde(rename = "match")]
   pub rule_match: Kind,
   pub contains: Option<String>,
+  pub border_size: Option<i32>,
+  pub border_offset: Option<i32>,
+  pub border_radius: Option<f32>,
   pub active_color: Option<String>,
   pub inactive_color: Option<String>,
   pub enabled: Option<bool>
@@ -29,7 +34,6 @@ pub struct WindowRule {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum Kind {
-  Global,
   Title,
   Class,
 }
@@ -69,5 +73,22 @@ impl Config {
         let mut config = CONFIG.lock().unwrap();
         *config = Self::create_config();
         drop(config);
+    }
+}
+
+impl WindowRule {
+    pub fn default() -> Self {
+        return WindowRule {
+            // rule_match for default() is completely arbitrary. I could replace it with an Option
+            // in the future and then I could stop manually implementing default() altogether.
+            rule_match: Kind::Title,
+            contains: None,
+            border_size: None,
+            border_offset: None,
+            border_radius: None,
+            active_color: None,
+            inactive_color: None,
+            enabled: None 
+        };
     }
 }

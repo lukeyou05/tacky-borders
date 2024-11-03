@@ -61,16 +61,6 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
     let config_mutex = &*CONFIG;
     let config = config_mutex.lock().unwrap();
 
-    let mut condition = false;
-
-    let mut global_rule: WindowRule = WindowRule { 
-        rule_match: Kind::Global,
-        contains: None,
-        active_color: None,
-        inactive_color: None,
-        enabled: None
-    };
-
     for rule in config.window_rules.iter() {
         let name = match rule.rule_match {
             Kind::Title => {
@@ -78,17 +68,11 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
             },
             Kind::Class => {
                 &class
-            },
-            Kind::Global => {
-                global_rule = rule.clone();
-                continue; 
             }
         };
         if rule.contains.is_some() {
             let contains_str = rule.contains.clone().unwrap().to_lowercase();
             if name.to_lowercase().contains(&contains_str) {
-                // TODO not sure if I should use clone since it's a mutex or if I can just return
-                // a reference to the rule
                 return rule.clone(); 
             }
         } else {
@@ -96,56 +80,7 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
         }
     }
     drop(config);
-    return global_rule;
-}
-
-pub fn has_filtered_title_or_class(hwnd: HWND) -> bool {
-    let mut title_arr: [u16; 256] = [0; 256];
-    let mut class_arr: [u16; 256] = [0; 256];
-
-    // TODO figure out what happens if we run .contains("")
-    if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
-        println!("error getting window title!");
-        //return true;
-    }
-    if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
-        println!("error getting class name!");
-        //return true;
-    }
-
-    let title_binding = String::from_utf16_lossy(&title_arr);
-    let title = title_binding.split_once("\0").unwrap().0;
-
-    let class_binding = String::from_utf16_lossy(&class_arr);
-    let class_name = class_binding.split_once("\0").unwrap().0;
-
-    let config_mutex = &*CONFIG;
-    let config = config_mutex.lock().unwrap();
-
-    let mut condition = false;
-
-    for rule in config.window_rules.iter() {
-        let name = match rule.rule_match {
-            Kind::Title => {
-                &title
-            },
-            Kind::Class => {
-                &class_name
-            },
-            _ => {
-                continue; 
-            }
-        };
-        if rule.contains.is_some() {
-            let contains_str = rule.contains.clone().unwrap().to_lowercase();
-            if name.to_lowercase().contains(&contains_str) && rule.enabled == Some(false) {
-                return true; 
-            }
-        } else {
-            println!("Expected `contains` for window rule but None found!");
-        }
-    }
-    return false;
+    return WindowRule::default();
 }
 
 pub fn is_window_visible(hwnd: HWND) -> bool {
@@ -222,61 +157,19 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             return;
         }
 
-        let mut active_color = D2D1_COLOR_F::default();
-        let mut inactive_color = D2D1_COLOR_F::default();
-
-        if window_rule.active_color == Some("accent".to_string()) || window_rule.inactive_color == Some("accent".to_string()) {
-            // Get the Windows accent color
-            let mut pcr_colorization: u32 = 0;
-            let mut pf_opaqueblend: BOOL = FALSE;
-            let result =
-                unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
-            if result.is_err() {
-                println!("Error getting Windows accent color!");
-            }
-            let red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
-            let green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
-            let blue = ((pcr_colorization & 0x000000FF) >> 0) as f32 / 255.0;
-            let avg = (red + green + blue) / 3.0;
-
-            if window_rule.active_color == Some("accent".to_string()) {
-                active_color = D2D1_COLOR_F {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: 1.0,
-                };
-            } else if window_rule.active_color.is_some() {
-                active_color = get_color_from_hex(window_rule.active_color.unwrap().as_str());
-            }
-
-            if window_rule.inactive_color == Some("accent".to_string()) {
-                inactive_color = D2D1_COLOR_F {
-                    r: avg / 1.5 + red / 10.0,
-                    g: avg / 1.5 + green / 10.0,
-                    b: avg / 1.5 + blue / 10.0,
-                    a: 1.0,
-                };
-            } else if window_rule.inactive_color.is_some() {
-                inactive_color = get_color_from_hex(window_rule.inactive_color.unwrap().as_str());
-            }
-        } else if window_rule.active_color.is_some() && window_rule.inactive_color.is_some() {
-            active_color = get_color_from_hex(window_rule.active_color.unwrap().as_str());
-            inactive_color = get_color_from_hex(window_rule.inactive_color.unwrap().as_str());
-        } else {
-            // TODO maybe return accent color instead of panicking
-            panic!("could not find global active and inactive colors!");
-        }
-
         let config = config_mutex.lock().unwrap();
+
+        let config_active = window_rule.active_color.unwrap_or(config.active_color.clone());
+        let config_inactive = window_rule.inactive_color.unwrap_or(config.inactive_color.clone());
+        let border_colors = convert_config_colors(config_active, config_inactive);
 
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
-            border_size: config.border_size,
-            border_offset: config.border_offset,
-            border_radius: config.border_radius,
-            active_color: active_color,
-            inactive_color: inactive_color,
+            border_size: window_rule.border_size.unwrap_or(config.border_size),
+            border_offset: window_rule.border_offset.unwrap_or(config.border_offset),
+            border_radius: window_rule.border_radius.unwrap_or(config.border_radius),
+            active_color: border_colors.0,
+            inactive_color: border_colors.1,
             ..Default::default()
         };
 
@@ -296,12 +189,67 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
         let _ = border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
+
+        // Drop these values before calling init and entering a message loop
         drop(borders_hashmap);
+        let _ = window_rule;
+        let _ = border_colors;
+        let _ = window_isize;
+        let _ = hinstance;
 
         let _ = border.init();
     });
 
     return Ok(());
+}
+
+pub fn convert_config_colors(config_active: String, config_inactive: String) -> (D2D1_COLOR_F, D2D1_COLOR_F) {
+    let active_color: D2D1_COLOR_F;
+    let inactive_color: D2D1_COLOR_F;
+
+    let mut accent_red: f32 = 0.0;
+    let mut accent_green: f32 = 0.0;
+    let mut accent_blue: f32 = 0.0;
+    let mut accent_avg: f32 = 0.0;
+
+    if config_active == "accent" || config_inactive == "accent" {
+        // Get the Windows accent color
+        let mut pcr_colorization: u32 = 0;
+        let mut pf_opaqueblend: BOOL = FALSE;
+        let result =
+            unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
+        if result.is_err() {
+            println!("Error getting Windows accent color!");
+        }
+        accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
+        accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
+        accent_blue = ((pcr_colorization & 0x000000FF) >> 0) as f32 / 255.0;
+        accent_avg = (accent_red + accent_green + accent_blue) / 3.0; 
+    }
+        
+    if config_active == "accent" {
+        active_color = D2D1_COLOR_F {
+            r: accent_red,
+            g: accent_green,
+            b: accent_blue,
+            a: 1.0,
+        };
+    } else {
+        active_color = get_color_from_hex(config_active.as_str());
+    }
+
+    if config_inactive == "accent" {
+        inactive_color = D2D1_COLOR_F {
+            r: accent_avg / 1.5 + accent_red / 10.0,
+            g: accent_avg / 1.5 + accent_green / 10.0,
+            b: accent_avg / 1.5 + accent_blue / 10.0,
+            a: 1.0,
+        };
+    } else {
+        inactive_color = get_color_from_hex(config_inactive.as_str());
+    }
+
+    return (active_color, inactive_color);
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
@@ -465,126 +413,4 @@ pub fn get_color_from_rgba(rgba: &str) -> D2D1_COLOR_F {
         b: 0.0,
         a: 1.0,
     }
-}
-pub fn get_color_from_oklch(oklch: &str) -> D2D1_COLOR_F {
-    let oklch = oklch.trim_start_matches("oklch(").trim_end_matches(')');
-    let components: Vec<&str> = oklch.split(',').map(|s| s.trim()).collect(); // Split by commas
-                                                                              // Check for the correct number of components (3)
-    if components.len() == 3 {
-        // Parse lightness, chroma, and hue values
-        let lightness_str = components[0];
-        let lightness: f64 = if lightness_str.ends_with('%') {
-            lightness_str
-                .trim_end_matches('%')
-                .parse::<f64>()
-                .unwrap_or(0.0)
-                .clamp(0.0, 100.0)
-                / 100.0 // Convert percentage to a 0.0 - 1.0 range
-        } else {
-            lightness_str.parse::<f64>().unwrap_or(0.0).clamp(0.0, 1.0) // Handle non-percentage case
-        };
-        let chroma: f64 = components[1]
-            .parse::<f64>()
-            .unwrap_or(0.0)
-            .clamp(0.0, f64::MAX);
-        let hue: f64 = components[2]
-            .parse::<f64>()
-            .unwrap_or(0.0)
-            .clamp(0.0, 360.0);
-        // Convert OKLCH to RGB
-        let (r, g, b) = oklch_to_rgb(lightness, chroma, hue);
-        return D2D1_COLOR_F {
-            r: r as f32, // Convert back to f32 for D2D1_COLOR_F
-            g: g as f32,
-            b: b as f32,
-            a: 1.0, // Default alpha value
-        };
-    }
-    // Return a default color if parsing fails
-    D2D1_COLOR_F {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    }
-}
-// Placeholder for the actual OKLCH to RGB conversion function
-fn oklch_to_rgb(lightness: f64, chroma: f64, hue: f64) -> (f64, f64, f64) {
-    // Implement the conversion from OKLCH to RGB here
-    // For now, returning a placeholder RGB value
-    (lightness, chroma, hue) // This is just a placeholder; replace with actual conversion logic
-}
-pub fn get_color_from_hsl(hsl: &str) -> D2D1_COLOR_F {
-    let hsl = hsl.trim_start_matches("hsl(").trim_end_matches(')');
-    let components: Vec<&str> = hsl.split(',').map(|s| s.trim()).collect(); // Split by commas
-                                                                            // Check for the correct number of components (3)
-    if components.len() == 3 {
-        // Parse hue, saturation, and lightness values
-        let hue: f64 = components[0]
-            .parse::<f64>()
-            .unwrap_or(0.0)
-            .clamp(0.0, 360.0);
-
-        let saturation_str = components[1];
-        let saturation: f64 = if saturation_str.ends_with('%') {
-            saturation_str
-                .trim_end_matches('%')
-                .parse::<f64>()
-                .unwrap_or(0.0)
-                .clamp(0.0, 100.0)
-                / 100.0 // Convert percentage to a 0.0 - 1.0 range
-        } else {
-            saturation_str.parse::<f64>().unwrap_or(0.0).clamp(0.0, 1.0) // Handle non-percentage case
-        };
-        let lightness_str = components[2];
-        let lightness: f64 = if lightness_str.ends_with('%') {
-            lightness_str
-                .trim_end_matches('%')
-                .parse::<f64>()
-                .unwrap_or(0.0)
-                .clamp(0.0, 100.0)
-                / 100.0 // Convert percentage to a 0.0 - 1.0 range
-        } else {
-            lightness_str.parse::<f64>().unwrap_or(0.0).clamp(0.0, 1.0) // Handle non-percentage case
-        };
-        // Convert HSL to RGB
-        let (r, g, b) = hsl_to_rgb(hue, saturation, lightness);
-        return D2D1_COLOR_F {
-            r: r as f32, // Convert back to f32 for D2D1_COLOR_F
-            g: g as f32,
-            b: b as f32,
-            a: 1.0, // Default alpha value
-        };
-    }
-    // Return a default color if parsing fails
-    D2D1_COLOR_F {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    }
-}
-// Placeholder for the actual HSL to RGB conversion function
-fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (f64, f64, f64) {
-    // Implement the conversion from HSL to RGB here
-    // For now, returning a placeholder RGB value
-    // This is just a placeholder; replace with actual conversion logic
-    // HSL to RGB conversion logic
-    let c = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation; // Chroma
-    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs()); // Second largest component
-    let m = lightness - c / 2.0; // Match lightness
-
-    let (r_prime, g_prime, b_prime) = match hue {
-        h if h < 60.0 => (c, x, 0.0),
-        h if h < 120.0 => (x, c, 0.0),
-        h if h < 180.0 => (0.0, c, x),
-        h if h < 240.0 => (0.0, x, c),
-        h if h < 300.0 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    // Convert to RGB and apply match lightness
-    let r = (r_prime + m).clamp(0.0, 1.0);
-    let g = (g_prime + m).clamp(0.0, 1.0);
-    let b = (b_prime + m).clamp(0.0, 1.0);
-    (r, g, b)
 }

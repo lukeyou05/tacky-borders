@@ -7,14 +7,20 @@ border_offset: -1
 # Radius of the corners. Leave this at -1 to let tacky-borders handle the radius, or set it to any other number to use as the radius.
 border_radius: -1
 
+# Color of the active window. Currently supports "accent" or a hex code like "#ffffff".
+active_color: "accent"
+
+# Color of the inactive window. Currently supports "accent" or a hex code like "#ffffff".
+inactive_color: "accent"
+
 # Customize some options on a per-application basis
 window_rules:
-  - match: "Global"
-    active_color: "accent"
-    inactive_color: "accent"
-
   - match: "Class"
     contains: "Windows.UI.Core.CoreWindow"
+    enabled: false
+
+  - match: "Class"
+    contains: "XamlExplorerHostIslandWindow"
     enabled: false
 
   - match: "Title"
