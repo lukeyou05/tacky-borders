@@ -1,36 +1,36 @@
-# Thickness of the border
-border_size: 4
+# Customize global config options
+global:
+    border_size: 4
+    border_offset: -1
+    border_radius: -1
+    active_color: "accent"
+    inactive_color: "accent"
 
-# How much to shrink/expand the borders by to better fit the window size
-border_offset: -1
-
-# Radius of the corners. Leave this at -1 to let tacky-borders handle the radius, or set it to any other number to use as the radius.
-border_radius: -1
-
-# Color of the active window. Currently supports "accent" or a hex code like "#ffffff".
-active_color: "accent"
-
-# Color of the inactive window. Currently supports "accent" or a hex code like "#ffffff".
-inactive_color: "accent"
-
-# Customize some options on a per-application basis
+# Customize any option on a per-application basis
 window_rules:
   - match: "Class"
-    contains: "Windows.UI.Core.CoreWindow"
+    name: "Windows.UI.Core.CoreWindow"
     enabled: false
 
   - match: "Class"
-    contains: "XamlExplorerHostIslandWindow"
+    name: "XamlExplorerHostIslandWindow"
+    enabled: false
+
+  # This is just proof of concept of the customization options
+  #- match: "Class"
+  #  name: "MozillaWindowClass"
+  #  strategy: "Regex"
+  #  border_radius: 100
+  #  active_color: "#ffffff"
+
+  - match: "Title"
+    name: "Flow.Launcher"
     enabled: false
 
   - match: "Title"
-    contains: "Flow.Launcher"
+    name: "Zebar"
     enabled: false
 
   - match: "Title"
-    contains: "Zebar"
-    enabled: false
-
-  - match: "Title"
-    contains: "keyviz"
+    name: "keyviz"
     enabled: false
