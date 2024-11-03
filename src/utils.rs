@@ -190,6 +190,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
 
         let config = config_mutex.lock().unwrap();
 
+        // TODO holy this is ugly
         let config_size = window_rule.border_size.unwrap_or(config.global.border_size);
         let config_offset = window_rule.border_offset.unwrap_or(config.global.border_offset);
         let config_radius = window_rule.border_radius.unwrap_or(config.global.border_radius);
@@ -314,16 +315,16 @@ pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_wind
         }
         match corner_preference {
             DWMWCP_DEFAULT => {
-                return 8.0*dpi/96.0 + ((config_size/2) as f32);
+                return 8.0*dpi/96.0 + (config_size as f32)/2.0;
             },
             DWMWCP_DONOTROUND => {
                 return 0.0;
             },
             DWMWCP_ROUND => {
-                return 8.0*dpi/96.0 + ((config_size/2) as f32);
+                return 8.0*dpi/96.0 + (config_size as f32)/2.0;
             },
             DWMWCP_ROUNDSMALL => {
-                return 4.0*dpi/96.0 + ((config_size/2) as f32);
+                return 4.0*dpi/96.0 + (config_size as f32)/2.0;
             },
             _ => {}
         }

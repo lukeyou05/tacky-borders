@@ -350,6 +350,14 @@ impl WindowBorder {
                 }
                 self.pause = false;
             },
+            // TODO i have not tested if this actually works yet
+            WM_PAINT => {
+                println!("in wm_paint");
+
+                // Same as what LGUG2Z has in komorebi. Should stop the WM_PAINT messages. 
+                let _ = BeginPaint(window, &mut PAINTSTRUCT::default());
+                let _ = EndPaint(window, &PAINTSTRUCT::default());
+            }
             WM_DESTROY => {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
                 PostQuitMessage(0);
