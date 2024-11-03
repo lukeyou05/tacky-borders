@@ -10,19 +10,25 @@ pub const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
+    pub global: Global,
+    pub window_rules: Vec<WindowRule>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Global {
     pub border_size: i32,
     pub border_offset: i32,
     pub border_radius: f32,
     pub active_color: String,
     pub inactive_color: String,
-    pub window_rules: Vec<WindowRule>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WindowRule {
   #[serde(rename = "match")]
-  pub rule_match: Kind,
-  pub contains: Option<String>,
+  pub rule_match: Option<Kind>,
+  pub name: Option<String>,
+  pub strategy: Option<Strategy>,
   pub border_size: Option<i32>,
   pub border_offset: Option<i32>,
   pub border_radius: Option<f32>,
@@ -32,10 +38,17 @@ pub struct WindowRule {
 }
 
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Kind {
   Title,
   Class,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Strategy {
+    Equals,
+    Contains,
+    Regex,
 }
 
 impl Config {
@@ -73,22 +86,5 @@ impl Config {
         let mut config = CONFIG.lock().unwrap();
         *config = Self::create_config();
         drop(config);
-    }
-}
-
-impl WindowRule {
-    pub fn default() -> Self {
-        return WindowRule {
-            // rule_match for default() is completely arbitrary. I could replace it with an Option
-            // in the future and then I could stop manually implementing default() altogether.
-            rule_match: Kind::Title,
-            contains: None,
-            border_size: None,
-            border_offset: None,
-            border_radius: None,
-            active_color: None,
-            inactive_color: None,
-            enabled: None 
-        };
     }
 }

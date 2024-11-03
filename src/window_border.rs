@@ -11,7 +11,6 @@ use windows::{
     Win32::Graphics::Direct2D::Common::*,
     Win32::Graphics::Dxgi::Common::*,
     Win32::UI::WindowsAndMessaging::*,
-    Win32::UI::HiDpi::*,
 };
 use crate::utils::*;
 
@@ -128,35 +127,10 @@ impl WindowBorder {
             transform: Matrix3x2::identity() 
         };
 
-        // Create a rounded_rect with radius depending on the border_radius variable 
-        let mut border_radius = 0.0;
-        let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
-        let dpi = unsafe { GetDpiForWindow(self.tracking_window) } as f32;
-        if self.border_radius == -1.0 {
-            let result = unsafe { DwmGetWindowAttribute(
-                self.tracking_window,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                std::ptr::addr_of_mut!(corner_preference) as *mut _,
-                size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32
-            ) }; 
-            if result.is_err() {
-                println!("Error getting window corner preference!");
-            }
-            match corner_preference {
-                DWMWCP_DEFAULT => border_radius = 8.0*dpi/96.0 + ((self.border_size/2) as f32),
-                DWMWCP_DONOTROUND => border_radius = 0.0,
-                DWMWCP_ROUND => border_radius = 8.0*dpi/96.0 + ((self.border_size/2) as f32),
-                DWMWCP_ROUNDSMALL => border_radius = 4.0*dpi/96.0 + ((self.border_size/2) as f32),
-                _ => {}
-            }
-        } else {
-            border_radius = self.border_radius*dpi/96.0;
-        }
-        
         self.rounded_rect = D2D1_ROUNDED_RECT { 
             rect: Default::default(), 
-            radiusX: border_radius, 
-            radiusY: border_radius 
+            radiusX: self.border_radius, 
+            radiusY: self.border_radius 
         };
 
         // Initialize the actual border color assuming it is in focus

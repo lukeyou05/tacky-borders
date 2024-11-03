@@ -9,6 +9,7 @@ serde_yaml = "0.9.34"
 tray-icon = "0.19.1"
 open = "5.1.4"
 dirs = "4.0"
+regex = "1.11.1"
 
 [dependencies.windows]
 version = "0.58.0"

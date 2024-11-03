@@ -3,9 +3,12 @@ use windows::{
     Win32::UI::WindowsAndMessaging::*,
 };
 
+use regex::Regex;
+
 use crate::border_config::CONFIG;
 use crate::border_config::WindowRule;
 use crate::border_config::Kind;
+use crate::border_config::Strategy;
 use crate::*;
 
 // I need these because Rust doesn't allow expressions for a match pattern
@@ -40,43 +43,71 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
     return false;
 }
 
-pub fn get_window_rule(hwnd: HWND) -> WindowRule {
+pub fn get_window_title(hwnd: HWND) -> String {
     let mut title_arr: [u16; 256] = [0; 256];
-    let mut class_arr: [u16; 256] = [0; 256];
 
-    // TODO figure out what happens if we run .contains("")
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
         println!("error getting window title!");
     }
+
+    let title_binding = String::from_utf16_lossy(&title_arr);
+    return title_binding.split_once("\0").unwrap().0.to_string();
+}
+
+pub fn get_window_class(hwnd: HWND) -> String {
+    let mut class_arr: [u16; 256] = [0; 256];
+
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
         println!("error getting class name!");
     }
 
-    let title_binding = String::from_utf16_lossy(&title_arr);
-    let title = title_binding.split_once("\0").unwrap().0;
-
     let class_binding = String::from_utf16_lossy(&class_arr);
-    let class = class_binding.split_once("\0").unwrap().0;
+    return class_binding.split_once("\0").unwrap().0.to_string();
+}
+
+pub fn get_window_rule(hwnd: HWND) -> WindowRule {
+    let title = get_window_title(hwnd);
+    let class = get_window_class(hwnd);
 
     let config_mutex = &*CONFIG;
     let config = config_mutex.lock().unwrap();
 
     for rule in config.window_rules.iter() {
-        let name = match rule.rule_match {
-            Kind::Title => {
+        let window_name = match rule.rule_match {
+            Some(Kind::Title) => {
                 &title
             },
-            Kind::Class => {
+            Some(Kind::Class) => {
                 &class
+            },
+            None => {
+                println!("Expected 'match' for window rule but None found!");
+                continue;
             }
         };
-        if rule.contains.is_some() {
-            let contains_str = rule.contains.clone().unwrap().to_lowercase();
-            if name.to_lowercase().contains(&contains_str) {
-                return rule.clone(); 
+
+        let Some(match_str) = &rule.name else {
+            println!("Expected `name` for window rule but None found!");
+            continue;
+        };
+
+        match rule.strategy {
+            Some(Strategy::Equals) | None => {
+                if window_name.to_lowercase().eq(&match_str.to_lowercase()) {
+                    return rule.clone(); 
+                }
+            },
+            Some(Strategy::Contains) => {
+                if window_name.to_lowercase().contains(&match_str.to_lowercase()) {
+                    return rule.clone(); 
+                }
+            },
+            Some(Strategy::Regex) => {
+                let re = Regex::new(match_str).unwrap();
+                if re.captures(window_name).is_some() {
+                    return rule.clone();
+                }
             }
-        } else {
-            println!("Expected `contains` for window rule but None found!");
         }
     }
     drop(config);
@@ -159,15 +190,20 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
 
         let config = config_mutex.lock().unwrap();
 
-        let config_active = window_rule.active_color.unwrap_or(config.active_color.clone());
-        let config_inactive = window_rule.inactive_color.unwrap_or(config.inactive_color.clone());
+        let config_size = window_rule.border_size.unwrap_or(config.global.border_size);
+        let config_offset = window_rule.border_offset.unwrap_or(config.global.border_offset);
+        let config_radius = window_rule.border_radius.unwrap_or(config.global.border_radius);
+        let config_active = window_rule.active_color.unwrap_or(config.global.active_color.clone());
+        let config_inactive = window_rule.inactive_color.unwrap_or(config.global.inactive_color.clone());
+
         let border_colors = convert_config_colors(config_active, config_inactive);
+        let border_radius = convert_config_radius(config_size, config_radius, window_sent.0);
 
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
-            border_size: window_rule.border_size.unwrap_or(config.border_size),
-            border_offset: window_rule.border_offset.unwrap_or(config.border_offset),
-            border_radius: window_rule.border_radius.unwrap_or(config.border_radius),
+            border_size: config_size,
+            border_offset: config_offset,
+            border_radius: border_radius,
             active_color: border_colors.0,
             inactive_color: border_colors.1,
             ..Default::default()
@@ -192,12 +228,20 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
 
         // Drop these values before calling init and entering a message loop
         drop(borders_hashmap);
+        let _ = window_sent;
         let _ = window_rule;
+        let _ = config_size;
+        let _ = config_offset;
+        let _ = config_radius;
+        let _ = config_active;
+        let _ = config_inactive;
         let _ = border_colors;
         let _ = window_isize;
         let _ = hinstance;
 
         let _ = border.init();
+
+        drop(border);
     });
 
     return Ok(());
@@ -250,6 +294,42 @@ pub fn convert_config_colors(config_active: String, config_inactive: String) -> 
     }
 
     return (active_color, inactive_color);
+}
+
+pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_window: HWND) -> f32 {
+    let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
+    let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
+
+    // -1.0 means to use default Windows corner preference. I might want to use an enum to allow
+    // for something like border_radius == "system" instead TODO
+    if config_radius == -1.0 {
+        let result = unsafe { DwmGetWindowAttribute(
+            tracking_window,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::addr_of_mut!(corner_preference) as *mut _,
+            size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32
+        ) }; 
+        if result.is_err() {
+            println!("Error getting window corner preference!");
+        }
+        match corner_preference {
+            DWMWCP_DEFAULT => {
+                return 8.0*dpi/96.0 + ((config_size/2) as f32);
+            },
+            DWMWCP_DONOTROUND => {
+                return 0.0;
+            },
+            DWMWCP_ROUND => {
+                return 8.0*dpi/96.0 + ((config_size/2) as f32);
+            },
+            DWMWCP_ROUNDSMALL => {
+                return 4.0*dpi/96.0 + ((config_size/2) as f32);
+            },
+            _ => {}
+        }
+    }
+    
+    return config_radius*dpi/96.0;
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
