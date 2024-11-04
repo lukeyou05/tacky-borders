@@ -1,5 +1,5 @@
 ![image](https://github.com/user-attachments/assets/e1786c07-4168-42ca-8ada-ccbabcf74a63)
-tacky-borders lets you customize the borders on Windows 10 and 11.
+tacky-borders lets you customize the borders on Windows 11 (and maybe 10?).
 
 **Installation:**
 Just download, unzip it, and run the .exe!
