@@ -5,10 +5,10 @@ use windows::{
 
 use regex::Regex;
 
-use crate::border_config::CONFIG;
-use crate::border_config::WindowRule;
 use crate::border_config::Kind;
 use crate::border_config::Strategy;
+use crate::border_config::WindowRule;
+use crate::border_config::CONFIG;
 use crate::*;
 
 // I need these because Rust doesn't allow expressions for a match pattern
@@ -22,11 +22,11 @@ pub const WM_APP_5: u32 = WM_APP + 5;
 // TODO THE CODE IS STILL A MESS
 
 pub fn get_rect_width(rect: RECT) -> i32 {
-    return rect.right - rect.left;
+    rect.right - rect.left
 }
 
 pub fn get_rect_height(rect: RECT) -> i32 {
-    return rect.bottom - rect.top;
+    rect.bottom - rect.top
 }
 
 pub fn has_filtered_style(hwnd: HWND) -> bool {
@@ -40,7 +40,7 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
         return true;
     }
 
-    return false;
+    false
 }
 
 pub fn get_window_title(hwnd: HWND) -> String {
@@ -74,12 +74,8 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
 
     for rule in config.window_rules.iter() {
         let window_name = match rule.rule_match {
-            Some(Kind::Title) => {
-                &title
-            },
-            Some(Kind::Class) => {
-                &class
-            },
+            Some(Kind::Title) => &title,
+            Some(Kind::Class) => &class,
             None => {
                 println!("Expected 'match' for window rule but None found!");
                 continue;
@@ -94,14 +90,17 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
         match rule.strategy {
             Some(Strategy::Equals) | None => {
                 if window_name.to_lowercase().eq(&match_str.to_lowercase()) {
-                    return rule.clone(); 
+                    return rule.clone();
                 }
-            },
+            }
             Some(Strategy::Contains) => {
-                if window_name.to_lowercase().contains(&match_str.to_lowercase()) {
-                    return rule.clone(); 
+                if window_name
+                    .to_lowercase()
+                    .contains(&match_str.to_lowercase())
+                {
+                    return rule.clone();
                 }
-            },
+            }
             Some(Strategy::Regex) => {
                 let re = Regex::new(match_str).unwrap();
                 if re.captures(window_name).is_some() {
@@ -111,11 +110,11 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
         }
     }
     drop(config);
-    return WindowRule::default();
+    WindowRule::default()
 }
 
 pub fn is_window_visible(hwnd: HWND) -> bool {
-    return unsafe { IsWindowVisible(hwnd).as_bool() };
+    unsafe { IsWindowVisible(hwnd).as_bool() }
 }
 
 pub fn is_cloaked(hwnd: HWND) -> bool {
@@ -132,13 +131,11 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
         println!("error getting is_cloaked");
         return true;
     }
-    return is_cloaked.as_bool();
+    is_cloaked.as_bool()
 }
 
 pub fn is_active_window(hwnd: HWND) -> bool {
-    unsafe {
-        return GetForegroundWindow() == hwnd;
-    }
+    unsafe { GetForegroundWindow() == hwnd }
 }
 
 // If the tracking window does not have a window edge or is maximized, then there should be no
@@ -152,7 +149,7 @@ pub fn has_native_border(hwnd: HWND) -> bool {
             return false;
         }
 
-        return true;
+        true
     }
 }
 
@@ -161,9 +158,9 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
     let result = unsafe { GetWindowPlacement(hwnd, std::ptr::addr_of_mut!(wp)) };
     if result.is_err() {
         println!("error getting window_placement!");
-        return 0; 
+        return 0;
     }
-    return wp.showCmd;
+    wp.showCmd
 }
 
 pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()> {
@@ -192,10 +189,18 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
 
         // TODO holy this is ugly
         let config_size = window_rule.border_size.unwrap_or(config.global.border_size);
-        let config_offset = window_rule.border_offset.unwrap_or(config.global.border_offset);
-        let config_radius = window_rule.border_radius.unwrap_or(config.global.border_radius);
-        let config_active = window_rule.active_color.unwrap_or(config.global.active_color.clone());
-        let config_inactive = window_rule.inactive_color.unwrap_or(config.global.inactive_color.clone());
+        let config_offset = window_rule
+            .border_offset
+            .unwrap_or(config.global.border_offset);
+        let config_radius = window_rule
+            .border_radius
+            .unwrap_or(config.global.border_radius);
+        let config_active = window_rule
+            .active_color
+            .unwrap_or(config.global.active_color.clone());
+        let config_inactive = window_rule
+            .inactive_color
+            .unwrap_or(config.global.inactive_color.clone());
 
         let border_colors = convert_config_colors(config_active, config_inactive);
         let border_radius = convert_config_radius(config_size, config_radius, window_sent.0);
@@ -204,7 +209,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             tracking_window: window_sent.0,
             border_size: config_size,
             border_offset: config_offset,
-            border_radius: border_radius,
+            border_radius,
             active_color: border_colors.0,
             inactive_color: border_colors.1,
             ..Default::default()
@@ -245,13 +250,13 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         drop(border);
     });
 
-    return Ok(());
+    Ok(())
 }
 
-pub fn convert_config_colors(config_active: String, config_inactive: String) -> (D2D1_COLOR_F, D2D1_COLOR_F) {
-    let active_color: D2D1_COLOR_F;
-    let inactive_color: D2D1_COLOR_F;
-
+pub fn convert_config_colors(
+    config_active: String,
+    config_inactive: String,
+) -> (D2D1_COLOR_F, D2D1_COLOR_F) {
     let mut accent_red: f32 = 0.0;
     let mut accent_green: f32 = 0.0;
     let mut accent_blue: f32 = 0.0;
@@ -261,40 +266,39 @@ pub fn convert_config_colors(config_active: String, config_inactive: String) -> 
         // Get the Windows accent color
         let mut pcr_colorization: u32 = 0;
         let mut pf_opaqueblend: BOOL = FALSE;
-        let result =
-            unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
+        let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
         if result.is_err() {
             println!("Error getting Windows accent color!");
         }
         accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
         accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
-        accent_blue = ((pcr_colorization & 0x000000FF) >> 0) as f32 / 255.0;
-        accent_avg = (accent_red + accent_green + accent_blue) / 3.0; 
+        accent_blue = (pcr_colorization & 0x000000FF) as f32 / 255.0;
+        accent_avg = (accent_red + accent_green + accent_blue) / 3.0;
     }
-        
-    if config_active == "accent" {
-        active_color = D2D1_COLOR_F {
+
+    let active_color = if config_active == "accent" {
+        D2D1_COLOR_F {
             r: accent_red,
             g: accent_green,
             b: accent_blue,
             a: 1.0,
-        };
+        }
     } else {
-        active_color = get_color_from_hex(config_active.as_str());
-    }
+        get_color_from_hex(config_active.as_str())
+    };
 
-    if config_inactive == "accent" {
-        inactive_color = D2D1_COLOR_F {
+    let inactive_color = if config_inactive == "accent" {
+        D2D1_COLOR_F {
             r: accent_avg / 1.5 + accent_red / 10.0,
             g: accent_avg / 1.5 + accent_green / 10.0,
             b: accent_avg / 1.5 + accent_blue / 10.0,
             a: 1.0,
-        };
+        }
     } else {
-        inactive_color = get_color_from_hex(config_inactive.as_str());
-    }
+        get_color_from_hex(config_inactive.as_str())
+    };
 
-    return (active_color, inactive_color);
+    (active_color, inactive_color)
 }
 
 pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_window: HWND) -> f32 {
@@ -304,33 +308,35 @@ pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_wind
     // -1.0 means to use default Windows corner preference. I might want to use an enum to allow
     // for something like border_radius == "system" instead TODO
     if config_radius == -1.0 {
-        let result = unsafe { DwmGetWindowAttribute(
-            tracking_window,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            std::ptr::addr_of_mut!(corner_preference) as *mut _,
-            size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32
-        ) }; 
+        let result = unsafe {
+            DwmGetWindowAttribute(
+                tracking_window,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                std::ptr::addr_of_mut!(corner_preference) as *mut _,
+                size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+            )
+        };
         if result.is_err() {
             println!("Error getting window corner preference!");
         }
         match corner_preference {
             DWMWCP_DEFAULT => {
-                return 8.0*dpi/96.0 + (config_size as f32)/2.0;
-            },
+                return 8.0 * dpi / 96.0 + (config_size as f32) / 2.0;
+            }
             DWMWCP_DONOTROUND => {
                 return 0.0;
-            },
+            }
             DWMWCP_ROUND => {
-                return 8.0*dpi/96.0 + (config_size as f32)/2.0;
-            },
+                return 8.0 * dpi / 96.0 + (config_size as f32) / 2.0;
+            }
             DWMWCP_ROUNDSMALL => {
-                return 4.0*dpi/96.0 + (config_size as f32)/2.0;
-            },
+                return 4.0 * dpi / 96.0 + (config_size as f32) / 2.0;
+            }
             _ => {}
         }
     }
-    
-    return config_radius*dpi/96.0;
+
+    config_radius * dpi / 96.0
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
@@ -345,14 +351,16 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
 
         if border_option.is_some() {
             let border_window: HWND = HWND((*border_option.unwrap()) as *mut _);
-            unsafe { SendMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+            unsafe {
+                let _ = PostMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0));
+            }
             borders_hashmap.remove(&window_isize);
         }
 
         drop(borders_hashmap);
     });
 
-    return Ok(());
+    Ok(())
 }
 
 pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
@@ -364,28 +372,30 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
     if border_option.is_some() {
         let border_window: HWND = HWND(*border_option.unwrap() as _);
         drop(borders);
-        return Some(border_window);
+        Some(border_window)
     } else {
         drop(borders);
-        return None;
+        None
     }
 }
 
 // Return true if the border exists in the border hashmap. Otherwise, create a new border and
-// return false. 
+// return false.
 // We can also specify a delay to prevent the border from appearing while a window is in its
-// opening animation. 
+// opening animation.
 pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
     let border_window = get_border_from_window(hwnd);
-    if border_window.is_some() {
-        unsafe { let _ = PostMessageW(border_window.unwrap(), WM_APP_2, WPARAM(0), LPARAM(0)); }
-        return true;
+    if let Some(hwnd) = border_window {
+        unsafe {
+            let _ = PostMessageW(hwnd, WM_APP_2, WPARAM(0), LPARAM(0));
+        }
+        true
     } else {
         if is_cloaked(hwnd) || has_filtered_style(hwnd) {
             return false;
         }
         let _ = create_border_for_window(hwnd, delay);
-        return false;
+        false
     }
 }
 
@@ -394,12 +404,14 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
 
     let _ = std::thread::spawn(move || {
         let window_sent = window;
-        let border_window = get_border_from_window(window_sent.0);
-        if border_window.is_some() {
-            unsafe { let _ = PostMessageW(border_window.unwrap(), WM_APP_3, WPARAM(0), LPARAM(0)); }
+        let border_option = get_border_from_window(window_sent.0);
+        if let Some(border_window) = border_option {
+            unsafe {
+                let _ = PostMessageW(border_window, WM_APP_3, WPARAM(0), LPARAM(0));
+            }
         }
     });
-    return true;
+    true
 }
 
 pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {

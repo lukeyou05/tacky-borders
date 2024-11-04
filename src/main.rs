@@ -4,39 +4,37 @@
     windows_subsystem = "windows"
 )]
 
-use std::sync::{Mutex, LazyLock};
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use windows::{
-    core::*,
-    Win32::Foundation::*,
-    Win32::System::SystemServices::IMAGE_DOS_HEADER,
-    Win32::System::Threading::*,
+    core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
+    Win32::System::Threading::*, Win32::UI::Accessibility::*, Win32::UI::HiDpi::*,
     Win32::UI::WindowsAndMessaging::*,
-    Win32::UI::Accessibility::*,
-    Win32::UI::HiDpi::*,
 };
 
 extern "C" {
     pub static __ImageBase: IMAGE_DOS_HEADER;
 }
 
-mod window_border;
+mod border_config;
 mod event_hook;
 mod sys_tray_icon;
-mod border_config;
 mod utils;
+mod window_border;
 
 use crate::utils::*;
 
-pub static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// This is supposedly unsafe af but it works soo 
+// This is supposedly unsafe af but it works soo
 pub struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    let dpi_aware = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    let dpi_aware =
+        unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     if dpi_aware.is_err() {
         println!("Failed to make process DPI aware");
     }
@@ -87,19 +85,19 @@ pub fn register_window_class() -> Result<()> {
             ..Default::default()
         };
         let result = RegisterClassExW(&wcex);
-            
+
         if result == 0 {
             let last_error = GetLastError();
             println!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
 pub fn set_event_hook() -> HWINEVENTHOOK {
     unsafe {
-        return SetWinEventHook(
+        SetWinEventHook(
             EVENT_MIN,
             EVENT_MAX,
             None,
@@ -107,19 +105,16 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
             0,
             0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-        );
+        )
     }
 }
 
 pub fn enum_windows() -> Result<()> {
     unsafe {
-        let _ = EnumWindows(
-            Some(enum_windows_callback),
-            LPARAM::default(),
-        );
+        let _ = EnumWindows(Some(enum_windows_callback), LPARAM::default());
     }
     println!("Windows have been enumerated!");
-    return Ok(());
+    Ok(())
 }
 
 pub fn restart_borders() {
@@ -127,7 +122,9 @@ pub fn restart_borders() {
     let mut borders = mutex.lock().unwrap();
     for value in borders.values() {
         let border_window = HWND(*value as *mut _);
-        unsafe { SendMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0)) };
+        unsafe {
+            let _ = PostMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0));
+        }
     }
     let _ = borders.drain();
     drop(borders);
@@ -141,5 +138,5 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
     }
 
     let _ = create_border_for_window(_hwnd, 0);
-    return TRUE; 
+    TRUE
 }
