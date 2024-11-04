@@ -1,12 +1,13 @@
 # Customize global config options
 global:
-    border_size: 4
-    border_offset: -1
-    border_radius: -1
-    active_color: "accent"
-    inactive_color: "accent"
+    border_size: 4               # Width of the border
+    border_offset: -1            # How close the border is to the window edges
+    border_radius: -1            # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
+    active_color: "accent"       # Color of the focused window. Currently supports a hex code like "#ffffff" or "accent"
+    inactive_color: "accent"     # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent"
 
-# Customize any option on a per-application basis
+
+# Customize config options on a per-app basis
 window_rules:
   - match: "Class"
     name: "Windows.UI.Core.CoreWindow"
@@ -15,13 +16,6 @@ window_rules:
   - match: "Class"
     name: "XamlExplorerHostIslandWindow"
     enabled: false
-
-  # This is just proof of concept of the customization options
-  #- match: "Class"
-  #  name: "MozillaWindowClass"
-  #  strategy: "Regex"
-  #  border_radius: 100
-  #  active_color: "#ffffff"
 
   - match: "Title"
     name: "Flow.Launcher"
@@ -34,3 +28,14 @@ window_rules:
   - match: "Title"
     name: "keyviz"
     enabled: false
+
+# EXAMPLE CONFIGURATION:
+# - match: "Class"               # Currently supports "Class" or "Title"
+#   name: "MozillaWindowClass"   # Name of the class or title
+#   strategy: "Equals"           # Optional. Currently supports "Equals", "Contains", or "Regex". Defaults to "Equals"
+#   border_size: 10              # The next few options are all optional and default to global config if nothing is specified
+#   border_radius: -10
+#   border_offset: -10
+#   active_color: "#ffffff"
+#   inactive_color: "#000000"
+#   enabled: true                # Optional. Enables or disables the border. Defaults to true. Note: you can't forcibly enable borders yet

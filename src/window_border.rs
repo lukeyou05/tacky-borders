@@ -90,9 +90,9 @@ impl WindowBorder {
                 // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
                 // This is very hacky and needs to be looked into. It may be related to the issue
                 // detailed in the wnd_proc. TODO
-                /*std::thread::sleep(std::time::Duration::from_millis(5));
+                std::thread::sleep(std::time::Duration::from_millis(5));
                 let _ = self.update_position(Some(SWP_SHOWWINDOW));
-                let _ = self.render();*/
+                let _ = self.render();
             }
 
             let mut message = MSG::default();
