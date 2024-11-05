@@ -1,15 +1,20 @@
 use windows::{
-    Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*, Win32::Graphics::Dwm::*,
-    Win32::UI::WindowsAndMessaging::*,
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*, Win32::Graphics::Dwm::*,
+    Win32::UI::HiDpi::*, Win32::UI::WindowsAndMessaging::*,
 };
 
 use regex::Regex;
+use std::ptr;
+use std::thread;
 
 use crate::border_config::Kind;
 use crate::border_config::Strategy;
 use crate::border_config::WindowRule;
 use crate::border_config::CONFIG;
-use crate::*;
+use crate::window_border;
+use crate::SendHWND;
+use crate::__ImageBase;
+use crate::BORDERS;
 
 // I need these because Rust doesn't allow expressions for a match pattern
 pub const WM_APP_0: u32 = WM_APP;
@@ -43,6 +48,7 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
     false
 }
 
+// Getting the window title sometimes takes unexpectedly long (over 1ms), but it should be fine.
 pub fn get_window_title(hwnd: HWND) -> String {
     let mut title_arr: [u16; 256] = [0; 256];
 
@@ -123,7 +129,7 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
         DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED,
-            std::ptr::addr_of_mut!(is_cloaked) as *mut _,
+            ptr::addr_of_mut!(is_cloaked) as _,
             size_of::<BOOL>() as u32,
         )
     };
@@ -155,7 +161,7 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 
 pub fn get_show_cmd(hwnd: HWND) -> u32 {
     let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
-    let result = unsafe { GetWindowPlacement(hwnd, std::ptr::addr_of_mut!(wp)) };
+    let result = unsafe { GetWindowPlacement(hwnd, ptr::addr_of_mut!(wp)) };
     if result.is_err() {
         println!("error getting window_placement!");
         return 0;
@@ -163,20 +169,16 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
     wp.showCmd
 }
 
-pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()> {
+pub fn create_border_for_window(
+    tracking_window: HWND,
+    create_delay_override: Option<u64>,
+) -> Result<()> {
     let borders_mutex = &*BORDERS;
     let config_mutex = &*CONFIG;
     let window = SendHWND(tracking_window);
 
-    let _ = std::thread::spawn(move || {
+    let _ = thread::spawn(move || {
         let window_sent = window;
-
-        // This delay can be used to wait for a window to finish its opening animation or for it to
-        // become visible if it is not so at first
-        std::thread::sleep(std::time::Duration::from_millis(delay));
-        if !is_window_visible(window_sent.0) {
-            return;
-        }
 
         let window_rule = get_window_rule(window_sent.0);
 
@@ -205,6 +207,17 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         let border_colors = convert_config_colors(config_active, config_inactive);
         let border_radius = convert_config_radius(config_size, config_radius, window_sent.0);
 
+        // There is a delay override because we don't need creation delay for uncloaked windows
+        let init_delay = match create_delay_override {
+            Some(delay) => delay,
+            None => window_rule
+                .init_delay
+                .unwrap_or(config.global.init_delay.unwrap_or(250)),
+        };
+        let unminimize_delay = window_rule
+            .unminimize_delay
+            .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
+
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
             border_size: config_size,
@@ -212,6 +225,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
             border_radius,
             active_color: border_colors.0,
             inactive_color: border_colors.1,
+            unminimize_delay,
             ..Default::default()
         };
 
@@ -221,8 +235,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         let window_isize = window_sent.0 .0 as isize;
 
         // Check to see if the key already exists in the hashmap. If not, then continue
-        // adding the key and initializing the border. This is important because sometimes, the
-        // event_hook function will call spawn_border_thread multiple times for the same window.
+        // adding the key and initializing the border.
         if borders_hashmap.contains_key(&window_isize) {
             drop(borders_hashmap);
             return;
@@ -232,7 +245,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         let _ = border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
 
-        // Drop these values before calling init and entering a message loop
+        // Drop these values (to save some RAM?) before calling init and entering a message loop
         drop(borders_hashmap);
         let _ = window_sent;
         let _ = window_rule;
@@ -245,7 +258,7 @@ pub fn create_border_for_window(tracking_window: HWND, delay: u64) -> Result<()>
         let _ = window_isize;
         let _ = hinstance;
 
-        let _ = border.init();
+        let _ = border.init(init_delay);
 
         drop(border);
     });
@@ -312,7 +325,7 @@ pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_wind
             DwmGetWindowAttribute(
                 tracking_window,
                 DWMWA_WINDOW_CORNER_PREFERENCE,
-                std::ptr::addr_of_mut!(corner_preference) as *mut _,
+                ptr::addr_of_mut!(corner_preference) as _,
                 size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
             )
         };
@@ -343,7 +356,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
     let mutex = &*BORDERS;
     let window = SendHWND(tracking_window);
 
-    let _ = std::thread::spawn(move || {
+    let _ = thread::spawn(move || {
         let window_sent = window;
         let mut borders_hashmap = mutex.lock().unwrap();
         let window_isize = window_sent.0 .0 as isize;
@@ -383,7 +396,7 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
 // return false.
 // We can also specify a delay to prevent the border from appearing while a window is in its
 // opening animation.
-pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
+pub fn show_border_for_window(hwnd: HWND, create_delay_override: Option<u64>) -> bool {
     let border_window = get_border_from_window(hwnd);
     if let Some(hwnd) = border_window {
         unsafe {
@@ -394,7 +407,7 @@ pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
         if is_cloaked(hwnd) || has_filtered_style(hwnd) {
             return false;
         }
-        let _ = create_border_for_window(hwnd, delay);
+        let _ = create_border_for_window(hwnd, create_delay_override);
         false
     }
 }
@@ -402,7 +415,7 @@ pub fn show_border_for_window(hwnd: HWND, delay: u64) -> bool {
 pub fn hide_border_for_window(hwnd: HWND) -> bool {
     let window = SendHWND(hwnd);
 
-    let _ = std::thread::spawn(move || {
+    let _ = thread::spawn(move || {
         let window_sent = window;
         let border_option = get_border_from_window(window_sent.0);
         if let Some(border_window) = border_option {

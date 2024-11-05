@@ -21,6 +21,9 @@ pub struct Global {
     pub border_radius: f32,
     pub active_color: String,
     pub inactive_color: String,
+    // TODO maybe need better names for these two below
+    pub init_delay: Option<u64>, // Adjust delay when creating new windows/borders
+    pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -35,6 +38,8 @@ pub struct WindowRule {
     pub active_color: Option<String>,
     pub inactive_color: Option<String>,
     pub enabled: Option<bool>,
+    pub init_delay: Option<u64>,
+    pub unminimize_delay: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

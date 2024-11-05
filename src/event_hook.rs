@@ -52,7 +52,7 @@ pub extern "system" fn handle_win_event_main(
             drop(borders);
         }
         EVENT_OBJECT_SHOW => {
-            show_border_for_window(_hwnd, 250);
+            show_border_for_window(_hwnd, None);
         }
         EVENT_OBJECT_HIDE => {
             // I have to check IsWindowVisible because for some reason, EVENT_OBJECT_HIDE can be
@@ -62,7 +62,7 @@ pub extern "system" fn handle_win_event_main(
             }
         }
         EVENT_OBJECT_UNCLOAKED => {
-            show_border_for_window(_hwnd, 0);
+            show_border_for_window(_hwnd, Some(0));
         }
         EVENT_OBJECT_CLOAKED => {
             hide_border_for_window(_hwnd);

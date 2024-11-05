@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::thread;
 use windows::{
     core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::System::Threading::*, Win32::UI::Accessibility::*, Win32::UI::HiDpi::*,
@@ -65,7 +66,7 @@ fn main() {
 
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
-            std::thread::sleep(std::time::Duration::from_millis(16))
+            thread::sleep(std::time::Duration::from_millis(16))
         }
         println!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
     }
@@ -121,7 +122,7 @@ pub fn restart_borders() {
     let mutex = &*BORDERS;
     let mut borders = mutex.lock().unwrap();
     for value in borders.values() {
-        let border_window = HWND(*value as *mut _);
+        let border_window = HWND(*value as _);
         unsafe {
             let _ = PostMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0));
         }
@@ -137,6 +138,6 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
         return TRUE;
     }
 
-    let _ = create_border_for_window(_hwnd, 0);
+    let _ = create_border_for_window(_hwnd, Some(0));
     TRUE
 }

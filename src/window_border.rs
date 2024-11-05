@@ -1,7 +1,9 @@
 // TODO Add result handling. There's so many let _ =
 use crate::utils::*;
+use std::ptr;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
+use std::thread;
 use windows::{
     core::*, Foundation::Numerics::*, Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*,
     Win32::Graphics::Direct2D::*, Win32::Graphics::Dwm::*, Win32::Graphics::Dxgi::Common::*,
@@ -23,14 +25,15 @@ pub struct WindowBorder {
     pub border_size: i32,
     pub border_offset: i32,
     pub border_radius: f32,
-    pub render_target_properties: D2D1_RENDER_TARGET_PROPERTIES,
-    pub hwnd_render_target_properties: D2D1_HWND_RENDER_TARGET_PROPERTIES,
     pub brush_properties: D2D1_BRUSH_PROPERTIES,
     pub render_target: OnceLock<ID2D1HwndRenderTarget>,
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: D2D1_COLOR_F,
     pub inactive_color: D2D1_COLOR_F,
     pub current_color: D2D1_COLOR_F,
+    // Delay border visbility when tracking window is in unminimize animation
+    pub unminimize_delay: u64,
+    // This is to pause the border from doing anything when it doesn't need to
     pub pause: bool,
 }
 
@@ -49,14 +52,17 @@ impl WindowBorder {
                 None,
                 None,
                 hinstance,
-                Some(std::ptr::addr_of!(*self) as *const _),
+                Some(ptr::addr_of!(*self) as _),
             )?;
         }
 
         Ok(())
     }
 
-    pub fn init(&mut self) -> Result<()> {
+    pub fn init(&mut self, init_delay: u64) -> Result<()> {
+        // Delay the border while the tracking window is in its creation animation
+        thread::sleep(std::time::Duration::from_millis(init_delay));
+
         unsafe {
             // Make the window border transparent
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
@@ -91,16 +97,16 @@ impl WindowBorder {
                 // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
                 // This is very hacky and needs to be looked into. It may be related to the issue
                 // detailed in the wnd_proc. TODO
-                /*std::thread::sleep(std::time::Duration::from_millis(5));
+                thread::sleep(std::time::Duration::from_millis(5));
                 let _ = self.update_position(Some(SWP_SHOWWINDOW));
-                let _ = self.render();*/
+                let _ = self.render();
             }
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                thread::sleep(std::time::Duration::from_millis(1));
             }
         }
 
@@ -108,7 +114,7 @@ impl WindowBorder {
     }
 
     pub fn create_render_targets(&mut self) -> Result<()> {
-        self.render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
+        let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
                 format: DXGI_FORMAT_UNKNOWN,
@@ -118,7 +124,7 @@ impl WindowBorder {
             dpiY: 96.0,
             ..Default::default()
         };
-        self.hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
+        let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
             hwnd: self.border_window,
             pixelSize: Default::default(),
             presentOptions: D2D1_PRESENT_OPTIONS_IMMEDIATELY,
@@ -142,8 +148,8 @@ impl WindowBorder {
             let _ = self.render_target.set(
                 factory
                     .CreateHwndRenderTarget(
-                        &self.render_target_properties,
-                        &self.hwnd_render_target_properties,
+                        &render_target_properties,
+                        &hwnd_render_target_properties,
                     )
                     .expect("creating self.render_target failed"),
             );
@@ -163,7 +169,7 @@ impl WindowBorder {
             DwmGetWindowAttribute(
                 self.tracking_window,
                 DWMWA_EXTENDED_FRAME_BOUNDS,
-                std::ptr::addr_of_mut!(self.window_rect) as *mut _,
+                ptr::addr_of_mut!(self.window_rect) as _,
                 size_of::<RECT>() as u32,
             )
         };
@@ -233,7 +239,7 @@ impl WindowBorder {
         }
         let render_target = render_target_option.unwrap();
 
-        self.hwnd_render_target_properties.pixelSize = D2D_SIZE_U {
+        let pixel_size = D2D_SIZE_U {
             width: (self.window_rect.right - self.window_rect.left) as u32,
             height: (self.window_rect.bottom - self.window_rect.top) as u32,
         };
@@ -248,9 +254,7 @@ impl WindowBorder {
         };
 
         unsafe {
-            let _ = render_target.Resize(std::ptr::addr_of!(
-                self.hwnd_render_target_properties.pixelSize
-            ));
+            let _ = render_target.Resize(ptr::addr_of!(pixel_size));
 
             let brush = render_target
                 .CreateSolidColorBrush(&self.current_color, Some(&self.brush_properties))?;
@@ -367,7 +371,7 @@ impl WindowBorder {
             // When a window is about to be unminimized, hide the border and let the thread sleep
             // for 200ms to wait for the window animation to finish, then show the border.
             WM_APP_5 => {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+                thread::sleep(std::time::Duration::from_millis(self.unminimize_delay));
 
                 if has_native_border(self.tracking_window) {
                     let _ = self.update_window_rect();
