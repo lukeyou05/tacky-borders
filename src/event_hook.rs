@@ -26,9 +26,11 @@ pub extern "system" fn handle_win_event_main(
 
             let border_window = get_border_from_window(_hwnd);
             if let Some(hwnd) = border_window {
+                //let before = std::time::Instant::now();
                 unsafe {
                     let _ = SendNotifyMessageW(hwnd, WM_APP_0, WPARAM(0), LPARAM(0));
                 }
+                //println!("time elapsed: {:?}", before.elapsed());
             }
         }
         EVENT_OBJECT_REORDER => {

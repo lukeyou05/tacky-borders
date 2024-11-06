@@ -29,9 +29,9 @@ pub struct Global {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WindowRule {
     #[serde(rename = "match")]
-    pub rule_match: Option<Kind>,
+    pub kind: Option<MatchKind>,
     pub name: Option<String>,
-    pub strategy: Option<Strategy>,
+    pub strategy: Option<MatchStrategy>,
     pub border_size: Option<i32>,
     pub border_offset: Option<i32>,
     pub border_radius: Option<f32>,
@@ -43,13 +43,13 @@ pub struct WindowRule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Kind {
+pub enum MatchKind {
     Title,
     Class,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Strategy {
+pub enum MatchStrategy {
     Equals,
     Contains,
     Regex,

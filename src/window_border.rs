@@ -191,7 +191,7 @@ impl WindowBorder {
     pub fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> Result<()> {
         unsafe {
             // Place the window border above the tracking window
-            let mut hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
+            let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
             let mut u_flags =
                 SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | c_flags.unwrap_or_default();
 
@@ -201,13 +201,11 @@ impl WindowBorder {
             //  the highest in z-order, so we use HWND_TOP to place the window border above.
             if hwnd_above_tracking == Ok(self.border_window) {
                 u_flags |= SWP_NOZORDER;
-            } else if hwnd_above_tracking.is_err() {
-                hwnd_above_tracking = Ok(HWND_TOP);
             }
 
             let result = SetWindowPos(
                 self.border_window,
-                hwnd_above_tracking.unwrap(),
+                hwnd_above_tracking.unwrap_or(HWND_TOP),
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
@@ -307,18 +305,20 @@ impl WindowBorder {
             WM_APP_0 => {
                 if self.pause {
                     return LRESULT(0);
-                }
-
-                if !has_native_border(self.tracking_window) {
+                } else if !has_native_border(self.tracking_window) {
                     let _ = self.update_position(Some(SWP_HIDEWINDOW));
                     return LRESULT(0);
-                } else if !is_window_visible(self.border_window) {
-                    let _ = self.update_position(Some(SWP_SHOWWINDOW));
                 }
+
+                let flags = if !is_window_visible(self.border_window) {
+                    Some(SWP_SHOWWINDOW)
+                } else {
+                    None
+                };
 
                 let old_rect = self.window_rect;
                 let _ = self.update_window_rect();
-                let _ = self.update_position(None);
+                let _ = self.update_position(flags);
 
                 // TODO When a window is minimized, all four of these points go way below 0, and for some
                 // reason, render() will sometimes render at this minimized size, even when the
@@ -351,6 +351,7 @@ impl WindowBorder {
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
             WM_APP_2 => {
                 if has_native_border(self.tracking_window) {
+                    let _ = self.update_color();
                     let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();

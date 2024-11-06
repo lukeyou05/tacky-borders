@@ -4,18 +4,14 @@
     windows_subsystem = "windows"
 )]
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 use windows::{
     core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
-    Win32::System::Threading::*, Win32::UI::Accessibility::*, Win32::UI::HiDpi::*,
-    Win32::UI::WindowsAndMessaging::*,
+    Win32::UI::Accessibility::*, Win32::UI::HiDpi::*, Win32::UI::WindowsAndMessaging::*,
 };
-
-extern "C" {
-    pub static __ImageBase: IMAGE_DOS_HEADER;
-}
 
 mod border_config;
 mod event_hook;
@@ -25,10 +21,19 @@ mod window_border;
 
 use crate::utils::*;
 
+extern "C" {
+    pub static __ImageBase: IMAGE_DOS_HEADER;
+}
+
+// TODO get rid of the Cell if I never replace it more than once
+thread_local! {
+    pub static EVENT_HOOK: Cell<HWINEVENTHOOK> = Cell::new(HWINEVENTHOOK::default());
+}
+
 pub static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// This is supposedly unsafe af but it works soo
+// This is supposedly unsafe af but it works soo + I never dereference anything
 pub struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
@@ -44,26 +49,16 @@ fn main() {
     println!("window class is registered!");
     let _ = enum_windows();
 
-    let main_thread = unsafe { GetCurrentThreadId() };
-    let tray_icon_option = sys_tray_icon::create_tray_icon(main_thread);
+    let tray_icon_option = sys_tray_icon::create_tray_icon();
     if tray_icon_option.is_err() {
         println!("Error creating tray icon!");
     }
 
-    let win_event_hook = set_event_hook();
+    EVENT_HOOK.replace(set_event_hook());
     unsafe {
         println!("Entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
-            if message.message == WM_CLOSE {
-                let result = UnhookWinEvent(win_event_hook);
-                if result.as_bool() {
-                    ExitProcess(0);
-                } else {
-                    println!("Error. Could not unhook win event hook");
-                }
-            }
-
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
             thread::sleep(std::time::Duration::from_millis(16))
@@ -118,7 +113,11 @@ pub fn enum_windows() -> Result<()> {
     Ok(())
 }
 
-pub fn restart_borders() {
+pub fn reload_borders() {
+    //let event_hook = EVENT_HOOK.get();
+    //let result = unsafe { UnhookWinEvent(event_hook) };
+    //println!("result of unhooking win event: {:?}", result);
+
     let mutex = &*BORDERS;
     let mut borders = mutex.lock().unwrap();
     for value in borders.values() {
@@ -127,9 +126,11 @@ pub fn restart_borders() {
             let _ = PostMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0));
         }
     }
-    let _ = borders.drain();
+    borders.clear();
     drop(borders);
     let _ = enum_windows();
+
+    //EVENT_HOOK.replace(set_event_hook());
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
@@ -138,6 +139,6 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
         return TRUE;
     }
 
-    let _ = create_border_for_window(_hwnd, Some(0));
+    let _ = create_border_for_window(_hwnd, None);
     TRUE
 }

@@ -7,8 +7,8 @@ use regex::Regex;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::Kind;
-use crate::border_config::Strategy;
+use crate::border_config::MatchKind;
+use crate::border_config::MatchStrategy;
 use crate::border_config::WindowRule;
 use crate::border_config::CONFIG;
 use crate::window_border;
@@ -38,14 +38,9 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
     let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
 
-    if style & WS_CHILD.0 != 0
+    style & WS_CHILD.0 != 0
         || ex_style & WS_EX_TOOLWINDOW.0 != 0
         || ex_style & WS_EX_NOACTIVATE.0 != 0
-    {
-        return true;
-    }
-
-    false
 }
 
 // Getting the window title sometimes takes unexpectedly long (over 1ms), but it should be fine.
@@ -79,9 +74,9 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
     let config = config_mutex.lock().unwrap();
 
     for rule in config.window_rules.iter() {
-        let window_name = match rule.rule_match {
-            Some(Kind::Title) => &title,
-            Some(Kind::Class) => &class,
+        let window_name = match rule.kind {
+            Some(MatchKind::Title) => &title,
+            Some(MatchKind::Class) => &class,
             None => {
                 println!("Expected 'match' for window rule but None found!");
                 continue;
@@ -94,12 +89,12 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
         };
 
         match rule.strategy {
-            Some(Strategy::Equals) | None => {
+            Some(MatchStrategy::Equals) | None => {
                 if window_name.to_lowercase().eq(&match_str.to_lowercase()) {
                     return rule.clone();
                 }
             }
-            Some(Strategy::Contains) => {
+            Some(MatchStrategy::Contains) => {
                 if window_name
                     .to_lowercase()
                     .contains(&match_str.to_lowercase())
@@ -107,7 +102,7 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
                     return rule.clone();
                 }
             }
-            Some(Strategy::Regex) => {
+            Some(MatchStrategy::Regex) => {
                 let re = Regex::new(match_str).unwrap();
                 if re.captures(window_name).is_some() {
                     return rule.clone();
@@ -151,11 +146,7 @@ pub fn has_native_border(hwnd: HWND) -> bool {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
 
-        if ex_style & WS_EX_WINDOWEDGE.0 == 0 || style & WS_MAXIMIZE.0 != 0 {
-            return false;
-        }
-
-        true
+        ex_style & WS_EX_WINDOWEDGE.0 != 0 && style & WS_MAXIMIZE.0 == 0
     }
 }
 
@@ -171,7 +162,7 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
 
 pub fn create_border_for_window(
     tracking_window: HWND,
-    create_delay_override: Option<u64>,
+    init_delay_override: Option<u64>,
 ) -> Result<()> {
     let borders_mutex = &*BORDERS;
     let config_mutex = &*CONFIG;
@@ -208,7 +199,7 @@ pub fn create_border_for_window(
         let border_radius = convert_config_radius(config_size, config_radius, window_sent.0);
 
         // There is a delay override because we don't need creation delay for uncloaked windows
-        let init_delay = match create_delay_override {
+        let init_delay = match init_delay_override {
             Some(delay) => delay,
             None => window_rule
                 .init_delay

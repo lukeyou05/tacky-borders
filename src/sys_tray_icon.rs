@@ -1,14 +1,13 @@
 use dirs::home_dir;
 use tray_icon::{menu::Menu, menu::MenuEvent, menu::MenuItem, Icon, TrayIcon, TrayIconBuilder};
-use windows::Win32::Foundation::LPARAM;
-use windows::Win32::Foundation::WPARAM;
-use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
-use windows::Win32::UI::WindowsAndMessaging::WM_CLOSE;
+use windows::Win32::System::Threading::ExitProcess;
+use windows::Win32::UI::Accessibility::UnhookWinEvent;
 
 use crate::border_config::Config;
-use crate::restart_borders;
+use crate::reload_borders;
+use crate::EVENT_HOOK;
 
-pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> {
+pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
         Err(_) => {
@@ -36,11 +35,19 @@ pub fn create_tray_icon(main_thread: u32) -> Result<TrayIcon, tray_icon::Error> 
         }
         "1" => {
             Config::reload_config();
-            restart_borders();
+            reload_borders();
         }
         "2" => {
-            let result = unsafe { PostThreadMessageW(main_thread, WM_CLOSE, WPARAM(0), LPARAM(0)) };
-            println!("Sending WM_CLOSE to main thread: {:?}", result);
+            let event_hook = EVENT_HOOK.get();
+            unsafe {
+                let result = UnhookWinEvent(event_hook);
+                if result.as_bool() {
+                    println!("Exiting tacky-borders!");
+                    ExitProcess(0);
+                } else {
+                    println!("Error. Could not unhook win event hook");
+                }
+            }
         }
         _ => {}
     }));
