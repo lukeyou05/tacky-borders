@@ -7,7 +7,6 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use std::thread;
 use windows::{
     core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
     Win32::UI::Accessibility::*, Win32::UI::HiDpi::*, Win32::UI::WindowsAndMessaging::*,
@@ -61,7 +60,6 @@ fn main() {
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
-            thread::sleep(std::time::Duration::from_millis(16))
         }
         println!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
     }
@@ -123,7 +121,9 @@ pub fn reload_borders() {
     for value in borders.values() {
         let border_window = HWND(*value as _);
         unsafe {
-            let _ = PostMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0));
+            // DefWindowProcW for WM_CLOSE will call DestroyWindow which will call WM_NCDESTROY and
+            // WM_DESTROY
+            let _ = PostMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
     borders.clear();
