@@ -64,7 +64,7 @@ impl WindowBorder {
         thread::sleep(std::time::Duration::from_millis(init_delay));
 
         unsafe {
-            // Make the window border transparent
+            // Make the window border transparent. Idk how this works. I took it from PowerToys.
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
             let hrgn = CreateRectRgn(pos, 0, pos + 1, 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
@@ -76,8 +76,8 @@ impl WindowBorder {
                     fTransitionOnMaximized: FALSE,
                 };
             }
-
             let _ = DwmEnableBlurBehindWindow(self.border_window, &bh);
+
             if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 0, LWA_COLORKEY)
                 .is_err()
             {
@@ -106,7 +106,6 @@ impl WindowBorder {
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
-                thread::sleep(std::time::Duration::from_millis(1));
             }
         }
 

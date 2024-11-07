@@ -236,6 +236,8 @@ pub fn create_border_for_window(
         let _ = border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
 
+        println!("creating window for: {:?}", window_sent.0);
+
         // Drop these values (to save some RAM?) before calling init and entering a message loop
         drop(borders_hashmap);
         let _ = window_sent;
@@ -356,7 +358,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
         if border_option.is_some() {
             let border_window: HWND = HWND((*border_option.unwrap()) as *mut _);
             unsafe {
-                let _ = PostMessageW(border_window, WM_DESTROY, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0));
             }
             borders_hashmap.remove(&window_isize);
         }
@@ -395,9 +397,10 @@ pub fn show_border_for_window(hwnd: HWND, create_delay_override: Option<u64>) ->
         }
         true
     } else {
-        if is_cloaked(hwnd) || has_filtered_style(hwnd) {
+        if !is_window_visible(hwnd) || is_cloaked(hwnd) || has_filtered_style(hwnd) {
             return false;
         }
+
         let _ = create_border_for_window(hwnd, create_delay_override);
         false
     }

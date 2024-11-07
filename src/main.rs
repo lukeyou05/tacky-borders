@@ -139,6 +139,6 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
         return TRUE;
     }
 
-    let _ = create_border_for_window(_hwnd, None);
+    let _ = create_border_for_window(_hwnd, Some(0));
     TRUE
 }
