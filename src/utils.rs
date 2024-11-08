@@ -15,24 +15,17 @@ use crate::window_border;
 use crate::SendHWND;
 use crate::__ImageBase;
 use crate::BORDERS;
+use crate::INITIAL_WINDOWS;
 
 // I need these because Rust doesn't allow expressions for a match pattern
-pub const WM_APP_0: u32 = WM_APP;
-pub const WM_APP_1: u32 = WM_APP + 1;
-pub const WM_APP_2: u32 = WM_APP + 2;
-pub const WM_APP_3: u32 = WM_APP + 3;
-pub const WM_APP_4: u32 = WM_APP + 4;
-pub const WM_APP_5: u32 = WM_APP + 5;
+pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
+pub const WM_APP_REORDER: u32 = WM_APP + 1;
+pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 2;
+pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
+pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
+pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
 
 // TODO THE CODE IS STILL A MESS
-
-pub fn get_rect_width(rect: RECT) -> i32 {
-    rect.right - rect.left
-}
-
-pub fn get_rect_height(rect: RECT) -> i32 {
-    rect.bottom - rect.top
-}
 
 pub fn has_filtered_style(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
@@ -70,11 +63,10 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
     let title = get_window_title(hwnd);
     let class = get_window_class(hwnd);
 
-    let config_mutex = &*CONFIG;
-    let config = config_mutex.lock().unwrap();
+    let config = CONFIG.lock().unwrap();
 
     for rule in config.window_rules.iter() {
-        let window_name = match rule.kind {
+        let name = match rule.kind {
             Some(MatchKind::Title) => &title,
             Some(MatchKind::Class) => &class,
             None => {
@@ -83,39 +75,35 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
             }
         };
 
-        let Some(match_str) = &rule.name else {
-            println!("Expected `name` for window rule but None found!");
+        let Some(pattern) = &rule.pattern else {
+            println!("Expected `pattern` for window rule but None found!");
             continue;
         };
 
-        match rule.strategy {
-            Some(MatchStrategy::Equals) | None => {
-                if window_name.to_lowercase().eq(&match_str.to_lowercase()) {
-                    return rule.clone();
-                }
-            }
-            Some(MatchStrategy::Contains) => {
-                if window_name
-                    .to_lowercase()
-                    .contains(&match_str.to_lowercase())
-                {
-                    return rule.clone();
-                }
-            }
-            Some(MatchStrategy::Regex) => {
-                let re = Regex::new(match_str).unwrap();
-                if re.captures(window_name).is_some() {
-                    return rule.clone();
-                }
-            }
+        if match rule.strategy {
+            Some(MatchStrategy::Equals) | None => name.to_lowercase().eq(&pattern.to_lowercase()),
+            Some(MatchStrategy::Contains) => name.to_lowercase().contains(&pattern.to_lowercase()),
+            Some(MatchStrategy::Regex) => Regex::new(pattern).unwrap().captures(name).is_some(),
+        } {
+            return rule.clone();
         }
     }
+
     drop(config);
     WindowRule::default()
 }
 
 pub fn is_window_visible(hwnd: HWND) -> bool {
     unsafe { IsWindowVisible(hwnd).as_bool() }
+}
+
+pub fn is_rect_visible(rect: &RECT) -> bool {
+    rect.top >= 0 || rect.left >= 0 || rect.bottom >= 0 || rect.right >= 0
+}
+
+pub fn are_rects_same_size(rect1: &RECT, rect2: &RECT) -> bool {
+    rect1.right - rect1.left == rect2.right - rect2.left
+        && rect1.bottom - rect1.top == rect2.bottom - rect2.top
 }
 
 pub fn is_cloaked(hwnd: HWND) -> bool {
@@ -160,12 +148,8 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
     wp.showCmd
 }
 
-pub fn create_border_for_window(
-    tracking_window: HWND,
-    init_delay_override: Option<u64>,
-) -> Result<()> {
-    let borders_mutex = &*BORDERS;
-    let config_mutex = &*CONFIG;
+pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
+    println!("in create_border_for_window for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
@@ -178,7 +162,7 @@ pub fn create_border_for_window(
             return;
         }
 
-        let config = config_mutex.lock().unwrap();
+        let config = CONFIG.lock().unwrap();
 
         // TODO holy this is ugly
         let config_size = window_rule.border_size.unwrap_or(config.global.border_size);
@@ -198,13 +182,16 @@ pub fn create_border_for_window(
         let border_colors = convert_config_colors(config_active, config_inactive);
         let border_radius = convert_config_radius(config_size, config_radius, window_sent.0);
 
-        // There is a delay override because we don't need creation delay for uncloaked windows
-        let init_delay = match init_delay_override {
-            Some(delay) => delay,
-            None => window_rule
+        let window_isize = window_sent.0 .0 as isize;
+
+        let init_delay = if INITIAL_WINDOWS.lock().unwrap().contains(&window_isize) {
+            0
+        } else {
+            window_rule
                 .init_delay
-                .unwrap_or(config.global.init_delay.unwrap_or(250)),
+                .unwrap_or(config.global.init_delay.unwrap_or(250))
         };
+
         let unminimize_delay = window_rule
             .unminimize_delay
             .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
@@ -222,11 +209,10 @@ pub fn create_border_for_window(
 
         drop(config);
 
-        let mut borders_hashmap = borders_mutex.lock().unwrap();
-        let window_isize = window_sent.0 .0 as isize;
+        let mut borders_hashmap = BORDERS.lock().unwrap();
 
-        // Check to see if the key already exists in the hashmap. If not, then continue
-        // adding the key and initializing the border.
+        // Check to see if the key already exists in the hashmap. I don't think this should ever
+        // return true, but it's just in case.
         if borders_hashmap.contains_key(&window_isize) {
             drop(borders_hashmap);
             return;
@@ -235,8 +221,6 @@ pub fn create_border_for_window(
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
         let _ = border.create_border_window(hinstance);
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
-
-        println!("creating window for: {:?}", window_sent.0);
 
         // Drop these values (to save some RAM?) before calling init and entering a message loop
         drop(borders_hashmap);
@@ -346,22 +330,22 @@ pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_wind
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
-    let mutex = &*BORDERS;
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
         let window_sent = window;
-        let mut borders_hashmap = mutex.lock().unwrap();
+        let mut borders_hashmap = BORDERS.lock().unwrap();
         let window_isize = window_sent.0 .0 as isize;
-        let border_option = borders_hashmap.get(&window_isize);
+        let Some(border_isize) = borders_hashmap.get(&window_isize) else {
+            drop(borders_hashmap);
+            return;
+        };
 
-        if border_option.is_some() {
-            let border_window: HWND = HWND((*border_option.unwrap()) as *mut _);
-            unsafe {
-                let _ = PostMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0));
-            }
-            borders_hashmap.remove(&window_isize);
+        let border_window: HWND = HWND(*border_isize as _);
+        unsafe {
+            let _ = PostMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
+        borders_hashmap.remove(&window_isize);
 
         drop(borders_hashmap);
     });
@@ -370,38 +354,31 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
 }
 
 pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
-    let mutex = &*BORDERS;
-    let borders = mutex.lock().unwrap();
+    let borders = BORDERS.lock().unwrap();
     let hwnd_isize = hwnd.0 as isize;
-    let border_option = borders.get(&hwnd_isize);
+    let Some(border_isize) = borders.get(&hwnd_isize) else {
+        drop(borders);
+        return None;
+    };
 
-    if border_option.is_some() {
-        let border_window: HWND = HWND(*border_option.unwrap() as _);
-        drop(borders);
-        Some(border_window)
-    } else {
-        drop(borders);
-        None
-    }
+    let border_window: HWND = HWND(*border_isize as _);
+    drop(borders);
+    Some(border_window)
 }
 
 // Return true if the border exists in the border hashmap. Otherwise, create a new border and
 // return false.
-// We can also specify a delay to prevent the border from appearing while a window is in its
-// opening animation.
-pub fn show_border_for_window(hwnd: HWND, create_delay_override: Option<u64>) -> bool {
+pub fn show_border_for_window(hwnd: HWND) -> bool {
     let border_window = get_border_from_window(hwnd);
     if let Some(hwnd) = border_window {
         unsafe {
-            let _ = PostMessageW(hwnd, WM_APP_2, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(hwnd, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0));
         }
         true
     } else {
-        if !is_window_visible(hwnd) || is_cloaked(hwnd) || has_filtered_style(hwnd) {
-            return false;
+        if is_window_visible(hwnd) && !is_cloaked(hwnd) && !has_filtered_style(hwnd) {
+            let _ = create_border_for_window(hwnd);
         }
-
-        let _ = create_border_for_window(hwnd, create_delay_override);
         false
     }
 }
@@ -414,7 +391,7 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
         let border_option = get_border_from_window(window_sent.0);
         if let Some(border_window) = border_option {
             unsafe {
-                let _ = PostMessageW(border_window, WM_APP_3, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(border_window, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0));
             }
         }
     });

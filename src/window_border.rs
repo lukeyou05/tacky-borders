@@ -4,6 +4,7 @@ use std::ptr;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use std::thread;
+use std::time;
 use windows::{
     core::*, Foundation::Numerics::*, Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*,
     Win32::Graphics::Direct2D::*, Win32::Graphics::Dwm::*, Win32::Graphics::Dxgi::Common::*,
@@ -27,9 +28,11 @@ pub struct WindowBorder {
     pub border_radius: f32,
     pub brush_properties: D2D1_BRUSH_PROPERTIES,
     pub render_target: OnceLock<ID2D1HwndRenderTarget>,
+    pub brush: OnceLock<ID2D1SolidColorBrush>,
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: D2D1_COLOR_F,
     pub inactive_color: D2D1_COLOR_F,
+    // TODO not sure I need this anymore
     pub current_color: D2D1_COLOR_F,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
@@ -61,7 +64,7 @@ impl WindowBorder {
 
     pub fn init(&mut self, init_delay: u64) -> Result<()> {
         // Delay the border while the tracking window is in its creation animation
-        thread::sleep(std::time::Duration::from_millis(init_delay));
+        thread::sleep(time::Duration::from_millis(init_delay));
 
         unsafe {
             // Make the window border transparent. Idk how this works. I took it from PowerToys.
@@ -97,7 +100,7 @@ impl WindowBorder {
                 // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
                 // This is very hacky and needs to be looked into. It may be related to the issue
                 // detailed in the wnd_proc. TODO
-                thread::sleep(std::time::Duration::from_millis(5));
+                thread::sleep(time::Duration::from_millis(5));
                 let _ = self.update_position(Some(SWP_SHOWWINDOW));
                 let _ = self.render();
             }
@@ -107,6 +110,7 @@ impl WindowBorder {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
+            println!("exiting border thread for {:?}!", self.tracking_window);
         }
 
         Ok(())
@@ -154,6 +158,11 @@ impl WindowBorder {
             );
             let render_target = self.render_target.get().unwrap();
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+            let _ = self.brush.set(
+                render_target
+                    .CreateSolidColorBrush(&self.current_color, Some(&self.brush_properties))?,
+            );
         }
 
         let _ = self.update_color();
@@ -173,9 +182,10 @@ impl WindowBorder {
             )
         };
         if result.is_err() {
-            println!("Error getting frame rect!");
+            println!("Error getting frame rect! This is normal for apps running with elevated privileges");
             unsafe {
                 let _ = ShowWindow(self.border_window, SW_HIDE);
+                self.pause = true;
             }
         }
 
@@ -212,29 +222,34 @@ impl WindowBorder {
                 u_flags,
             );
             if result.is_err() {
-                println!("Error setting window pos!");
+                println!("Error setting window position! This is normal for apps running with elevated privileges");
                 let _ = ShowWindow(self.border_window, SW_HIDE);
+                self.pause = true;
             }
         }
         Ok(())
     }
 
     pub fn update_color(&mut self) -> Result<()> {
-        if is_active_window(self.tracking_window) {
-            self.current_color = self.active_color;
+        let color = if is_active_window(self.tracking_window) {
+            &self.active_color
         } else {
-            self.current_color = self.inactive_color;
-        }
+            &self.inactive_color
+        };
+
+        let Some(brush) = self.brush.get() else {
+            return Ok(());
+        };
+        unsafe { brush.SetColor(color) };
+
         Ok(())
     }
 
     pub fn render(&mut self) -> Result<()> {
         // Get the render target
-        let render_target_option = self.render_target.get();
-        if render_target_option.is_none() {
+        let Some(render_target) = self.render_target.get() else {
             return Ok(());
-        }
-        let render_target = render_target_option.unwrap();
+        };
 
         let pixel_size = D2D_SIZE_U {
             width: (self.window_rect.right - self.window_rect.left) as u32,
@@ -253,14 +268,15 @@ impl WindowBorder {
         unsafe {
             let _ = render_target.Resize(ptr::addr_of!(pixel_size));
 
-            let brush = render_target
-                .CreateSolidColorBrush(&self.current_color, Some(&self.brush_properties))?;
+            let Some(brush) = self.brush.get() else {
+                return Ok(());
+            };
 
             render_target.BeginDraw();
             render_target.Clear(None);
             render_target.DrawRoundedRectangle(
                 &self.rounded_rect,
-                &brush,
+                brush,
                 self.border_size as f32,
                 None,
             );
@@ -301,10 +317,11 @@ impl WindowBorder {
     ) -> LRESULT {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
-            WM_APP_0 => {
+            WM_APP_LOCATIONCHANGE => {
                 if self.pause {
                     return LRESULT(0);
-                } else if !has_native_border(self.tracking_window) {
+                }
+                if !has_native_border(self.tracking_window) {
                     let _ = self.update_position(Some(SWP_HIDEWINDOW));
                     return LRESULT(0);
                 }
@@ -319,26 +336,18 @@ impl WindowBorder {
                 let _ = self.update_window_rect();
                 let _ = self.update_position(flags);
 
-                // TODO When a window is minimized, all four of these points go way below 0, and for some
-                // reason, render() will sometimes render at this minimized size, even when the
-                // render_target size and rounded_rect.rect are changed correctly after an
-                // update_window_rect call. So, this is a temporary solution but it should absolutely be
-                // looked further into.
-                if self.window_rect.top <= 0
-                    && self.window_rect.left <= 0
-                    && self.window_rect.right <= 0
-                    && self.window_rect.bottom <= 0
-                {
+                // TODO When a window is minimized, all four points of the rect go way below 0. For
+                // some reason, after unminimizing/restoring, render() will sometimes render at
+                // this minimized size. self.window_rect = old_rect is hopefully only a temporary solution.
+                if !is_rect_visible(&self.window_rect) {
                     self.window_rect = old_rect;
-                } else if get_rect_width(self.window_rect) != get_rect_width(old_rect)
-                    || get_rect_height(self.window_rect) != get_rect_height(old_rect)
-                {
+                } else if !are_rects_same_size(&self.window_rect, &old_rect) {
                     // Only re-render the border when its size changes
                     let _ = self.render();
                 }
             }
             // EVENT_OBJECT_REORDER
-            WM_APP_1 => {
+            WM_APP_REORDER => {
                 if self.pause {
                     return LRESULT(0);
                 }
@@ -348,7 +357,7 @@ impl WindowBorder {
                 let _ = self.render();
             }
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
-            WM_APP_2 => {
+            WM_APP_SHOWUNCLOAKED => {
                 if has_native_border(self.tracking_window) {
                     let _ = self.update_color();
                     let _ = self.update_window_rect();
@@ -358,22 +367,23 @@ impl WindowBorder {
                 self.pause = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
-            WM_APP_3 => {
+            WM_APP_HIDECLOAKED => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
                 self.pause = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
-            WM_APP_4 => {
+            WM_APP_MINIMIZESTART => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
                 self.pause = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
             // When a window is about to be unminimized, hide the border and let the thread sleep
             // for 200ms to wait for the window animation to finish, then show the border.
-            WM_APP_5 => {
-                thread::sleep(std::time::Duration::from_millis(self.unminimize_delay));
+            WM_APP_MINIMIZEEND => {
+                thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
                 if has_native_border(self.tracking_window) {
+                    let _ = self.update_color();
                     let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
@@ -393,8 +403,7 @@ impl WindowBorder {
                 PostQuitMessage(0);
             }
             // Ignore these window position messages
-            WM_WINDOWPOSCHANGING => {}
-            WM_WINDOWPOSCHANGED => {}
+            WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}
             _ => {
                 return DefWindowProcW(window, message, wparam, lparam);
             }

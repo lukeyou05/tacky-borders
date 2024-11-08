@@ -5,7 +5,7 @@ use windows::{
 use crate::utils::*;
 use crate::BORDERS;
 
-pub extern "system" fn handle_win_event_main(
+pub extern "system" fn handle_win_event(
     _h_win_event_hook: HWINEVENTHOOK,
     _event: u32,
     _hwnd: HWND,
@@ -26,11 +26,9 @@ pub extern "system" fn handle_win_event_main(
 
             let border_window = get_border_from_window(_hwnd);
             if let Some(hwnd) = border_window {
-                //let before = std::time::Instant::now();
                 unsafe {
-                    let _ = SendNotifyMessageW(hwnd, WM_APP_0, WPARAM(0), LPARAM(0));
+                    let _ = SendNotifyMessageW(hwnd, WM_APP_LOCATIONCHANGE, WPARAM(0), LPARAM(0));
                 }
-                //println!("time elapsed: {:?}", before.elapsed());
             }
         }
         EVENT_OBJECT_REORDER => {
@@ -38,23 +36,20 @@ pub extern "system" fn handle_win_event_main(
                 return;
             }
 
-            let mutex = &*BORDERS;
-            let borders = mutex.lock().unwrap();
+            let borders = BORDERS.lock().unwrap();
 
-            // I have to loop through because for whatever reason, EVENT_OBJECT_REORDER only gets
-            // sent with some random memory address that might be important but idk.
             for value in borders.values() {
                 let border_window: HWND = HWND(*value as _);
                 if is_window_visible(border_window) {
                     unsafe {
-                        let _ = PostMessageW(border_window, WM_APP_1, WPARAM(0), LPARAM(0));
+                        let _ = PostMessageW(border_window, WM_APP_REORDER, WPARAM(0), LPARAM(0));
                     }
                 }
             }
             drop(borders);
         }
-        EVENT_OBJECT_SHOW => {
-            show_border_for_window(_hwnd, None);
+        EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
+            show_border_for_window(_hwnd);
         }
         EVENT_OBJECT_HIDE => {
             // I have to check IsWindowVisible because for some reason, EVENT_OBJECT_HIDE can be
@@ -63,9 +58,6 @@ pub extern "system" fn handle_win_event_main(
                 hide_border_for_window(_hwnd);
             }
         }
-        EVENT_OBJECT_UNCLOAKED => {
-            show_border_for_window(_hwnd, Some(0));
-        }
         EVENT_OBJECT_CLOAKED => {
             hide_border_for_window(_hwnd);
         }
@@ -73,7 +65,7 @@ pub extern "system" fn handle_win_event_main(
             let border_option = get_border_from_window(_hwnd);
             if let Some(border_window) = border_option {
                 unsafe {
-                    let _ = PostMessageW(border_window, WM_APP_4, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(border_window, WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0));
                 }
             }
         }
@@ -81,7 +73,7 @@ pub extern "system" fn handle_win_event_main(
             let border_option = get_border_from_window(_hwnd);
             if let Some(border_window) = border_option {
                 unsafe {
-                    let _ = PostMessageW(border_window, WM_APP_5, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(border_window, WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0));
                 }
             }
         }

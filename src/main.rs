@@ -1,4 +1,3 @@
-//#![allow(unused)]
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
@@ -24,13 +23,14 @@ extern "C" {
     pub static __ImageBase: IMAGE_DOS_HEADER;
 }
 
-// TODO get rid of the Cell if I never replace it more than once
 thread_local! {
     pub static EVENT_HOOK: Cell<HWINEVENTHOOK> = Cell::new(HWINEVENTHOOK::default());
 }
 
 pub static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub static INITIAL_WINDOWS: LazyLock<Mutex<Vec<isize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 // This is supposedly unsafe af but it works soo + I never dereference anything
 pub struct SendHWND(HWND);
@@ -95,7 +95,7 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
             EVENT_MIN,
             EVENT_MAX,
             None,
-            Some(event_hook::handle_win_event_main),
+            Some(event_hook::handle_win_event),
             0,
             0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
@@ -112,12 +112,7 @@ pub fn enum_windows() -> Result<()> {
 }
 
 pub fn reload_borders() {
-    //let event_hook = EVENT_HOOK.get();
-    //let result = unsafe { UnhookWinEvent(event_hook) };
-    //println!("result of unhooking win event: {:?}", result);
-
-    let mutex = &*BORDERS;
-    let mut borders = mutex.lock().unwrap();
+    let mut borders = BORDERS.lock().unwrap();
     for value in borders.values() {
         let border_window = HWND(*value as _);
         unsafe {
@@ -128,17 +123,19 @@ pub fn reload_borders() {
     }
     borders.clear();
     drop(borders);
-    let _ = enum_windows();
 
-    //EVENT_HOOK.replace(set_event_hook());
+    INITIAL_WINDOWS.lock().unwrap().clear();
+
+    let _ = enum_windows();
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
-    // Returning FALSE will exit the EnumWindows loop so we must return TRUE here
-    if !is_window_visible(_hwnd) || is_cloaked(_hwnd) || has_filtered_style(_hwnd) {
-        return TRUE;
-    }
+    if !has_filtered_style(_hwnd) {
+        if is_window_visible(_hwnd) && !is_cloaked(_hwnd) {
+            let _ = create_border_for_window(_hwnd);
+        }
 
-    let _ = create_border_for_window(_hwnd, Some(0));
+        INITIAL_WINDOWS.lock().unwrap().push(_hwnd.0 as isize);
+    }
     TRUE
 }

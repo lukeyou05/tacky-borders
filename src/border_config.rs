@@ -30,7 +30,7 @@ pub struct Global {
 pub struct WindowRule {
     #[serde(rename = "match")]
     pub kind: Option<MatchKind>,
-    pub name: Option<String>,
+    pub pattern: Option<String>,
     pub strategy: Option<MatchStrategy>,
     pub border_size: Option<i32>,
     pub border_offset: Option<i32>,
