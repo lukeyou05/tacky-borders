@@ -16,7 +16,7 @@ pub struct Config {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Global {
-    pub border_size: i32,
+    pub border_width: i32,
     pub border_offset: i32,
     pub border_radius: f32,
     pub active_color: String,
@@ -33,7 +33,7 @@ pub struct WindowRule {
     #[serde(rename = "name")]
     pub pattern: Option<String>,
     pub strategy: Option<MatchStrategy>,
-    pub border_size: Option<i32>,
+    pub border_width: Option<i32>,
     pub border_offset: Option<i32>,
     pub border_radius: Option<f32>,
     pub active_color: Option<String>,

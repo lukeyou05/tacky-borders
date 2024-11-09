@@ -165,7 +165,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let config = CONFIG.lock().unwrap();
 
         // TODO holy this is ugly
-        let config_size = window_rule.border_size.unwrap_or(config.global.border_size);
+        let config_width = window_rule.border_width.unwrap_or(config.global.border_width);
         let config_offset = window_rule
             .border_offset
             .unwrap_or(config.global.border_offset);
@@ -180,7 +180,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             .unwrap_or(config.global.inactive_color.clone());
 
         let border_colors = convert_config_colors(config_active, config_inactive);
-        let border_radius = convert_config_radius(config_size, config_radius, window_sent.0);
+        let border_radius = convert_config_radius(config_width, config_radius, window_sent.0);
 
         let window_isize = window_sent.0 .0 as isize;
 
@@ -198,7 +198,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
 
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
-            border_size: config_size,
+            border_width: config_width,
             border_offset: config_offset,
             border_radius,
             active_color: border_colors.0,
@@ -226,7 +226,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         drop(borders_hashmap);
         let _ = window_sent;
         let _ = window_rule;
-        let _ = config_size;
+        let _ = config_width;
         let _ = config_offset;
         let _ = config_radius;
         let _ = config_active;
@@ -291,7 +291,7 @@ pub fn convert_config_colors(
     (active_color, inactive_color)
 }
 
-pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_window: HWND) -> f32 {
+pub fn convert_config_radius(config_width: i32, config_radius: f32, tracking_window: HWND) -> f32 {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
     let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
 
@@ -311,16 +311,16 @@ pub fn convert_config_radius(config_size: i32, config_radius: f32, tracking_wind
         }
         match corner_preference {
             DWMWCP_DEFAULT => {
-                return 8.0 * dpi / 96.0 + (config_size as f32) / 2.0;
+                return 8.0 * dpi / 96.0 + (config_width as f32) / 2.0;
             }
             DWMWCP_DONOTROUND => {
                 return 0.0;
             }
             DWMWCP_ROUND => {
-                return 8.0 * dpi / 96.0 + (config_size as f32) / 2.0;
+                return 8.0 * dpi / 96.0 + (config_width as f32) / 2.0;
             }
             DWMWCP_ROUNDSMALL => {
-                return 4.0 * dpi / 96.0 + (config_size as f32) / 2.0;
+                return 4.0 * dpi / 96.0 + (config_width as f32) / 2.0;
             }
             _ => {}
         }

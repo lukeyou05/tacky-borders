@@ -23,7 +23,7 @@ pub struct WindowBorder {
     pub border_window: HWND,
     pub tracking_window: HWND,
     pub window_rect: RECT,
-    pub border_size: i32,
+    pub border_width: i32,
     pub border_offset: i32,
     pub border_radius: f32,
     pub brush_properties: D2D1_BRUSH_PROPERTIES,
@@ -189,10 +189,10 @@ impl WindowBorder {
             }
         }
 
-        self.window_rect.top -= self.border_size;
-        self.window_rect.left -= self.border_size;
-        self.window_rect.right += self.border_size;
-        self.window_rect.bottom += self.border_size;
+        self.window_rect.top -= self.border_width;
+        self.window_rect.left -= self.border_width;
+        self.window_rect.right += self.border_width;
+        self.window_rect.bottom += self.border_width;
 
         Ok(())
     }
@@ -257,11 +257,11 @@ impl WindowBorder {
         };
 
         self.rounded_rect.rect = D2D_RECT_F {
-            left: (self.border_size / 2 - self.border_offset) as f32,
-            top: (self.border_size / 2 - self.border_offset) as f32,
-            right: (self.window_rect.right - self.window_rect.left - self.border_size / 2
+            left: (self.border_width / 2 - self.border_offset) as f32,
+            top: (self.border_width / 2 - self.border_offset) as f32,
+            right: (self.window_rect.right - self.window_rect.left - self.border_width / 2
                 + self.border_offset) as f32,
-            bottom: (self.window_rect.bottom - self.window_rect.top - self.border_size / 2
+            bottom: (self.window_rect.bottom - self.window_rect.top - self.border_width / 2
                 + self.border_offset) as f32,
         };
 
@@ -277,7 +277,7 @@ impl WindowBorder {
             render_target.DrawRoundedRectangle(
                 &self.rounded_rect,
                 brush,
-                self.border_size as f32,
+                self.border_width as f32,
                 None,
             );
             let _ = render_target.EndDraw(None, None);
