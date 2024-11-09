@@ -321,6 +321,10 @@ impl WindowBorder {
                 if self.pause {
                     return LRESULT(0);
                 }
+
+                // TODO I could probably move some of this message's code into a new message for
+                // EVENT_SYSTEM_MOVESIZESTART and MOVESIZEEND but the relevant code doesn't seem to
+                // eat up much CPU anyways
                 if !has_native_border(self.tracking_window) {
                     let _ = self.update_position(Some(SWP_HIDEWINDOW));
                     return LRESULT(0);
@@ -338,7 +342,7 @@ impl WindowBorder {
 
                 // TODO When a window is minimized, all four points of the rect go way below 0. For
                 // some reason, after unminimizing/restoring, render() will sometimes render at
-                // this minimized size. self.window_rect = old_rect is hopefully only a temporary solution.
+                // this minimized size. For now, I just do self.window_rect = old_rect to fix that.
                 if !is_rect_visible(&self.window_rect) {
                     self.window_rect = old_rect;
                 } else if !are_rects_same_size(&self.window_rect, &old_rect) {
@@ -366,13 +370,8 @@ impl WindowBorder {
                 }
                 self.pause = false;
             }
-            // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
-            WM_APP_HIDECLOAKED => {
-                let _ = self.update_position(Some(SWP_HIDEWINDOW));
-                self.pause = true;
-            }
-            // EVENT_OBJECT_MINIMIZESTART
-            WM_APP_MINIMIZESTART => {
+            // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED / EVENT_OBJECT_MINIMIZESTART
+            WM_APP_HIDECLOAKED | WM_APP_MINIMIZESTART => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
                 self.pause = true;
             }
