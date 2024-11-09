@@ -38,4 +38,4 @@ I recommend using tacky-borders if you want:
 - animations (also upcoming lol)
 - Windows 10 support (not fully tested)
 
-Otherwise, I recommend using cute-borders because it's likely more stable and performant due to its implementation.
+Otherwise, I recommend using cute-borders because I find it to be more stable and performant.
