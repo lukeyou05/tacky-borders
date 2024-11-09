@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use windows::{
     core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
-    Win32::UI::Accessibility::*, Win32::UI::HiDpi::*, Win32::UI::WindowsAndMessaging::*,
+    Win32::UI::Accessibility::*, Win32::UI::HiDpi::*, Win32::UI::Input::Ime::*,
+    Win32::UI::WindowsAndMessaging::*,
 };
 
 mod border_config;
@@ -38,22 +39,27 @@ unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    let dpi_aware =
-        unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
-    if dpi_aware.is_err() {
+    // Idk what exactly IME windows do... smth text input language smth... but I don't think we
+    // need them. Also, -1 is 0xFFFFFFFF, which we can use to disable IME windows for all threads
+    // in the current process.
+    if unsafe { !ImmDisableIME(std::mem::transmute::<i32, u32>(-1)).as_bool() } {
+        println!("Could not disable IME!");
+    }
+
+    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() }
+    {
         println!("Failed to make process DPI aware");
     }
 
-    let _ = register_window_class();
-    println!("window class is registered!");
-    let _ = enum_windows();
-
-    let tray_icon_option = sys_tray_icon::create_tray_icon();
-    if tray_icon_option.is_err() {
+    let tray_icon_result = sys_tray_icon::create_tray_icon();
+    if tray_icon_result.is_err() {
         println!("Error creating tray icon!");
     }
 
     EVENT_HOOK.replace(set_event_hook());
+    let _ = register_window_class();
+    let _ = enum_windows();
+
     unsafe {
         println!("Entering message loop!");
         let mut message = MSG::default();
