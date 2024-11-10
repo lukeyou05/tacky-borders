@@ -122,8 +122,8 @@ pub fn reload_borders() {
     for value in borders.values() {
         let border_window = HWND(*value as _);
         unsafe {
-            // DefWindowProcW for WM_CLOSE will call DestroyWindow which will call WM_NCDESTROY and
-            // WM_DESTROY
+            // DefWindowProcW for WM_CLOSE will call DestroyWindow which will send WM_NCDESTROY and
+            // WM_DESTROY messages
             let _ = PostMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }

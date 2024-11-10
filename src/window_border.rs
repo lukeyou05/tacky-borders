@@ -362,9 +362,18 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
             WM_APP_SHOWUNCLOAKED => {
+                // With GlazeWM, if I switch to another workspace while a window is minimized and
+                // switch back, then we will receive this message even though the window is not yet
+                // visible. And, the window rect will be all weird. So, we apply the following fix.
+                let old_rect = self.window_rect;
+                let _ = self.update_window_rect();
+                if !is_rect_visible(&self.window_rect) {
+                    self.window_rect = old_rect;
+                    return LRESULT(0);
+                }
+
                 if has_native_border(self.tracking_window) {
                     let _ = self.update_color();
-                    let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
@@ -377,7 +386,7 @@ impl WindowBorder {
             }
             // EVENT_SYSTEM_MINIMIZEEND
             // When a window is about to be unminimized, hide the border and let the thread sleep
-            // for 200ms to wait for the window animation to finish, then show the border.
+            // to wait for the window animation to finish, then show the border.
             WM_APP_MINIMIZEEND => {
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
