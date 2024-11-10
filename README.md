@@ -11,8 +11,6 @@ Alternatively, if you want to build it yourself, first make sure you have instal
 ## Uninstallation
 Just delete the .exe and the config file located in ```%userprofile%/.config/tacky-borders/```.
 
-:(
-
 ## Configuration Options:
 The config.yaml is located in ```%userprofile%/.config/tacky-borders/```. You can easily access this folder by right clicking on the tray icon and hitting "Show Config"
 
