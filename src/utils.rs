@@ -165,7 +165,9 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let config = CONFIG.lock().unwrap();
 
         // TODO holy this is ugly
-        let config_width = window_rule.border_width.unwrap_or(config.global.border_width);
+        let config_width = window_rule
+            .border_width
+            .unwrap_or(config.global.border_width);
         let config_offset = window_rule
             .border_offset
             .unwrap_or(config.global.border_offset);
@@ -179,7 +181,10 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             .inactive_color
             .unwrap_or(config.global.inactive_color.clone());
 
-        let border_colors = convert_config_colors(config_active, config_inactive);
+        //let border_colors = convert_config_colors(config_active, config_inactive);
+        let active_color = config_active.convert_to_color(true);
+        let inactive_color = config_inactive.convert_to_color(false);
+
         let border_radius = convert_config_radius(config_width, config_radius, window_sent.0);
 
         let window_isize = window_sent.0 .0 as isize;
@@ -201,8 +206,8 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             border_width: config_width,
             border_offset: config_offset,
             border_radius,
-            active_color: border_colors.0,
-            inactive_color: border_colors.1,
+            active_color,
+            inactive_color,
             unminimize_delay,
             ..Default::default()
         };
@@ -231,7 +236,9 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = config_radius;
         let _ = config_active;
         let _ = config_inactive;
-        let _ = border_colors;
+        //let _ = border_colors;
+        let _ = active_color;
+        let _ = inactive_color;
         let _ = window_isize;
         let _ = hinstance;
 
@@ -243,6 +250,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
     Ok(())
 }
 
+// DEPRECATED
 pub fn convert_config_colors(
     config_active: String,
     config_inactive: String,

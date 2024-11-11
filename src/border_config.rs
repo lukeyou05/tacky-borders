@@ -1,3 +1,4 @@
+use crate::colors::ColorConfig;
 use dirs::home_dir;
 use serde::Deserialize;
 use serde::Serialize;
@@ -19,8 +20,8 @@ pub struct Global {
     pub border_width: i32,
     pub border_offset: i32,
     pub border_radius: f32,
-    pub active_color: String,
-    pub inactive_color: String,
+    pub active_color: ColorConfig,
+    pub inactive_color: ColorConfig,
     // TODO maybe need better names for these two below
     pub init_delay: Option<u64>, // Adjust delay when creating new windows/borders
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
@@ -36,8 +37,8 @@ pub struct WindowRule {
     pub border_width: Option<i32>,
     pub border_offset: Option<i32>,
     pub border_radius: Option<f32>,
-    pub active_color: Option<String>,
-    pub inactive_color: Option<String>,
+    pub active_color: Option<ColorConfig>,
+    pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,
     pub init_delay: Option<u64>,
     pub unminimize_delay: Option<u64>,

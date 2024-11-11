@@ -18,7 +18,7 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
 
     let tray_menu = Menu::new();
     let _ = tray_menu.append(&MenuItem::with_id("0", "Show Config", true, None));
-    let _ = tray_menu.append(&MenuItem::with_id("1", "Reload Config", true, None));
+    let _ = tray_menu.append(&MenuItem::with_id("1", "Reload", true, None));
     let _ = tray_menu.append(&MenuItem::with_id("2", "Close", true, None));
 
     let tray_icon = TrayIconBuilder::new()

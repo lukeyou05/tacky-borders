@@ -8,36 +8,36 @@ serde = "1.0.213"
 serde_yaml = "0.9.34"
 tray-icon = "0.19.1"
 open = "5.1.4"
-dirs = "4.0"
+dirs = "5.0.1"
 regex = "1.11.1"
 
 [dependencies.windows]
 version = "0.58.0"
 features = [
-    "implement",
-    "Win32_System_Com",
-    "Win32_UI_Shell_Common", # for IObjectArray
-    "Win32_Foundation",
-    "Foundation_Numerics",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Direct2D",
-    "Win32_Graphics_Direct2D_Common",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_System_LibraryLoader",
-    "Win32_System_RemoteDesktop",
-    "Win32_System_Threading",
-    "Win32_UI_Accessibility",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input_Ime",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_Common",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_SystemServices",
-    "Win32_System_WindowsProgramming",
-    "Media",
-    "Media_Control"
+  "implement",
+  "Win32_System_Com",
+  "Win32_UI_Shell_Common",           # for IObjectArray
+  "Win32_Foundation",
+  "Foundation_Numerics",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Direct2D_Common",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_System_LibraryLoader",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_SystemServices",
+  "Win32_System_WindowsProgramming",
+  "Media",
+  "Media_Control",
 ]
 
 [build-dependencies]

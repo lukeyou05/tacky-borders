@@ -13,6 +13,7 @@ use windows::{
 };
 
 mod border_config;
+mod colors;
 mod event_hook;
 mod sys_tray_icon;
 mod utils;

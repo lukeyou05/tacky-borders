@@ -3,8 +3,14 @@ global:
     border_width: 4              # Width of the border
     border_offset: -1            # How close the border is to the window edges
     border_radius: -1            # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
-    active_color: "accent"       # Color of the focused window. Currently supports a hex code like "#ffffff" or "accent"
-    inactive_color: "accent"     # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent"
+
+    active_color:
+      colors: ["#89b4fa", "#cba6f7"]
+      direction:
+        start: [0.0, 0.0]        # [0.0, 0.0] is the top left corner (windows api is weird like that)
+        end: [1.0, 1.0]          # [1.0, 1.0] is the bottom right corner
+
+    inactive_color: "#777680"    # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
 
 
 # Customize config options on a per-app basis

@@ -1,4 +1,5 @@
 // TODO Add result handling. There's so many let _ =
+use crate::colors::*;
 use crate::utils::*;
 use std::ptr;
 use std::sync::LazyLock;
@@ -28,12 +29,11 @@ pub struct WindowBorder {
     pub border_radius: f32,
     pub brush_properties: D2D1_BRUSH_PROPERTIES,
     pub render_target: OnceLock<ID2D1HwndRenderTarget>,
-    pub brush: OnceLock<ID2D1SolidColorBrush>,
     pub rounded_rect: D2D1_ROUNDED_RECT,
-    pub active_color: D2D1_COLOR_F,
-    pub inactive_color: D2D1_COLOR_F,
+    pub active_color: Color,
+    pub inactive_color: Color,
     // TODO not sure I need this anymore
-    pub current_color: D2D1_COLOR_F,
+    pub current_color: Color,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -144,7 +144,7 @@ impl WindowBorder {
         };
 
         // Initialize the actual border color assuming it is in focus
-        self.current_color = self.active_color;
+        self.current_color = self.active_color.clone();
 
         unsafe {
             let factory = &*RENDER_FACTORY;
@@ -158,11 +158,6 @@ impl WindowBorder {
             );
             let render_target = self.render_target.get().unwrap();
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-            let _ = self.brush.set(
-                render_target
-                    .CreateSolidColorBrush(&self.current_color, Some(&self.brush_properties))?,
-            );
         }
 
         let _ = self.update_color();
@@ -231,16 +226,11 @@ impl WindowBorder {
     }
 
     pub fn update_color(&mut self) -> Result<()> {
-        let color = if is_active_window(self.tracking_window) {
-            &self.active_color
+        self.current_color = if is_active_window(self.tracking_window) {
+            self.active_color.clone()
         } else {
-            &self.inactive_color
+            self.inactive_color.clone()
         };
-
-        let Some(brush) = self.brush.get() else {
-            return Ok(());
-        };
-        unsafe { brush.SetColor(color) };
 
         Ok(())
     }
@@ -268,15 +258,23 @@ impl WindowBorder {
         unsafe {
             let _ = render_target.Resize(ptr::addr_of!(pixel_size));
 
-            let Some(brush) = self.brush.get() else {
+            //let before = std::time::Instant::now();
+
+            let Some(brush) = self.current_color.create_brush(
+                render_target,
+                &self.window_rect,
+                &self.brush_properties,
+            ) else {
                 return Ok(());
             };
+
+            //println!("time to create brush: {:?}", before.elapsed());
 
             render_target.BeginDraw();
             render_target.Clear(None);
             render_target.DrawRoundedRectangle(
                 &self.rounded_rect,
-                brush,
+                &brush,
                 self.border_width as f32,
                 None,
             );
