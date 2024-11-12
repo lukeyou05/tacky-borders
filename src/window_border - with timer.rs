@@ -38,11 +38,16 @@ pub struct WindowBorder {
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
     pub pause: bool,
+    pub timer: OnceLock<std::cell::Cell<std::time::Instant>>,
 }
 
 impl WindowBorder {
     pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> Result<()> {
         unsafe {
+            let _ = self
+                .timer
+                .set(std::cell::Cell::new(std::time::Instant::now()));
+
             self.border_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 w!("tacky-border"),
@@ -256,7 +261,7 @@ impl WindowBorder {
         };
 
         unsafe {
-            let _ = render_target.Resize(&pixel_size);
+            let _ = render_target.Resize(ptr::addr_of!(pixel_size));
 
             //let before = std::time::Instant::now();
 
@@ -279,12 +284,6 @@ impl WindowBorder {
                 None,
             );
             let _ = render_target.EndDraw(None, None);
-
-            // Dude I have zero clue why but invalidating the rect here, which sends a WM_PAINT
-            // message and runs the two lines of code in the window procedure, fixes the task
-            // manager showing high gpu usage for tacky-borders, even though the total system GPU
-            // usage looks to be roughly the same?? not sure????
-            let _ = InvalidateRect(self.border_window, None, false);
         }
         Ok(())
     }
@@ -349,9 +348,17 @@ impl WindowBorder {
                 // this minimized size. For now, I just do self.window_rect = old_rect to fix that.
                 if !is_rect_visible(&self.window_rect) {
                     self.window_rect = old_rect;
-                } else if !are_rects_same_size(&self.window_rect, &old_rect) {
+                } else if !are_rects_same_size(&self.window_rect, &old_rect)
+                    && self.timer.get().unwrap().get().elapsed()
+                        > std::time::Duration::from_millis(7)
+                {
                     // Only re-render the border when its size changes
                     let _ = self.render();
+
+                    self.timer
+                        .get_mut()
+                        .unwrap()
+                        .replace(std::time::Instant::now());
                 }
             }
             // EVENT_OBJECT_REORDER
@@ -402,13 +409,13 @@ impl WindowBorder {
                 }
                 self.pause = false;
             }
-            // I HAVE NO IDEA WHY BUT THESE TWO LINES OF CODE HERE FIXES TASK MANAGER SHOWING HIGH
-            // GPU USAGE???
+            // TODO i have not tested if this actually works yet
             WM_PAINT => {
-                //println!("window: {:?}", window);
+                println!("in wm_paint");
 
-                let _ = self.render();
-                let _ = ValidateRect(window, None);
+                // Same as what LGUG2Z has in komorebi. Should stop the WM_PAINT messages.
+                let _ = BeginPaint(window, &mut PAINTSTRUCT::default());
+                let _ = EndPaint(window, &PAINTSTRUCT::default());
             }
             WM_DESTROY => {
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);

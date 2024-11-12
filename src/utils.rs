@@ -140,7 +140,7 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 
 pub fn get_show_cmd(hwnd: HWND) -> u32 {
     let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
-    let result = unsafe { GetWindowPlacement(hwnd, ptr::addr_of_mut!(wp)) };
+    let result = unsafe { GetWindowPlacement(hwnd, &mut wp) };
     if result.is_err() {
         println!("error getting window_placement!");
         return 0;
@@ -181,11 +181,12 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             .inactive_color
             .unwrap_or(config.global.inactive_color.clone());
 
-        //let border_colors = convert_config_colors(config_active, config_inactive);
         let active_color = config_active.convert_to_color(true);
         let inactive_color = config_inactive.convert_to_color(false);
 
-        let border_radius = convert_config_radius(config_width, config_radius, window_sent.0);
+        let dpi = unsafe { GetDpiForWindow(window_sent.0) } as f32;
+        let border_width = (config_width * dpi / 96.0) as i32;
+        let border_radius = convert_config_radius(border_width, config_radius, window_sent.0, dpi);
 
         let window_isize = window_sent.0 .0 as isize;
 
@@ -203,7 +204,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
 
         let mut border = window_border::WindowBorder {
             tracking_window: window_sent.0,
-            border_width: config_width,
+            border_width,
             border_offset: config_offset,
             border_radius,
             active_color,
@@ -236,7 +237,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = config_radius;
         let _ = config_active;
         let _ = config_inactive;
-        //let _ = border_colors;
         let _ = active_color;
         let _ = inactive_color;
         let _ = window_isize;
@@ -250,58 +250,13 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
     Ok(())
 }
 
-// DEPRECATED
-pub fn convert_config_colors(
-    config_active: String,
-    config_inactive: String,
-) -> (D2D1_COLOR_F, D2D1_COLOR_F) {
-    let mut accent_red: f32 = 0.0;
-    let mut accent_green: f32 = 0.0;
-    let mut accent_blue: f32 = 0.0;
-    let mut accent_avg: f32 = 0.0;
-
-    if config_active == "accent" || config_inactive == "accent" {
-        // Get the Windows accent color
-        let mut pcr_colorization: u32 = 0;
-        let mut pf_opaqueblend: BOOL = FALSE;
-        let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
-        if result.is_err() {
-            println!("Error getting Windows accent color!");
-        }
-        accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
-        accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
-        accent_blue = (pcr_colorization & 0x000000FF) as f32 / 255.0;
-        accent_avg = (accent_red + accent_green + accent_blue) / 3.0;
-    }
-
-    let active_color = if config_active == "accent" {
-        D2D1_COLOR_F {
-            r: accent_red,
-            g: accent_green,
-            b: accent_blue,
-            a: 1.0,
-        }
-    } else {
-        get_color_from_hex(config_active.as_str())
-    };
-
-    let inactive_color = if config_inactive == "accent" {
-        D2D1_COLOR_F {
-            r: accent_avg / 1.5 + accent_red / 10.0,
-            g: accent_avg / 1.5 + accent_green / 10.0,
-            b: accent_avg / 1.5 + accent_blue / 10.0,
-            a: 1.0,
-        }
-    } else {
-        get_color_from_hex(config_inactive.as_str())
-    };
-
-    (active_color, inactive_color)
-}
-
-pub fn convert_config_radius(config_width: i32, config_radius: f32, tracking_window: HWND) -> f32 {
+pub fn convert_config_radius(
+    config_width: i32,
+    config_radius: f32,
+    tracking_window: HWND,
+    dpi: f32,
+) -> f32 {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
-    let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
 
     // -1.0 means to use default Windows corner preference. I might want to use an enum to allow
     // for something like border_radius == "system" instead TODO
