@@ -37,6 +37,8 @@ pub struct WindowBorder {
     pub use_animation: bool,
     pub animation_speed: f32,
     pub animation_fps: i32,
+    pub last_render_time: Option<time::Instant>,
+    pub last_anim_time: Option<time::Instant>,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -246,6 +248,8 @@ impl WindowBorder {
     }
 
     pub fn render(&mut self) -> Result<()> {
+        self.last_render_time = Some(time::Instant::now());
+
         // Get the render target
         let Some(render_target) = self.render_target.get() else {
             return Ok(());
@@ -293,6 +297,7 @@ impl WindowBorder {
             // TODO figure out the other TODO in the WM_PAINT message
             //let _ = InvalidateRect(self.border_window, None, false);
         }
+
         Ok(())
     }
 
@@ -414,16 +419,30 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
+                let anim_elapsed = self
+                    .last_anim_time
+                    .unwrap_or(time::Instant::now())
+                    .elapsed();
+                let render_elapsed = self
+                    .last_render_time
+                    .unwrap_or(time::Instant::now())
+                    .elapsed();
+
+                self.last_anim_time = Some(time::Instant::now());
+
                 let center_x = (self.window_rect.right - self.window_rect.left) / 2;
                 let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
                 self.brush_properties.transform = self.brush_properties.transform
                     * Matrix3x2::rotation(
-                        self.animation_speed / self.animation_fps as f32,
+                        self.animation_speed * anim_elapsed.as_secs_f32(),
                         center_x as f32,
                         center_y as f32,
                     );
 
-                let _ = self.render();
+                if render_elapsed >= time::Duration::from_millis((1000 / self.animation_fps) as u64)
+                {
+                    let _ = self.render();
+                }
             }
             // TODO if we call InvalidateRect within the render() function, then we get brought to
             // this WM_PAINT message. And if we call self.render() again within this message, it
