@@ -24,6 +24,7 @@ pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 2;
 pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
+pub const WM_APP_ANIMATE: u32 = WM_APP + 6;
 
 // TODO THE CODE IS STILL A MESS
 
@@ -188,6 +189,13 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let border_width = (config_width * dpi / 96.0) as i32;
         let border_radius = convert_config_radius(border_width, config_radius, window_sent.0, dpi);
 
+        let use_animation = window_rule
+            .use_animation
+            .unwrap_or(config.global.use_animation.unwrap_or(false));
+        let animation_speed = window_rule
+            .animation_speed
+            .unwrap_or(config.global.animation_speed.unwrap_or(8.0));
+
         let window_isize = window_sent.0 .0 as isize;
 
         let init_delay = if INITIAL_WINDOWS.lock().unwrap().contains(&window_isize) {
@@ -197,7 +205,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
                 .init_delay
                 .unwrap_or(config.global.init_delay.unwrap_or(250))
         };
-
         let unminimize_delay = window_rule
             .unminimize_delay
             .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
@@ -209,6 +216,8 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             border_radius,
             active_color,
             inactive_color,
+            use_animation,
+            animation_speed,
             unminimize_delay,
             ..Default::default()
         };
@@ -239,6 +248,8 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = config_inactive;
         let _ = active_color;
         let _ = inactive_color;
+        let _ = use_animation;
+        let _ = animation_speed;
         let _ = window_isize;
         let _ = hinstance;
 

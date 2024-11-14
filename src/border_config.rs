@@ -22,6 +22,8 @@ pub struct Global {
     pub border_radius: f32,
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
+    pub use_animation: Option<bool>,
+    pub animation_speed: Option<f32>,
     // TODO maybe need better names for these two below
     pub init_delay: Option<u64>, // Adjust delay when creating new windows/borders
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
@@ -40,6 +42,8 @@ pub struct WindowRule {
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,
+    pub use_animation: Option<bool>,
+    pub animation_speed: Option<f32>,
     pub init_delay: Option<u64>,
     pub unminimize_delay: Option<u64>,
 }

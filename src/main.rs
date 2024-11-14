@@ -12,6 +12,7 @@ use windows::{
     Win32::UI::WindowsAndMessaging::*,
 };
 
+mod animation_manager;
 mod border_config;
 mod colors;
 mod event_hook;
@@ -60,6 +61,8 @@ fn main() {
     EVENT_HOOK.replace(set_event_hook());
     let _ = register_window_class();
     let _ = enum_windows();
+
+    animation_manager::animation_manager();
 
     unsafe {
         println!("Entering message loop!");

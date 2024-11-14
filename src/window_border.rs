@@ -32,8 +32,10 @@ pub struct WindowBorder {
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: Color,
     pub inactive_color: Color,
-    // TODO not sure I need this anymore
+    // TODO not sure I need current_color anymore
     pub current_color: Color,
+    pub use_animation: bool,
+    pub animation_speed: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -280,11 +282,8 @@ impl WindowBorder {
             );
             let _ = render_target.EndDraw(None, None);
 
-            // Dude I have zero clue why but invalidating the rect here, which sends a WM_PAINT
-            // message and runs the two lines of code in the window procedure, fixes the task
-            // manager showing high gpu usage for tacky-borders, even though the total system GPU
-            // usage looks to be roughly the same?? not sure????
-            let _ = InvalidateRect(self.border_window, None, false);
+            // TODO figure out the other TODO in the WM_PAINT message
+            //let _ = InvalidateRect(self.border_window, None, false);
         }
         Ok(())
     }
@@ -402,12 +401,28 @@ impl WindowBorder {
                 }
                 self.pause = false;
             }
-            // I HAVE NO IDEA WHY BUT THESE TWO LINES OF CODE HERE FIXES TASK MANAGER SHOWING HIGH
-            // GPU USAGE???
+            WM_APP_ANIMATE => {
+                if !self.use_animation || self.pause {
+                    return LRESULT(0);
+                }
+
+                //println!("animating! {:?}", self.border_window);
+                let center_x = (self.window_rect.right - self.window_rect.left) / 2;
+                let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
+                self.brush_properties.transform = self.brush_properties.transform
+                    * Matrix3x2::rotation(self.animation_speed, center_x as f32, center_y as f32);
+                //println!("matrix: {:?}", self.brush_properties.transform);
+                let _ = self.render();
+            }
+            // TODO if we call InvalidateRect within the render() function, then we get brought to
+            // this WM_PAINT message. And if we call self.render() again within this message, it
+            // fixes an issue with task manager reporting high GPU usage on my pc but makes it
+            // worse my laptop. Figure out why. Hopefully it's just a bug with task manager because
+            // logically, this fix should not work.
             WM_PAINT => {
                 //println!("window: {:?}", window);
 
-                let _ = self.render();
+                //let _ = self.render();
                 let _ = ValidateRect(window, None);
             }
             WM_DESTROY => {
