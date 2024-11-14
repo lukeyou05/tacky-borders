@@ -1,17 +1,19 @@
 # Customize global config options
 global:
-    border_width: 4              # Width of the border
-    border_offset: -1            # How close the border is to the window edges
-    border_radius: -1            # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
+  border_width: 4 # Width of the border
+  border_offset: -1 # How close the border is to the window edges
+  border_radius: -1 # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
 
-    active_color:
-      colors: ["#89b4fa", "#cba6f7"]
-      direction:
-        start: [0.0, 0.0]        # [0.0, 0.0] is the top left corner (windows api is weird like that)
-        end: [1.0, 1.0]          # [1.0, 1.0] is the bottom right corner
+  active_color:
+    colors: ["#89b4fa", "#cba6f7"]
+    direction:
+      start: [0.0, 0.0] # [0.0, 0.0] is the top left corner (windows api is weird like that)
+      end: [1.0, 1.0] # [1.0, 1.0] is the bottom right corner
 
-    inactive_color: "#777680"    # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
+  inactive_color: "#777680" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
 
+  use_animation: true
+  animation_speed: 8
 
 # Customize config options on a per-app basis
 window_rules:
@@ -34,7 +36,6 @@ window_rules:
   - match: "Title"
     name: "keyviz"
     enabled: false
-
 # EXAMPLE CONFIGURATION:
 # - match: "Class"               # Currently supports "Class" or "Title"
 #   name: "MozillaWindowClass"   # Name of the class or title
@@ -45,3 +46,4 @@ window_rules:
 #   active_color: "#ffffff"
 #   inactive_color: "#000000"
 #   enabled: true                # Optional. Enables or disables the border. Defaults to true. Note: you can't forcibly enable borders yet
+
