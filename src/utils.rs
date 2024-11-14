@@ -24,7 +24,6 @@ pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 2;
 pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
-pub const WM_APP_ANIMATE: u32 = WM_APP + 6;
 
 // TODO THE CODE IS STILL A MESS
 
@@ -195,8 +194,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let animation_fps = config.global.animation_fps.unwrap_or(30);
         let animation_speed = window_rule
             .animation_speed
-            .unwrap_or(config.global.animation_speed.unwrap_or(8.0))
-            / animation_fps as f32;
+            .unwrap_or(config.global.animation_speed.unwrap_or(100.0));
 
         let window_isize = window_sent.0 .0 as isize;
 
@@ -220,6 +218,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             inactive_color,
             use_animation,
             animation_speed,
+            animation_fps,
             unminimize_delay,
             ..Default::default()
         };

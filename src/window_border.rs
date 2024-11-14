@@ -36,6 +36,7 @@ pub struct WindowBorder {
     pub current_color: Color,
     pub use_animation: bool,
     pub animation_speed: f32,
+    pub animation_fps: i32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -67,6 +68,13 @@ impl WindowBorder {
     pub fn init(&mut self, init_delay: u64) -> Result<()> {
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(init_delay));
+
+        if self.use_animation {
+            let timer_duration = (1000 / self.animation_fps) as u32;
+            unsafe {
+                SetTimer(self.border_window, 1, timer_duration, None);
+            }
+        }
 
         unsafe {
             // Make the window border transparent. Idk how this works. I took it from PowerToys.
@@ -401,17 +409,20 @@ impl WindowBorder {
                 }
                 self.pause = false;
             }
-            WM_APP_ANIMATE => {
-                if !self.use_animation || self.pause {
+            WM_TIMER => {
+                if self.pause {
                     return LRESULT(0);
                 }
 
-                //println!("animating! {:?}", self.border_window);
                 let center_x = (self.window_rect.right - self.window_rect.left) / 2;
                 let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
                 self.brush_properties.transform = self.brush_properties.transform
-                    * Matrix3x2::rotation(self.animation_speed, center_x as f32, center_y as f32);
-                //println!("matrix: {:?}", self.brush_properties.transform);
+                    * Matrix3x2::rotation(
+                        self.animation_speed / self.animation_fps as f32,
+                        center_x as f32,
+                        center_y as f32,
+                    );
+
                 let _ = self.render();
             }
             // TODO if we call InvalidateRect within the render() function, then we get brought to
