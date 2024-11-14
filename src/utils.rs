@@ -192,9 +192,11 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let use_animation = window_rule
             .use_animation
             .unwrap_or(config.global.use_animation.unwrap_or(false));
+        let animation_fps = config.global.animation_fps.unwrap_or(30);
         let animation_speed = window_rule
             .animation_speed
-            .unwrap_or(config.global.animation_speed.unwrap_or(8.0));
+            .unwrap_or(config.global.animation_speed.unwrap_or(8.0))
+            / animation_fps as f32;
 
         let window_isize = window_sent.0 .0 as isize;
 
@@ -249,6 +251,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = active_color;
         let _ = inactive_color;
         let _ = use_animation;
+        let _ = animation_fps;
         let _ = animation_speed;
         let _ = window_isize;
         let _ = hinstance;

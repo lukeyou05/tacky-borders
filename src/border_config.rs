@@ -24,6 +24,7 @@ pub struct Global {
     pub inactive_color: ColorConfig,
     pub use_animation: Option<bool>,
     pub animation_speed: Option<f32>,
+    pub animation_fps: Option<i32>,
     // TODO maybe need better names for these two below
     pub init_delay: Option<u64>, // Adjust delay when creating new windows/borders
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
