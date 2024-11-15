@@ -193,9 +193,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             .animations
             .unwrap_or(config.global.animations.clone().unwrap_or_default());
         let animation_fps = config.global.animation_fps.unwrap_or(30);
-        let animation_speed = window_rule
-            .animation_speed
-            .unwrap_or(config.global.animation_speed.unwrap_or(100.0));
 
         let window_isize = window_sent.0 .0 as isize;
 
@@ -218,7 +215,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             active_color,
             inactive_color,
             animations,
-            animation_speed,
             animation_fps,
             unminimize_delay,
             ..Default::default()
@@ -252,7 +248,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = inactive_color;
         let _ = animations;
         let _ = animation_fps;
-        let _ = animation_speed;
         let _ = window_isize;
         let _ = hinstance;
 
@@ -380,7 +375,7 @@ pub fn interpolate_d2d1_colors(
     active_color: &D2D1_COLOR_F,
     inactive_color: &D2D1_COLOR_F,
     anim_elapsed: f32,
-    animation_speed: f32,
+    anim_speed: f32,
     in_event_anim: i32,
     finished: &mut bool,
 ) -> D2D1_COLOR_F {
@@ -388,7 +383,7 @@ pub fn interpolate_d2d1_colors(
     let direction_g = (active_color.g - inactive_color.g).signum();
     let direction_b = (active_color.b - inactive_color.b).signum();
 
-    let interpolation_speed = animation_speed / 50.0;
+    let interpolation_speed = anim_speed / 50.0;
     let r_step = (active_color.r - inactive_color.r) * anim_elapsed * interpolation_speed;
     let g_step = (active_color.g - inactive_color.g) * anim_elapsed * interpolation_speed;
     let b_step = (active_color.b - inactive_color.b) * anim_elapsed * interpolation_speed;

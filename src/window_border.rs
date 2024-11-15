@@ -1,6 +1,7 @@
 // TODO Add result handling. There's so many let _ =
 use crate::colors::*;
 use crate::utils::*;
+use std::collections::HashMap;
 use std::ptr;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
@@ -33,8 +34,7 @@ pub struct WindowBorder {
     pub active_color: Color,
     pub inactive_color: Color,
     pub current_color: Color,
-    pub animations: Vec<AnimationType>,
-    pub animation_speed: f32,
+    pub animations: HashMap<AnimationType, f32>,
     pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
@@ -242,7 +242,7 @@ impl WindowBorder {
 
     pub fn update_color(&mut self) -> Result<()> {
         // TODO maybe I can move the fade anim code from WM_TIMER into this function instead
-        if self.animations.contains(&AnimationType::Fade) {
+        if self.animations.contains_key(&AnimationType::Fade) {
             return Ok(());
         }
 
@@ -309,11 +309,16 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn animate_fade(&mut self, anim_elapsed: &time::Duration) {
+    pub fn animate_fade(&mut self, anim_elapsed: &time::Duration, anim_speed: f32) {
         match self.active_color.clone() {
             Color::Solid(active_solid) => match self.inactive_color.clone() {
                 Color::Solid(inactive_solid) => {
-                    self.interpolate_solids(&active_solid, &inactive_solid, anim_elapsed);
+                    self.interpolate_solids(
+                        &active_solid,
+                        &inactive_solid,
+                        anim_elapsed,
+                        anim_speed,
+                    );
                 }
                 Color::Gradient(inactive_gradient) => {
                     // If self.current_color is of type solid, we must convert it to a
@@ -332,6 +337,7 @@ impl WindowBorder {
                         Some(&inactive_gradient),
                         None,
                         anim_elapsed,
+                        anim_speed,
                     )
                 }
             },
@@ -354,6 +360,7 @@ impl WindowBorder {
                         None,
                         Some(&inactive_solid),
                         anim_elapsed,
+                        anim_speed,
                     )
                 }
                 Color::Gradient(inactive_gradient) => self.interpolate_gradients(
@@ -362,6 +369,7 @@ impl WindowBorder {
                     Some(&inactive_gradient),
                     None,
                     anim_elapsed,
+                    anim_speed,
                 ),
             },
         }
@@ -372,6 +380,7 @@ impl WindowBorder {
         active_solid: &Solid,
         inactive_solid: &Solid,
         anim_elapsed: &time::Duration,
+        anim_speed: f32,
     ) {
         //let before = std::time::Instant::now();
         let Color::Solid(current_solid) = self.current_color.clone() else {
@@ -387,7 +396,7 @@ impl WindowBorder {
                 &active_solid.color,
                 &inactive_solid.color,
                 anim_elapsed.as_secs_f32(),
-                self.animation_speed,
+                anim_speed,
                 self.in_event_anim,
                 &mut finished,
             ),
@@ -406,6 +415,7 @@ impl WindowBorder {
         inactive_gradient: Option<&Gradient>,
         inactive_solid: Option<&Solid>,
         anim_elapsed: &time::Duration,
+        anim_speed: f32,
     ) {
         let Color::Gradient(current_gradient) = self.current_color.clone() else {
             // TODO i should return something else instead of returning
@@ -435,7 +445,7 @@ impl WindowBorder {
                 &active_color,
                 &inactive_color,
                 anim_elapsed.as_secs_f32(),
-                self.animation_speed,
+                anim_speed,
                 self.in_event_anim,
                 &mut current_finished,
             );
@@ -605,7 +615,7 @@ impl WindowBorder {
             WM_APP_EVENTANIM => {
                 match wparam.0 as i32 {
                     ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
-                        if self.animations.contains(&AnimationType::Fade) {
+                        if self.animations.contains_key(&AnimationType::Fade) {
                             // TODO idk if converting usize to i32 is a good idea but we don't use
                             // any large integers so I think it's fine.
                             self.in_event_anim = wparam.0 as i32;
@@ -630,14 +640,14 @@ impl WindowBorder {
 
                 self.last_anim_time = Some(time::Instant::now());
 
-                for anim_type in self.animations.iter() {
+                for (anim_type, anim_speed) in self.animations.iter() {
                     match anim_type {
                         AnimationType::Spiral => {
                             let center_x = (self.window_rect.right - self.window_rect.left) / 2;
                             let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
                             self.brush_properties.transform = self.brush_properties.transform
                                 * Matrix3x2::rotation(
-                                    self.animation_speed * anim_elapsed.as_secs_f32(),
+                                    anim_speed * anim_elapsed.as_secs_f32(),
                                     center_x as f32,
                                     center_y as f32,
                                 );
@@ -648,7 +658,11 @@ impl WindowBorder {
 
                 //let before = std::time::Instant::now();
                 match self.in_event_anim {
-                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => self.animate_fade(&anim_elapsed),
+                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
+                        let anim_speed =
+                            self.animations.get(&AnimationType::Fade).unwrap_or(&200.0);
+                        self.animate_fade(&anim_elapsed, *anim_speed);
+                    }
                     _ => {}
                 }
                 //println!("time elapsed: {:?}", before.elapsed());

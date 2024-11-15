@@ -11,6 +11,12 @@ pub const ANIM_NONE: i32 = 0;
 pub const ANIM_FADE_TO_ACTIVE: i32 = 1;
 pub const ANIM_FADE_TO_INACTIVE: i32 = 2;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AnimationType {
+    Spiral,
+    Fade,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ColorConfig {
@@ -183,10 +189,4 @@ impl Default for Color {
             color: D2D1_COLOR_F::default(),
         })
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum AnimationType {
-    Spiral,
-    Fade,
 }
