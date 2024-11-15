@@ -32,13 +32,13 @@ pub struct WindowBorder {
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: Color,
     pub inactive_color: Color,
-    // TODO not sure I need current_color anymore
     pub current_color: Color,
-    pub use_animation: bool,
+    pub animations: Vec<AnimationType>,
     pub animation_speed: f32,
     pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
+    pub in_event_anim: i32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -71,7 +71,7 @@ impl WindowBorder {
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(init_delay));
 
-        if self.use_animation {
+        if !self.animations.is_empty() {
             let timer_duration = (1000 / self.animation_fps) as u32;
             unsafe {
                 SetTimer(self.border_window, 1, timer_duration, None);
@@ -155,8 +155,11 @@ impl WindowBorder {
             radiusY: self.border_radius,
         };
 
-        // Initialize the actual border color assuming it is in focus
-        self.current_color = self.active_color.clone();
+        if is_active_window(self.tracking_window) {
+            self.current_color = self.active_color.clone();
+        } else {
+            self.current_color = self.inactive_color.clone();
+        }
 
         unsafe {
             let factory = &*RENDER_FACTORY;
@@ -238,6 +241,11 @@ impl WindowBorder {
     }
 
     pub fn update_color(&mut self) -> Result<()> {
+        // TODO maybe I can move the fade anim code from WM_TIMER into this function instead
+        if self.animations.contains(&AnimationType::Fade) {
+            return Ok(());
+        }
+
         self.current_color = if is_active_window(self.tracking_window) {
             self.active_color.clone()
         } else {
@@ -414,6 +422,18 @@ impl WindowBorder {
                 }
                 self.pause = false;
             }
+            WM_APP_EVENTANIM => {
+                match wparam.0 {
+                    1 | 2 => {
+                        if self.animations.contains(&AnimationType::Fade) {
+                            // TODO idk if converting usize to i32 is a good idea but we don't use
+                            // any large integers so I think it's fine.
+                            self.in_event_anim = wparam.0 as i32;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             WM_TIMER => {
                 if self.pause {
                     return LRESULT(0);
@@ -430,14 +450,93 @@ impl WindowBorder {
 
                 self.last_anim_time = Some(time::Instant::now());
 
-                let center_x = (self.window_rect.right - self.window_rect.left) / 2;
-                let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
-                self.brush_properties.transform = self.brush_properties.transform
-                    * Matrix3x2::rotation(
-                        self.animation_speed * anim_elapsed.as_secs_f32(),
-                        center_x as f32,
-                        center_y as f32,
-                    );
+                if self.animations.contains(&AnimationType::Spiral) {
+                    let center_x = (self.window_rect.right - self.window_rect.left) / 2;
+                    let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
+                    self.brush_properties.transform = self.brush_properties.transform
+                        * Matrix3x2::rotation(
+                            self.animation_speed * anim_elapsed.as_secs_f32(),
+                            center_x as f32,
+                            center_y as f32,
+                        );
+                }
+
+                //let before = std::time::Instant::now();
+                if self.in_event_anim != 0 {
+                    match self.active_color.clone() {
+                        Color::Solid(active_solid) => match self.inactive_color.clone() {
+                            Color::Solid(inactive_solid) => {
+                                // The * 3.0 is completely arbitrary and is just to speed up
+                                // an otherwise slow animation
+                                let r_step = (active_solid.color.r - inactive_solid.color.r)
+                                    * anim_elapsed.as_secs_f32()
+                                    * 5.0;
+                                let g_step = (active_solid.color.g - inactive_solid.color.g)
+                                    * anim_elapsed.as_secs_f32()
+                                    * 5.0;
+                                let b_step = (active_solid.color.b - inactive_solid.color.b)
+                                    * anim_elapsed.as_secs_f32()
+                                    * 5.0;
+
+                                let Color::Solid(mut current_solid) = self.current_color.clone()
+                                else {
+                                    // TODO do something else for the else statement like return
+                                    // self.inactive_color.clone() or smth idk
+                                    return LRESULT(0);
+                                };
+
+                                match self.in_event_anim {
+                                    // fade inactive_color to active_color
+                                    1 => {
+                                        // TODO these assume that active_color is brighter than
+                                        // inactive_color in all three rgb values. Obviously this
+                                        // won't always be true so I need to find some other way to
+                                        // check whether we have reached the desired color.
+                                        if current_solid.color.r + r_step >= active_solid.color.r
+                                            && current_solid.color.g + g_step
+                                                >= active_solid.color.g
+                                            && current_solid.color.b + b_step
+                                                >= active_solid.color.b
+                                        {
+                                            self.current_color = self.active_color.clone();
+                                            self.in_event_anim = 0;
+                                            return LRESULT(0);
+                                        }
+
+                                        current_solid.color.r += r_step;
+                                        current_solid.color.g += g_step;
+                                        current_solid.color.b += b_step;
+                                    }
+                                    // fade active_color to inactive_color
+                                    2 => {
+                                        if current_solid.color.r - r_step <= inactive_solid.color.r
+                                            && current_solid.color.g - g_step
+                                                <= inactive_solid.color.g
+                                            && inactive_solid.color.b - b_step
+                                                <= inactive_solid.color.b
+                                        {
+                                            self.current_color = self.inactive_color.clone();
+                                            self.in_event_anim = 0;
+                                            return LRESULT(0);
+                                        }
+
+                                        current_solid.color.r -= r_step;
+                                        current_solid.color.g -= g_step;
+                                        current_solid.color.b -= b_step;
+                                    }
+                                    _ => {}
+                                }
+
+                                self.current_color = Color::Solid(Solid {
+                                    color: current_solid.color,
+                                })
+                            }
+                            Color::Gradient(inactive_gradient) => {}
+                        },
+                        Color::Gradient(active_gradient) => {}
+                    }
+                    //println!("time elapsed: {:?}", before.elapsed());
+                }
 
                 if render_elapsed >= time::Duration::from_millis((1000 / self.animation_fps) as u64)
                 {

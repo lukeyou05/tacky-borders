@@ -180,3 +180,9 @@ impl Default for Color {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AnimationType {
+    Spiral,
+    Fade,
+}

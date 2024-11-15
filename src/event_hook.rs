@@ -48,6 +48,37 @@ pub extern "system" fn handle_win_event(
             }
             drop(borders);
         }
+        EVENT_OBJECT_FOCUS => {
+            // TODO not sure if I should use GA_ROOT or GA_ROOTOWNER
+            //let before = std::time::Instant::now();
+            let parent = unsafe { GetAncestor(_hwnd, GA_ROOT) };
+            //println!("time elapsed: {:?}", before.elapsed());
+
+            if has_filtered_style(parent) {
+                return;
+            }
+
+            let borders = BORDERS.lock().unwrap();
+
+            for (key, val) in borders.iter() {
+                let border_window: HWND = HWND(*val as _);
+                if is_window_visible(border_window) {
+                    let wparam = if *key == parent.0 as isize {
+                        // animate from inactive_color to active_color
+                        WPARAM(1)
+                    } else {
+                        // animate from active_color to inactive_color
+                        WPARAM(2)
+                    };
+
+                    unsafe {
+                        let _ = PostMessageW(border_window, WM_APP_EVENTANIM, wparam, LPARAM(0));
+                    }
+                }
+            }
+
+            drop(borders);
+        }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
             show_border_for_window(_hwnd);
         }

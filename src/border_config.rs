@@ -1,3 +1,4 @@
+use crate::colors::AnimationType;
 use crate::colors::ColorConfig;
 use dirs::home_dir;
 use serde::Deserialize;
@@ -22,7 +23,7 @@ pub struct Global {
     pub border_radius: f32,
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
-    pub use_animation: Option<bool>,
+    pub animations: Option<Vec<AnimationType>>,
     pub animation_speed: Option<f32>,
     pub animation_fps: Option<i32>,
     // TODO maybe need better names for these two below
@@ -43,7 +44,7 @@ pub struct WindowRule {
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,
-    pub use_animation: Option<bool>,
+    pub animations: Option<Vec<AnimationType>>,
     pub animation_speed: Option<f32>,
     pub init_delay: Option<u64>,
     pub unminimize_delay: Option<u64>,
