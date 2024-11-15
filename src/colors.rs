@@ -7,6 +7,10 @@ use windows::{
 
 use crate::utils::*;
 
+pub const ANIM_NONE: i32 = 0;
+pub const ANIM_FADE_TO_ACTIVE: i32 = 1;
+pub const ANIM_FADE_TO_INACTIVE: i32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ColorConfig {

@@ -2,6 +2,7 @@ use windows::{
     Win32::Foundation::*, Win32::UI::Accessibility::*, Win32::UI::WindowsAndMessaging::*,
 };
 
+use crate::colors::*;
 use crate::utils::*;
 use crate::BORDERS;
 
@@ -65,10 +66,10 @@ pub extern "system" fn handle_win_event(
                 if is_window_visible(border_window) {
                     let wparam = if *key == parent.0 as isize {
                         // animate from inactive_color to active_color
-                        WPARAM(1)
+                        WPARAM(ANIM_FADE_TO_ACTIVE as _)
                     } else {
                         // animate from active_color to inactive_color
-                        WPARAM(2)
+                        WPARAM(ANIM_FADE_TO_INACTIVE as _)
                     };
 
                     unsafe {

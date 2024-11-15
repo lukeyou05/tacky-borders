@@ -375,6 +375,70 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
     true
 }
 
+pub fn interpolate_d2d1_colors(
+    current_color: &D2D1_COLOR_F,
+    active_color: &D2D1_COLOR_F,
+    inactive_color: &D2D1_COLOR_F,
+    anim_elapsed: f32,
+    animation_speed: f32,
+    in_event_anim: i32,
+    finished: &mut bool,
+) -> D2D1_COLOR_F {
+    let direction_r = (active_color.r - inactive_color.r).signum();
+    let direction_g = (active_color.g - inactive_color.g).signum();
+    let direction_b = (active_color.b - inactive_color.b).signum();
+
+    let interpolation_speed = animation_speed / 50.0;
+    let r_step = (active_color.r - inactive_color.r) * anim_elapsed * interpolation_speed;
+    let g_step = (active_color.g - inactive_color.g) * anim_elapsed * interpolation_speed;
+    let b_step = (active_color.b - inactive_color.b) * anim_elapsed * interpolation_speed;
+
+    // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy
+    let mut interpolated = *current_color;
+
+    match in_event_anim {
+        // fade inactive_color to active_color
+        1 => {
+            interpolated.r += r_step;
+            interpolated.g += g_step;
+            interpolated.b += b_step;
+
+            // Check if we have overshot the active_color
+            if (interpolated.r - active_color.r) * direction_r >= 0.0
+                && (interpolated.g - active_color.g) * direction_g >= 0.0
+                && (interpolated.b - active_color.b) * direction_b >= 0.0
+            {
+                *finished = true;
+                return *active_color;
+            } else {
+                // We set this back to 1 so that for gradients, in_event_anim will only be set to 0
+                // when ALL gradient stops have finished interpolating.
+                *finished = false;
+            }
+        }
+        // fade active_color to inactive_color
+        2 => {
+            interpolated.r -= r_step;
+            interpolated.g -= g_step;
+            interpolated.b -= b_step;
+
+            // Check if we have overshot the inactive_color
+            if (interpolated.r - inactive_color.r) * direction_r <= 0.0
+                && (interpolated.g - inactive_color.g) * direction_g <= 0.0
+                && (interpolated.b - inactive_color.b) * direction_b <= 0.0
+            {
+                *finished = true;
+                return *inactive_color;
+            } else {
+                *finished = false;
+            }
+        }
+        _ => {}
+    }
+
+    interpolated
+}
+
 pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     if hex.len() != 7 && hex.len() != 9 && hex.len() != 4 && hex.len() != 5 || !hex.starts_with('#')
     {

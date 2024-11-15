@@ -309,6 +309,186 @@ impl WindowBorder {
         Ok(())
     }
 
+    pub fn animate_fade(&mut self, anim_elapsed: &time::Duration) {
+        match self.active_color.clone() {
+            Color::Solid(active_solid) => match self.inactive_color.clone() {
+                Color::Solid(inactive_solid) => {
+                    self.interpolate_solids(&active_solid, &inactive_solid, anim_elapsed);
+                }
+                Color::Gradient(inactive_gradient) => {
+                    // If self.current_color is of type solid, we must convert it to a
+                    // gradient here.
+                    if let Color::Solid(current_solid) = self.current_color.clone() {
+                        let mut solid_as_gradient = inactive_gradient.clone();
+                        for i in 0..solid_as_gradient.gradient_stops.len() {
+                            solid_as_gradient.gradient_stops[i].color = current_solid.color;
+                        }
+                        self.current_color = Color::Gradient(solid_as_gradient);
+                    }
+
+                    self.interpolate_gradients(
+                        None,
+                        Some(&active_solid),
+                        Some(&inactive_gradient),
+                        None,
+                        anim_elapsed,
+                    )
+                }
+            },
+            Color::Gradient(active_gradient) => match self.inactive_color.clone() {
+                Color::Solid(inactive_solid) => {
+                    //let before = std::time::Instant::now();
+                    // If self.current_color is of type solid, we must convert it to a
+                    // gradient here.
+                    if let Color::Solid(current_solid) = self.current_color.clone() {
+                        let mut solid_as_gradient = active_gradient.clone();
+                        for i in 0..solid_as_gradient.gradient_stops.len() {
+                            solid_as_gradient.gradient_stops[i].color = current_solid.color;
+                        }
+                        self.current_color = Color::Gradient(solid_as_gradient);
+                    }
+
+                    self.interpolate_gradients(
+                        Some(&active_gradient),
+                        None,
+                        None,
+                        Some(&inactive_solid),
+                        anim_elapsed,
+                    )
+                }
+                Color::Gradient(inactive_gradient) => self.interpolate_gradients(
+                    Some(&active_gradient),
+                    None,
+                    Some(&inactive_gradient),
+                    None,
+                    anim_elapsed,
+                ),
+            },
+        }
+    }
+
+    pub fn interpolate_solids(
+        &mut self,
+        active_solid: &Solid,
+        inactive_solid: &Solid,
+        anim_elapsed: &time::Duration,
+    ) {
+        //let before = std::time::Instant::now();
+        let Color::Solid(current_solid) = self.current_color.clone() else {
+            // TODO do something else for the else statement like return
+            // self.inactive_color.clone() or smth idk
+            return;
+        };
+
+        let mut finished = false;
+        self.current_color = Color::Solid(Solid {
+            color: interpolate_d2d1_colors(
+                &current_solid.color,
+                &active_solid.color,
+                &inactive_solid.color,
+                anim_elapsed.as_secs_f32(),
+                self.animation_speed,
+                self.in_event_anim,
+                &mut finished,
+            ),
+        });
+
+        if finished {
+            self.in_event_anim = ANIM_NONE;
+        }
+        //println!("time elapsed: {:?}", before.elapsed());
+    }
+
+    pub fn interpolate_gradients(
+        &mut self,
+        active_gradient: Option<&Gradient>,
+        active_solid: Option<&Solid>,
+        inactive_gradient: Option<&Gradient>,
+        inactive_solid: Option<&Solid>,
+        anim_elapsed: &time::Duration,
+    ) {
+        let Color::Gradient(current_gradient) = self.current_color.clone() else {
+            // TODO i should return something else instead of returning
+            return;
+        };
+
+        let mut all_finished = true;
+        let mut gradient_stops: Vec<D2D1_GRADIENT_STOP> = Vec::new();
+        for i in 0..current_gradient.gradient_stops.len() {
+            let mut current_finished = false;
+
+            // TODO we are making assumptions that the programmer (me) always passes one of the two
+            // types of colors (either gradient or solid)
+            let active_color = if let Some(gradient) = active_gradient {
+                gradient.gradient_stops[i].color
+            } else {
+                active_solid.unwrap().color
+            };
+            let inactive_color = if let Some(gradient) = inactive_gradient {
+                gradient.gradient_stops[i].color
+            } else {
+                inactive_solid.unwrap().color
+            };
+
+            let color = interpolate_d2d1_colors(
+                &current_gradient.gradient_stops[i].color,
+                &active_color,
+                &inactive_color,
+                anim_elapsed.as_secs_f32(),
+                self.animation_speed,
+                self.in_event_anim,
+                &mut current_finished,
+            );
+
+            if !current_finished {
+                all_finished = false;
+            }
+
+            // TODO here we are also making assumptions that I am a good programmer and will always
+            // pass one of these two gradients
+            let position = if let Some(active) = active_gradient {
+                active.gradient_stops[i].position
+            } else {
+                inactive_gradient.unwrap().gradient_stops[i].position
+            };
+
+            let stop = D2D1_GRADIENT_STOP { color, position };
+            gradient_stops.push(stop);
+        }
+
+        // TODO again we are assuming I am not an idiot
+        let direction = if let Some(active) = active_gradient {
+            active.direction.clone()
+        } else {
+            inactive_gradient.unwrap().direction.clone()
+        };
+
+        // TODO, move this down below if all_finished and add self.current_color =
+        // self.active_color.clone to the match statement. That way, we can avoid
+        // setting current_color twice when we are going from active to inactive. But
+        // for now, I have it like this to test whether I am getting the proper colors
+        // from interpolate_d2d1_colors.
+        self.current_color = Color::Gradient(Gradient {
+            gradient_stops,
+            direction,
+        });
+
+        if all_finished {
+            match self.in_event_anim {
+                ANIM_FADE_TO_ACTIVE => {
+                    // TODO uncomment these after you have finished testing whether
+                    // interpolate_d2d1_colors works correctly
+                    //self.current_color = self.active_color.clone()
+                }
+                ANIM_FADE_TO_INACTIVE => {
+                    //self.current_color = self.inactive_color.clone()
+                }
+                _ => {}
+            }
+            self.in_event_anim = ANIM_NONE;
+        }
+    }
+
     // When CreateWindowExW is called, we can optionally pass a value to its LPARAM field which will
     // get sent to the window process on creation. In our code, we've passed a pointer to the
     // WindowBorder structure during the window creation process, and here we are getting that pointer
@@ -423,8 +603,8 @@ impl WindowBorder {
                 self.pause = false;
             }
             WM_APP_EVENTANIM => {
-                match wparam.0 {
-                    1 | 2 => {
+                match wparam.0 as i32 {
+                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
                         if self.animations.contains(&AnimationType::Fade) {
                             // TODO idk if converting usize to i32 is a good idea but we don't use
                             // any large integers so I think it's fine.
@@ -450,93 +630,28 @@ impl WindowBorder {
 
                 self.last_anim_time = Some(time::Instant::now());
 
-                if self.animations.contains(&AnimationType::Spiral) {
-                    let center_x = (self.window_rect.right - self.window_rect.left) / 2;
-                    let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
-                    self.brush_properties.transform = self.brush_properties.transform
-                        * Matrix3x2::rotation(
-                            self.animation_speed * anim_elapsed.as_secs_f32(),
-                            center_x as f32,
-                            center_y as f32,
-                        );
+                for anim_type in self.animations.iter() {
+                    match anim_type {
+                        AnimationType::Spiral => {
+                            let center_x = (self.window_rect.right - self.window_rect.left) / 2;
+                            let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
+                            self.brush_properties.transform = self.brush_properties.transform
+                                * Matrix3x2::rotation(
+                                    self.animation_speed * anim_elapsed.as_secs_f32(),
+                                    center_x as f32,
+                                    center_y as f32,
+                                );
+                        }
+                        AnimationType::Fade => {}
+                    }
                 }
 
                 //let before = std::time::Instant::now();
-                if self.in_event_anim != 0 {
-                    match self.active_color.clone() {
-                        Color::Solid(active_solid) => match self.inactive_color.clone() {
-                            Color::Solid(inactive_solid) => {
-                                // The * 3.0 is completely arbitrary and is just to speed up
-                                // an otherwise slow animation
-                                let r_step = (active_solid.color.r - inactive_solid.color.r)
-                                    * anim_elapsed.as_secs_f32()
-                                    * 5.0;
-                                let g_step = (active_solid.color.g - inactive_solid.color.g)
-                                    * anim_elapsed.as_secs_f32()
-                                    * 5.0;
-                                let b_step = (active_solid.color.b - inactive_solid.color.b)
-                                    * anim_elapsed.as_secs_f32()
-                                    * 5.0;
-
-                                let Color::Solid(mut current_solid) = self.current_color.clone()
-                                else {
-                                    // TODO do something else for the else statement like return
-                                    // self.inactive_color.clone() or smth idk
-                                    return LRESULT(0);
-                                };
-
-                                match self.in_event_anim {
-                                    // fade inactive_color to active_color
-                                    1 => {
-                                        // TODO these assume that active_color is brighter than
-                                        // inactive_color in all three rgb values. Obviously this
-                                        // won't always be true so I need to find some other way to
-                                        // check whether we have reached the desired color.
-                                        if current_solid.color.r + r_step >= active_solid.color.r
-                                            && current_solid.color.g + g_step
-                                                >= active_solid.color.g
-                                            && current_solid.color.b + b_step
-                                                >= active_solid.color.b
-                                        {
-                                            self.current_color = self.active_color.clone();
-                                            self.in_event_anim = 0;
-                                            return LRESULT(0);
-                                        }
-
-                                        current_solid.color.r += r_step;
-                                        current_solid.color.g += g_step;
-                                        current_solid.color.b += b_step;
-                                    }
-                                    // fade active_color to inactive_color
-                                    2 => {
-                                        if current_solid.color.r - r_step <= inactive_solid.color.r
-                                            && current_solid.color.g - g_step
-                                                <= inactive_solid.color.g
-                                            && inactive_solid.color.b - b_step
-                                                <= inactive_solid.color.b
-                                        {
-                                            self.current_color = self.inactive_color.clone();
-                                            self.in_event_anim = 0;
-                                            return LRESULT(0);
-                                        }
-
-                                        current_solid.color.r -= r_step;
-                                        current_solid.color.g -= g_step;
-                                        current_solid.color.b -= b_step;
-                                    }
-                                    _ => {}
-                                }
-
-                                self.current_color = Color::Solid(Solid {
-                                    color: current_solid.color,
-                                })
-                            }
-                            Color::Gradient(inactive_gradient) => {}
-                        },
-                        Color::Gradient(active_gradient) => {}
-                    }
-                    //println!("time elapsed: {:?}", before.elapsed());
+                match self.in_event_anim {
+                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => self.animate_fade(&anim_elapsed),
+                    _ => {}
                 }
+                //println!("time elapsed: {:?}", before.elapsed());
 
                 if render_elapsed >= time::Duration::from_millis((1000 / self.animation_fps) as u64)
                 {
