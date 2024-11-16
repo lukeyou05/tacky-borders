@@ -35,10 +35,11 @@ pub struct WindowBorder {
     pub inactive_color: Color,
     pub current_color: Color,
     pub animations: HashMap<AnimationType, f32>,
+    pub in_event_anim: i32,
     pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
-    pub in_event_anim: i32,
+    pub spiral_anim_angle: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -612,14 +613,20 @@ impl WindowBorder {
                 for (anim_type, anim_speed) in self.animations.iter() {
                     match anim_type {
                         AnimationType::Spiral => {
+                            if self.spiral_anim_angle >= 360.0 {
+                                self.spiral_anim_angle -= 360.0;
+                            }
+                            self.spiral_anim_angle +=
+                                (anim_elapsed.as_secs_f32() * anim_speed * 2.0).min(359.0);
+
                             let center_x = (self.window_rect.right - self.window_rect.left) / 2;
                             let center_y = (self.window_rect.bottom - self.window_rect.top) / 2;
-                            self.brush_properties.transform = self.brush_properties.transform
-                                * Matrix3x2::rotation(
-                                    anim_speed * anim_elapsed.as_secs_f32(),
-                                    center_x as f32,
-                                    center_y as f32,
-                                );
+
+                            self.brush_properties.transform = Matrix3x2::rotation(
+                                self.spiral_anim_angle,
+                                center_x as f32,
+                                center_y as f32,
+                            );
                         }
                         AnimationType::Fade => {}
                     }
@@ -630,8 +637,8 @@ impl WindowBorder {
                     ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
                         let anim_speed =
                             self.animations.get(&AnimationType::Fade).unwrap_or(&200.0);
-                        // divide anim_speed by 50 just cuz otherwise it's too fast lol
-                        self.animate_fade(&anim_elapsed, *anim_speed / 50.0);
+                        // divide anim_speed by 15 just cuz otherwise it's too fast lol
+                        self.animate_fade(&anim_elapsed, *anim_speed / 15.0);
                         //println!("time elapsed: {:?}", before.elapsed());
                     }
                     _ => {}

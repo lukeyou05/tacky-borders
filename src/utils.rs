@@ -11,7 +11,6 @@ use crate::border_config::MatchKind;
 use crate::border_config::MatchStrategy;
 use crate::border_config::WindowRule;
 use crate::border_config::CONFIG;
-use crate::colors::Gradient;
 use crate::colors::GradientDirectionCoordinates;
 use crate::window_border;
 use crate::SendHWND;

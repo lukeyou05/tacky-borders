@@ -1,3 +1,4 @@
+use crate::colors::default_animation_speed;
 use crate::colors::AnimationType;
 use crate::colors::ColorConfig;
 use dirs::home_dir;
@@ -24,6 +25,7 @@ pub struct Global {
     pub border_radius: f32,
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
+    #[serde(default, deserialize_with = "default_animation_speed")]
     pub animations: Option<HashMap<AnimationType, f32>>,
     pub animation_fps: Option<i32>,
     // TODO maybe need better names for these two below
@@ -44,6 +46,7 @@ pub struct WindowRule {
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,
+    #[serde(default, deserialize_with = "default_animation_speed")]
     pub animations: Option<HashMap<AnimationType, f32>>,
     pub init_delay: Option<u64>,
     pub unminimize_delay: Option<u64>,

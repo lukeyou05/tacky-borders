@@ -14,11 +14,11 @@ global:
   inactive_color:
     colors: ["#30304f", "#363c69"]
     direction:
-      start: [0.7, 0.4] # [0.0, 0.0] is the top left corner (windows api is weird like that)
-      end: [0.3, 0.7] # [1.0, 1.0] is the bottom right corner
+      start: [1.0, 0.3] # [0.0, 0.0] is the top left corner (windows api is weird like that)
+      end: [0.0, 0.7] # [1.0, 1.0] is the bottom right corner
   #inactive_color: "#575660" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
 
-  animations: { Spiral: 200, Fade: 200 }
+  animations: { Spiral, Fade }
   animation_fps: 60
 
 # Customize config options on a per-app basis
