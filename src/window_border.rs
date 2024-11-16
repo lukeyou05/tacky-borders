@@ -323,27 +323,32 @@ impl WindowBorder {
     pub fn interpolate_solids(&mut self, anim_elapsed: &time::Duration, anim_speed: f32) {
         //let before = std::time::Instant::now();
         let Color::Solid(current_solid) = self.current_color.clone() else {
-            println!("error with pattern matching");
+            println!("an interpolation function failed pattern matching");
             return;
         };
         let Color::Solid(active_solid) = self.active_color.clone() else {
-            println!("error with pattern matching");
+            println!("an interpolation function failed pattern matching");
             return;
         };
         let Color::Solid(inactive_solid) = self.inactive_color.clone() else {
-            println!("error with pattern matching");
+            println!("an interpolation function failed pattern matching");
             return;
+        };
+
+        let (start_color, end_color) = match self.in_event_anim {
+            ANIM_FADE_TO_ACTIVE => (&inactive_solid.color, &active_solid.color),
+            ANIM_FADE_TO_INACTIVE => (&active_solid.color, &inactive_solid.color),
+            _ => return,
         };
 
         let mut finished = false;
         self.current_color = Color::Solid(Solid {
             color: interpolate_d2d1_colors(
                 &current_solid.color,
-                &active_solid.color,
-                &inactive_solid.color,
+                start_color,
+                end_color,
                 anim_elapsed.as_secs_f32(),
                 anim_speed,
-                self.in_event_anim,
                 &mut finished,
             ),
         });
@@ -366,7 +371,7 @@ impl WindowBorder {
                 } else if let Color::Gradient(inactive_gradient) = self.inactive_color.clone() {
                     inactive_gradient
                 } else {
-                    println!("error with pattern matching");
+                    println!("an interpolation function failed pattern matching");
                     return;
                 };
 
@@ -379,32 +384,6 @@ impl WindowBorder {
             }
         };
         //println!("time elapsed: {:?}", before.elapsed());
-
-        let target_gradient = match self.in_event_anim {
-            ANIM_FADE_TO_ACTIVE => match self.active_color.clone() {
-                Color::Gradient(active_gradient) => active_gradient,
-                Color::Solid(_) => {
-                    let Color::Gradient(inactive_gradient) = self.inactive_color.clone() else {
-                        println!("error with pattern matching");
-                        return;
-                    };
-                    inactive_gradient
-                }
-            },
-            ANIM_FADE_TO_INACTIVE => match self.inactive_color.clone() {
-                Color::Gradient(gradient) => gradient,
-                Color::Solid(_) => {
-                    let Color::Gradient(active_gradient) = self.active_color.clone() else {
-                        println!("error with pattern matching");
-                        return;
-                    };
-                    active_gradient
-                }
-            },
-            _ => {
-                return;
-            }
-        };
 
         let mut all_finished = true;
         let mut gradient_stops: Vec<D2D1_GRADIENT_STOP> = Vec::new();
@@ -421,13 +400,18 @@ impl WindowBorder {
                 Color::Solid(solid) => solid.color,
             };
 
+            let (start_color, end_color) = match self.in_event_anim {
+                ANIM_FADE_TO_ACTIVE => (&inactive_color, &active_color),
+                ANIM_FADE_TO_INACTIVE => (&active_color, &inactive_color),
+                _ => return,
+            };
+
             let color = interpolate_d2d1_colors(
                 &current_gradient.gradient_stops[i].color,
-                &active_color,
-                &inactive_color,
+                start_color,
+                end_color,
                 anim_elapsed.as_secs_f32(),
                 anim_speed,
-                self.in_event_anim,
                 &mut current_finished,
             );
 
@@ -435,7 +419,10 @@ impl WindowBorder {
                 all_finished = false;
             }
 
-            let position = target_gradient.gradient_stops[i].position;
+            // TODO currently this works well because users cannot adjust the positions of the
+            // gradient stops, so both inactive and active gradients will have the same positions,
+            // but this might need to be interpolated if we add position configuration.
+            let position = current_gradient.gradient_stops[i].position;
 
             let stop = D2D1_GRADIENT_STOP { color, position };
             gradient_stops.push(stop);
@@ -443,43 +430,28 @@ impl WindowBorder {
 
         let mut direction = current_gradient.direction;
 
-        // Interpolate direction if necessary (IDK IF THIS WORKS I HAVEN'T TESTED)
+        // Interpolate direction if both active and inactive are gradients
         if let Color::Gradient(inactive_gradient) = self.inactive_color.clone() {
             if let Color::Gradient(active_gradient) = self.active_color.clone() {
-                let x_start_step =
-                    active_gradient.direction.start[0] - inactive_gradient.direction.start[0];
-                let y_start_step =
-                    active_gradient.direction.start[1] - inactive_gradient.direction.start[1];
-                let x_end_step =
-                    active_gradient.direction.end[0] - inactive_gradient.direction.end[0];
-                let y_end_step =
-                    active_gradient.direction.end[1] - inactive_gradient.direction.end[1];
+                let (start_direction, end_direction) = match self.in_event_anim {
+                    ANIM_FADE_TO_ACTIVE => {
+                        (&inactive_gradient.direction, &active_gradient.direction)
+                    }
+                    ANIM_FADE_TO_INACTIVE => {
+                        (&active_gradient.direction, &inactive_gradient.direction)
+                    }
+                    _ => return,
+                };
 
-                let mut step_direction = 0.0;
-                match self.in_event_anim {
-                    ANIM_FADE_TO_ACTIVE => step_direction = 1.0,
-                    ANIM_FADE_TO_INACTIVE => step_direction = -1.0,
-                    _ => {}
-                }
-
-                // Not gonna bother checking if we overshot the direction tbh
-                let anim_step = anim_elapsed.as_secs_f32() * anim_speed;
-                direction.start[0] += x_start_step * anim_step * step_direction;
-                direction.start[1] += y_start_step * anim_step * step_direction;
-                direction.end[0] += x_end_step * anim_step * step_direction;
-                direction.end[1] += y_end_step * anim_step * step_direction;
+                direction = interpolate_direction(
+                    &direction,
+                    start_direction,
+                    end_direction,
+                    anim_elapsed.as_secs_f32(),
+                    anim_speed,
+                );
             }
         }
-
-        // TODO, move this down below if all_finished and add self.current_color =
-        // self.active_color.clone to the match statement. That way, we can avoid
-        // setting current_color twice when we are going from active to inactive. But
-        // for now, I have it like this to test whether I am getting the proper colors
-        // from interpolate_d2d1_colors.
-        self.current_color = Color::Gradient(Gradient {
-            gradient_stops,
-            direction,
-        });
 
         if all_finished {
             match self.in_event_anim {
@@ -488,6 +460,11 @@ impl WindowBorder {
                 _ => {}
             }
             self.in_event_anim = ANIM_NONE;
+        } else {
+            self.current_color = Color::Gradient(Gradient {
+                gradient_stops,
+                direction,
+            });
         }
     }
 

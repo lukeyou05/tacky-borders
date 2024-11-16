@@ -11,6 +11,8 @@ use crate::border_config::MatchKind;
 use crate::border_config::MatchStrategy;
 use crate::border_config::WindowRule;
 use crate::border_config::CONFIG;
+use crate::colors::Gradient;
+use crate::colors::GradientDirectionCoordinates;
 use crate::window_border;
 use crate::SendHWND;
 use crate::__ImageBase;
@@ -372,64 +374,67 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
 
 pub fn interpolate_d2d1_colors(
     current_color: &D2D1_COLOR_F,
-    active_color: &D2D1_COLOR_F,
-    inactive_color: &D2D1_COLOR_F,
+    start_color: &D2D1_COLOR_F,
+    end_color: &D2D1_COLOR_F,
     anim_elapsed: f32,
     anim_speed: f32,
-    in_event_anim: i32,
     finished: &mut bool,
 ) -> D2D1_COLOR_F {
-    let direction_r = (active_color.r - inactive_color.r).signum();
-    let direction_g = (active_color.g - inactive_color.g).signum();
-    let direction_b = (active_color.b - inactive_color.b).signum();
-
-    let anim_speed = anim_elapsed * anim_speed;
-    let r_step = (active_color.r - inactive_color.r) * anim_speed;
-    let g_step = (active_color.g - inactive_color.g) * anim_speed;
-    let b_step = (active_color.b - inactive_color.b) * anim_speed;
-
-    // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy
+    // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy\
     let mut interpolated = *current_color;
 
-    match in_event_anim {
-        // fade inactive_color to active_color
-        1 => {
-            interpolated.r += r_step;
-            interpolated.g += g_step;
-            interpolated.b += b_step;
+    let anim_step = anim_elapsed * anim_speed;
 
-            // Check if we have overshot the active_color
-            if (interpolated.r - active_color.r) * direction_r >= 0.0
-                && (interpolated.g - active_color.g) * direction_g >= 0.0
-                && (interpolated.b - active_color.b) * direction_b >= 0.0
-            {
-                *finished = true;
-                return *active_color;
-            } else {
-                // We set this back to 1 so that for gradients, in_event_anim will only be set to 0
-                // when ALL gradient stops have finished interpolating.
-                *finished = false;
-            }
-        }
-        // fade active_color to inactive_color
-        2 => {
-            interpolated.r -= r_step;
-            interpolated.g -= g_step;
-            interpolated.b -= b_step;
+    let diff_r = end_color.r - start_color.r;
+    let diff_g = end_color.g - start_color.g;
+    let diff_b = end_color.b - start_color.b;
 
-            // Check if we have overshot the inactive_color
-            if (interpolated.r - inactive_color.r) * direction_r <= 0.0
-                && (interpolated.g - inactive_color.g) * direction_g <= 0.0
-                && (interpolated.b - inactive_color.b) * direction_b <= 0.0
-            {
-                *finished = true;
-                return *inactive_color;
-            } else {
-                *finished = false;
-            }
-        }
-        _ => {}
+    let direction_r = diff_r.signum();
+    let direction_g = diff_g.signum();
+    let direction_b = diff_b.signum();
+
+    let r_step = diff_r * anim_step;
+    let g_step = diff_g * anim_step;
+    let b_step = diff_b * anim_step;
+
+    interpolated.r += r_step;
+    interpolated.g += g_step;
+    interpolated.b += b_step;
+
+    // Check if we have overshot the active_color
+    if (interpolated.r - end_color.r) * direction_r >= 0.0
+        && (interpolated.g - end_color.g) * direction_g >= 0.0
+        && (interpolated.b - end_color.b) * direction_b >= 0.0
+    {
+        *finished = true;
+        return *end_color;
+    } else {
+        *finished = false;
     }
+
+    interpolated
+}
+
+pub fn interpolate_direction(
+    current_direction: &GradientDirectionCoordinates,
+    start_direction: &GradientDirectionCoordinates,
+    end_direction: &GradientDirectionCoordinates,
+    anim_elapsed: f32,
+    anim_speed: f32,
+) -> GradientDirectionCoordinates {
+    let mut interpolated = (*current_direction).clone();
+
+    let x_start_step = end_direction.start[0] - start_direction.start[0];
+    let y_start_step = end_direction.start[1] - start_direction.start[1];
+    let x_end_step = end_direction.end[0] - start_direction.end[0];
+    let y_end_step = end_direction.end[1] - start_direction.end[1];
+
+    // Not gonna bother checking if we overshot the direction tbh
+    let anim_step = anim_elapsed * anim_speed;
+    interpolated.start[0] += x_start_step * anim_step;
+    interpolated.start[1] += y_start_step * anim_step;
+    interpolated.end[0] += x_end_step * anim_step;
+    interpolated.end[1] += y_end_step * anim_step;
 
     interpolated
 }
