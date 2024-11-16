@@ -383,10 +383,10 @@ pub fn interpolate_d2d1_colors(
     let direction_g = (active_color.g - inactive_color.g).signum();
     let direction_b = (active_color.b - inactive_color.b).signum();
 
-    let interpolation_speed = anim_speed / 50.0;
-    let r_step = (active_color.r - inactive_color.r) * anim_elapsed * interpolation_speed;
-    let g_step = (active_color.g - inactive_color.g) * anim_elapsed * interpolation_speed;
-    let b_step = (active_color.b - inactive_color.b) * anim_elapsed * interpolation_speed;
+    let anim_speed = anim_elapsed * anim_speed;
+    let r_step = (active_color.r - inactive_color.r) * anim_speed;
+    let g_step = (active_color.g - inactive_color.g) * anim_speed;
+    let b_step = (active_color.b - inactive_color.b) * anim_speed;
 
     // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy
     let mut interpolated = *current_color;

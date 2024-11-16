@@ -5,20 +5,20 @@ global:
   border_radius: -1 # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
 
   active_color:
-    colors: ["#614385", "#516395"]
+    colors: ["#6274e7", "#8752a3"]
     direction:
       start: [0.0, 0.0] # [0.0, 0.0] is the top left corner (windows api is weird like that)
       end: [1.0, 1.0] # [1.0, 1.0] is the bottom right corner
   #active_color: "#7F7FD5"
 
-  #inactive_color:
-  #  colors: ["#373670", "#773640"]
-  #  direction:
-  #    start: [0.0, 0.0] # [0.0, 0.0] is the top left corner (windows api is weird like that)
-  #    end: [1.0, 1.0] # [1.0, 1.0] is the bottom right corner
-  inactive_color: "#575660" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
+  inactive_color:
+    colors: ["#30304f", "#363c69"]
+    direction:
+      start: [0.7, 0.4] # [0.0, 0.0] is the top left corner (windows api is weird like that)
+      end: [0.3, 0.7] # [1.0, 1.0] is the bottom right corner
+  #inactive_color: "#575660" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
 
-  animations: { Fade: 200, Spiral: 200 }
+  animations: { Spiral: 200, Fade: 200 }
   animation_fps: 60
 
 # Customize config options on a per-app basis
