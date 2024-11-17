@@ -13,6 +13,7 @@ use crate::utils::*;
 pub const ANIM_NONE: i32 = 0;
 pub const ANIM_FADE_TO_ACTIVE: i32 = 1;
 pub const ANIM_FADE_TO_INACTIVE: i32 = 2;
+pub const ANIM_FADE_TO_VISIBLE: i32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AnimationType {

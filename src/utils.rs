@@ -414,6 +414,37 @@ pub fn interpolate_d2d1_colors(
     interpolated
 }
 
+// TODO i might want to rewrite this using a start_color, but I believe my code makes it such that
+// current_color will always go from 0 alpha to end_color's alpha, so just having end_color should
+// be enough information. I also shouldn't have to check diff.is_sign_positive(), but I do anyways.
+pub fn interpolate_d2d1_alphas(
+    current_color: &D2D1_COLOR_F,
+    end_color: &D2D1_COLOR_F,
+    anim_elapsed: f32,
+    anim_speed: f32,
+    finished: &mut bool,
+) -> D2D1_COLOR_F {
+    let mut interpolated = *current_color;
+
+    let anim_step = anim_elapsed * anim_speed;
+
+    // Figure out which direction we should be interpolating
+    let diff = end_color.a - interpolated.a;
+    match diff.is_sign_positive() {
+        true => interpolated.a += anim_step,
+        false => interpolated.a -= anim_step,
+    }
+
+    if (interpolated.a - end_color.a) * diff.signum() >= 0.0 {
+        *finished = true;
+        return *end_color;
+    } else {
+        *finished = false;
+    }
+
+    interpolated
+}
+
 pub fn interpolate_direction(
     current_direction: &GradientDirectionCoordinates,
     start_direction: &GradientDirectionCoordinates,
