@@ -1,10 +1,8 @@
-use crate::colors::default_animation_speed;
-use crate::colors::AnimationType;
+use crate::animations::Animations;
 use crate::colors::ColorConfig;
 use dirs::home_dir;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
 use std::fs::DirBuilder;
 use std::sync::{LazyLock, Mutex};
@@ -25,9 +23,7 @@ pub struct Global {
     pub border_radius: f32,
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
-    #[serde(default, deserialize_with = "default_animation_speed")]
-    pub animations: Option<HashMap<AnimationType, f32>>,
-    pub animation_fps: Option<i32>,
+    pub animations: Option<Animations>,
     // TODO maybe need better names for these two below
     pub init_delay: Option<u64>, // Adjust delay when creating new windows/borders
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
@@ -46,8 +42,7 @@ pub struct WindowRule {
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,
-    #[serde(default, deserialize_with = "default_animation_speed")]
-    pub animations: Option<HashMap<AnimationType, f32>>,
+    pub animations: Option<Animations>,
     pub init_delay: Option<u64>,
     pub unminimize_delay: Option<u64>,
 }

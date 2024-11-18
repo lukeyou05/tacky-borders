@@ -2,7 +2,7 @@ use windows::{
     Win32::Foundation::*, Win32::UI::Accessibility::*, Win32::UI::WindowsAndMessaging::*,
 };
 
-use crate::colors::*;
+use crate::animations::*;
 use crate::utils::*;
 use crate::BORDERS;
 
@@ -71,7 +71,7 @@ pub extern "system" fn handle_win_event(
                     };
 
                     unsafe {
-                        let _ = PostMessageW(border_window, WM_APP_EVENTANIM, wparam, LPARAM(0));
+                        let _ = PostMessageW(border_window, WM_APP_FOCUS, wparam, LPARAM(0));
                     }
                 }
             }

@@ -19,6 +19,7 @@ use windows::{
 };
 
 mod anim_timer;
+mod animations;
 mod border_config;
 mod colors;
 mod event_hook;

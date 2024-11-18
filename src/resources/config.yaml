@@ -1,6 +1,6 @@
 # Customize global config options
 global:
-  border_width: 4 # Width of the border
+  border_width: 3 # Width of the border
   border_offset: -1 # How close the border is to the window edges
   border_radius: -1 # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
 
@@ -18,8 +18,13 @@ global:
       end: [0.0, 0.7] # [1.0, 1.0] is the bottom right corner
   #inactive_color: "#575660" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
 
-  animations: { Spiral, Fade }
-  animation_fps: 60
+  init_delay: 150 # I reduce the delay here because of the fade animation which takes some time itself
+  unminimize_delay: 100
+
+  animations:
+    active: { Spiral, Fade }
+    inactive: { Spiral, Fade }
+    fps: 60
 
 # Customize config options on a per-app basis
 window_rules:
@@ -42,14 +47,13 @@ window_rules:
   - match: "Title"
     name: "keyviz"
     enabled: false
-# EXAMPLE CONFIGURATION:
-# - match: "Class"               # Currently supports "Class" or "Title"
-#   name: "MozillaWindowClass"   # Name of the class or title
-#   strategy: "Equals"           # Optional. Currently supports "Equals", "Contains", or "Regex". Defaults to "Equals"
-#   border_width: 10             # The next few options are all optional and default to global config if nothing is specified
-#   border_radius: -10
-#   border_offset: -10
-#   active_color: "#ffffff"
-#   inactive_color: "#000000"
-#   enabled: true                # Optional. Enables or disables the border. Defaults to true. Note: you can't forcibly enable borders yet
-
+  # EXAMPLE CONFIGURATION:
+  # - match: "Class"               # Currently supports "Class" or "Title"
+  #   name: "MozillaWindowClass"   # Name of the class or title
+  #   strategy: "Equals"           # Optional. Currently supports "Equals", "Contains", or "Regex". Defaults to "Equals"
+  #   border_width: 10             # The next few options are all optional and default to global config if nothing is specified
+  #   border_radius: -10
+  #   border_offset: -10
+  #   active_color: "#ffffff"
+  #   inactive_color: "#000000"
+  #   enabled: true                # Optional. Enables or disables the border. Defaults to true. Note: you can't forcibly enable borders yet

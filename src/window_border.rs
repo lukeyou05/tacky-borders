@@ -1,5 +1,6 @@
 // TODO Add result handling. There's so many let _ =
 use crate::anim_timer::AnimationTimer;
+use crate::animations::*;
 use crate::colors::*;
 use crate::utils::*;
 use std::collections::HashMap;
@@ -35,8 +36,10 @@ pub struct WindowBorder {
     pub active_color: Color,
     pub inactive_color: Color,
     pub current_color: Color,
-    pub animations: HashMap<AnimationType, f32>,
-    pub in_event_anim: i32,
+    pub active_animations: HashMap<AnimationType, f32>,
+    pub inactive_animations: HashMap<AnimationType, f32>,
+    pub current_animations: HashMap<AnimationType, f32>,
+    pub event_anim: i32,
     pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
@@ -102,7 +105,12 @@ impl WindowBorder {
 
             let _ = self.create_render_targets();
 
-            match self.animations.contains_key(&AnimationType::Fade) && init_delay != 0 {
+            self.current_animations = match is_active_window(self.tracking_window) {
+                true => self.active_animations.clone(),
+                false => self.inactive_animations.clone(),
+            };
+
+            match self.current_animations.contains_key(&AnimationType::Fade) && init_delay != 0 {
                 true => {
                     // Reset last_anim_time here to make interpolate_d2d1_alphas work correctly
                     self.last_anim_time = Some(time::Instant::now());
@@ -250,7 +258,7 @@ impl WindowBorder {
 
     // TODO this is kinda scuffed to work with fade animations
     pub fn update_color(&mut self) -> Result<()> {
-        if self.animations.contains_key(&AnimationType::Fade) {
+        if self.current_animations.contains_key(&AnimationType::Fade) {
             return Ok(());
         }
 
@@ -339,7 +347,7 @@ impl WindowBorder {
         };
 
         let mut finished = false;
-        let color = match self.in_event_anim {
+        let color = match self.event_anim {
             ANIM_FADE_TO_VISIBLE => {
                 let end_color = match is_window_visible(self.tracking_window) {
                     true => &active_solid.color,
@@ -355,7 +363,7 @@ impl WindowBorder {
                 )
             }
             ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
-                let (start_color, end_color) = match self.in_event_anim {
+                let (start_color, end_color) = match self.event_anim {
                     ANIM_FADE_TO_ACTIVE => (&inactive_solid.color, &active_solid.color),
                     ANIM_FADE_TO_INACTIVE => (&active_solid.color, &inactive_solid.color),
                     _ => return,
@@ -374,7 +382,7 @@ impl WindowBorder {
         };
 
         if finished {
-            self.in_event_anim = ANIM_NONE;
+            self.event_anim = ANIM_NONE;
         } else {
             self.current_color = Color::Solid(Solid { color });
         }
@@ -419,7 +427,7 @@ impl WindowBorder {
                 Color::Solid(solid) => solid.color,
             };
 
-            let color = match self.in_event_anim {
+            let color = match self.event_anim {
                 ANIM_FADE_TO_VISIBLE => {
                     let end_color = match is_window_visible(self.tracking_window) {
                         true => &active_color,
@@ -435,7 +443,7 @@ impl WindowBorder {
                     )
                 }
                 ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
-                    let (start_color, end_color) = match self.in_event_anim {
+                    let (start_color, end_color) = match self.event_anim {
                         ANIM_FADE_TO_ACTIVE => (&inactive_color, &active_color),
                         ANIM_FADE_TO_INACTIVE => (&active_color, &inactive_color),
                         _ => return,
@@ -470,10 +478,10 @@ impl WindowBorder {
 
         // Interpolate direction if both active and inactive are gradients
         // TODO maybe find a better way to handle ANIM_FADE_TO_VISIBLE here
-        if self.in_event_anim != ANIM_FADE_TO_VISIBLE {
+        if self.event_anim != ANIM_FADE_TO_VISIBLE {
             if let Color::Gradient(inactive_gradient) = self.inactive_color.clone() {
                 if let Color::Gradient(active_gradient) = self.active_color.clone() {
-                    let (start_direction, end_direction) = match self.in_event_anim {
+                    let (start_direction, end_direction) = match self.event_anim {
                         ANIM_FADE_TO_ACTIVE => {
                             (&inactive_gradient.direction, &active_gradient.direction)
                         }
@@ -495,7 +503,7 @@ impl WindowBorder {
         }
 
         if all_finished {
-            match self.in_event_anim {
+            match self.event_anim {
                 ANIM_FADE_TO_ACTIVE => self.current_color = self.active_color.clone(),
                 ANIM_FADE_TO_INACTIVE => self.current_color = self.inactive_color.clone(),
                 ANIM_FADE_TO_VISIBLE => {
@@ -506,7 +514,7 @@ impl WindowBorder {
                 }
                 _ => {}
             }
-            self.in_event_anim = ANIM_NONE;
+            self.event_anim = ANIM_NONE;
         } else {
             self.current_color = Color::Gradient(Gradient {
                 gradient_stops,
@@ -544,11 +552,13 @@ impl WindowBorder {
             self.current_color = Color::Solid(Solid { color });
         }
 
-        self.in_event_anim = ANIM_FADE_TO_VISIBLE;
+        self.event_anim = ANIM_FADE_TO_VISIBLE;
     }
 
     pub fn set_anim_timer(&mut self) {
-        if !self.animations.is_empty() && self.anim_timer.is_none() {
+        if (!self.active_animations.is_empty() || !self.inactive_animations.is_empty())
+            && self.anim_timer.is_none()
+        {
             let timer_duration = (1000.0 / self.animation_fps as f32) as u64;
             self.anim_timer = Some(AnimationTimer::start(self.border_window, timer_duration));
         }
@@ -630,6 +640,29 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
+                // For apps like firefox, when you hover over a tab, a popup window spawns that
+                // changes the z-order and causes the border to sit under the tracking window. To
+                // remedy that, we just re-update the position/z-order when windows are reordered.
+                let _ = self.update_position(None);
+            }
+            // EVENT_OBJECT_FOCUS
+            WM_APP_FOCUS => {
+                // Update the current animations list
+                self.current_animations = match is_active_window(self.tracking_window) {
+                    true => self.active_animations.clone(),
+                    false => self.inactive_animations.clone(),
+                };
+
+                // Update event_anim if current_animations contains the corresponding animation
+                match wparam.0 as i32 {
+                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
+                        if self.current_animations.contains_key(&AnimationType::Fade) {
+                            self.event_anim = wparam.0 as i32;
+                        }
+                    }
+                    _ => {}
+                }
+
                 let _ = self.update_color();
                 let _ = self.update_position(None);
                 let _ = self.render();
@@ -671,7 +704,7 @@ impl WindowBorder {
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
                 if has_native_border(self.tracking_window) {
-                    match self.animations.contains_key(&AnimationType::Fade)
+                    match self.current_animations.contains_key(&AnimationType::Fade)
                         && self.unminimize_delay != 0
                     {
                         true => {
@@ -693,18 +726,6 @@ impl WindowBorder {
 
                 self.pause = false;
             }
-            WM_APP_EVENTANIM => {
-                match wparam.0 as i32 {
-                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
-                        if self.animations.contains_key(&AnimationType::Fade) {
-                            // TODO idk if converting usize to i32 is a good idea but we don't use
-                            // any large integers so I think it's fine.
-                            self.in_event_anim = wparam.0 as i32;
-                        }
-                    }
-                    _ => {}
-                }
-            }
             WM_APP_ANIMATE => {
                 if self.pause {
                     return LRESULT(0);
@@ -723,7 +744,7 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_speed) in self.animations.iter() {
+                for (anim_type, anim_speed) in self.current_animations.iter() {
                     match anim_type {
                         AnimationType::Spiral => {
                             if self.spiral_anim_angle >= 360.0 {
@@ -747,10 +768,12 @@ impl WindowBorder {
                     }
                 }
 
-                match self.in_event_anim {
+                match self.event_anim {
                     ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE | ANIM_FADE_TO_VISIBLE => {
-                        let anim_speed =
-                            self.animations.get(&AnimationType::Fade).unwrap_or(&200.0);
+                        let anim_speed = self
+                            .current_animations
+                            .get(&AnimationType::Fade)
+                            .unwrap_or(&200.0);
                         // divide anim_speed by 15 just cuz otherwise it's too fast lol
                         self.animate_fade(&anim_elapsed, *anim_speed / 15.0);
 

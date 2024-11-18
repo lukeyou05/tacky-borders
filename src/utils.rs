@@ -26,7 +26,7 @@ pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 6;
-pub const WM_APP_EVENTANIM: u32 = WM_APP + 7;
+pub const WM_APP_FOCUS: u32 = WM_APP + 7;
 
 // TODO THE CODE IS STILL A MESS
 
@@ -194,7 +194,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let animations = window_rule
             .animations
             .unwrap_or(config.global.animations.clone().unwrap_or_default());
-        let animation_fps = config.global.animation_fps.unwrap_or(30);
 
         let window_isize = window_sent.0 .0 as isize;
 
@@ -216,8 +215,9 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             border_radius,
             active_color,
             inactive_color,
-            animations,
-            animation_fps,
+            active_animations: animations.active,
+            inactive_animations: animations.inactive,
+            animation_fps: animations.fps,
             unminimize_delay,
             ..Default::default()
         };
@@ -249,7 +249,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = active_color;
         let _ = inactive_color;
         let _ = animations;
-        let _ = animation_fps;
         let _ = window_isize;
         let _ = hinstance;
 
@@ -468,98 +467,4 @@ pub fn interpolate_direction(
     interpolated.end[1] += y_end_step * anim_step;
 
     interpolated
-}
-
-pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
-    if hex.len() != 7 && hex.len() != 9 && hex.len() != 4 && hex.len() != 5 || !hex.starts_with('#')
-    {
-        error!("Invalid hex color format: {}", hex);
-        return D2D1_COLOR_F {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
-    }
-    // Expand shorthand hex formats (#RGB or #RGBA to #RRGGBB or #RRGGBBAA)
-    let expanded_hex = match hex.len() {
-        4 => format!(
-            "#{}{}{}{}{}{}",
-            &hex[1..2],
-            &hex[1..2],
-            &hex[2..3],
-            &hex[2..3],
-            &hex[3..4],
-            &hex[3..4]
-        ),
-        5 => format!(
-            "#{}{}{}{}{}{}{}{}",
-            &hex[1..2],
-            &hex[1..2],
-            &hex[2..3],
-            &hex[2..3],
-            &hex[3..4],
-            &hex[3..4],
-            &hex[4..5],
-            &hex[4..5]
-        ),
-        _ => hex.to_string(),
-    };
-
-    // Convert each color component to f32 between 0.0 and 1.0, handling errors
-    let parse_component = |s: &str| -> f32 {
-        match u8::from_str_radix(s, 16) {
-            Ok(val) => val as f32 / 255.0,
-            Err(_) => {
-                error!("Invalid component '{}' in hex: {}", s, expanded_hex);
-                0.0
-            }
-        }
-    };
-
-    // Parse RGB values
-    let r = parse_component(&expanded_hex[1..3]);
-    let g = parse_component(&expanded_hex[3..5]);
-    let b = parse_component(&expanded_hex[5..7]);
-
-    // Parse alpha value if present
-    let a = if expanded_hex.len() == 9 {
-        parse_component(&expanded_hex[7..9])
-    } else {
-        1.0
-    };
-
-    D2D1_COLOR_F { r, g, b, a }
-}
-pub fn get_color_from_rgba(rgba: &str) -> D2D1_COLOR_F {
-    let rgba = rgba
-        .trim_start_matches("rgb(")
-        .trim_start_matches("rgba(")
-        .trim_end_matches(')');
-    let components: Vec<&str> = rgba.split(',').map(|s| s.trim()).collect();
-    // Check for correct number of components
-    if components.len() == 3 || components.len() == 4 {
-        // Parse red, green, and blue values
-        let red: f32 = components[0].parse::<u32>().unwrap_or(0) as f32 / 255.0;
-        let green: f32 = components[1].parse::<u32>().unwrap_or(0) as f32 / 255.0;
-        let blue: f32 = components[2].parse::<u32>().unwrap_or(0) as f32 / 255.0;
-        let alpha: f32 = if components.len() == 4 {
-            components[3].parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        return D2D1_COLOR_F {
-            r: red,
-            g: green,
-            b: blue,
-            a: alpha, // Default alpha value for rgb()
-        };
-    }
-    // Return a default color if parsing fails
-    D2D1_COLOR_F {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    }
 }
