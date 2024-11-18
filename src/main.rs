@@ -3,8 +3,14 @@
     windows_subsystem = "windows"
 )]
 
+#[macro_use]
+extern crate log;
+extern crate simplelog;
+
+use simplelog::*;
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::fs::File;
 use std::sync::{LazyLock, Mutex};
 use windows::{
     core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
@@ -15,6 +21,7 @@ use windows::{
 mod border_config;
 mod colors;
 mod event_hook;
+mod multimedia_timer;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
@@ -40,21 +47,42 @@ unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
+    CombinedLogger::init(vec![
+        TermLogger::new(
+            LevelFilter::Warn,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        TermLogger::new(
+            LevelFilter::Debug,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(
+            LevelFilter::Info,
+            Config::default(),
+            File::create("tacky-log-lol.log").unwrap(),
+        ),
+    ])
+    .unwrap();
+
     // Idk what exactly IME windows do... smth text input language smth... but I don't think we
     // need them. Also, -1 is 0xFFFFFFFF, which we can use to disable IME windows for all threads
     // in the current process.
     if unsafe { !ImmDisableIME(std::mem::transmute::<i32, u32>(-1)).as_bool() } {
-        println!("Could not disable IME!");
+        error!("Could not disable IME!");
     }
 
     if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() }
     {
-        println!("Failed to make process DPI aware");
+        error!("Failed to make process DPI aware");
     }
 
     let tray_icon_result = sys_tray_icon::create_tray_icon();
     if tray_icon_result.is_err() {
-        println!("Error creating tray icon!");
+        error!("Error creating tray icon!");
     }
 
     EVENT_HOOK.replace(set_event_hook());
@@ -62,13 +90,13 @@ fn main() {
     let _ = enum_windows();
 
     unsafe {
-        println!("Entering message loop!");
+        debug!("Entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        println!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
+        error!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
     }
 }
 
@@ -89,7 +117,7 @@ pub fn register_window_class() -> Result<()> {
 
         if result == 0 {
             let last_error = GetLastError();
-            println!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
+            error!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
         }
     }
 
@@ -114,7 +142,7 @@ pub fn enum_windows() -> Result<()> {
     unsafe {
         let _ = EnumWindows(Some(enum_windows_callback), LPARAM::default());
     }
-    println!("Windows have been enumerated!");
+    debug!("Windows have been enumerated!");
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 // TODO Add result handling. There's so many let _ =
 use crate::colors::*;
+use crate::multimedia_timer::MultimediaTimer;
 use crate::utils::*;
 use std::collections::HashMap;
 use std::ptr;
@@ -39,6 +40,7 @@ pub struct WindowBorder {
     pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
+    pub multimedia_timer: Option<MultimediaTimer>,
     pub spiral_anim_angle: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
@@ -71,13 +73,6 @@ impl WindowBorder {
     pub fn init(&mut self, init_delay: u64) -> Result<()> {
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(init_delay));
-
-        if !self.animations.is_empty() {
-            let timer_duration = (1000 / self.animation_fps) as u32;
-            unsafe {
-                SetTimer(self.border_window, 1, timer_duration, None);
-            }
-        }
 
         unsafe {
             // Make the window border transparent. Idk how this works. I took it from PowerToys.
@@ -132,12 +127,14 @@ impl WindowBorder {
                 let _ = self.render();
             }
 
+            self.set_anim_timer();
+
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            println!("exiting border thread for {:?}!", self.tracking_window);
+            debug!("exiting border thread for {:?}!", self.tracking_window);
         }
 
         Ok(())
@@ -279,18 +276,13 @@ impl WindowBorder {
             height: (self.window_rect.bottom - self.window_rect.top) as u32,
         };
 
-        // If border_width is odd, we need to add some offset to the rounded_rect
-        let offset = (self.border_width % 2) as f32 / 2.0;
-
+        let width = self.border_width as f32;
+        let offset = self.border_offset as f32;
         self.rounded_rect.rect = D2D_RECT_F {
-            left: (self.border_width / 2 - self.border_offset) as f32 + offset,
-            top: (self.border_width / 2 - self.border_offset) as f32 + offset,
-            right: (self.window_rect.right - self.window_rect.left - self.border_width / 2
-                + self.border_offset) as f32
-                - offset,
-            bottom: (self.window_rect.bottom - self.window_rect.top - self.border_width / 2
-                + self.border_offset) as f32
-                - offset,
+            left: width / 2.0 - offset,
+            top: width / 2.0 - offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32 - width / 2.0 + offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32 - width / 2.0 + offset,
         };
 
         unsafe {
@@ -563,6 +555,21 @@ impl WindowBorder {
         self.in_event_anim = ANIM_FADE_TO_VISIBLE;
     }
 
+    pub fn set_anim_timer(&mut self) {
+        if !self.animations.is_empty() && self.multimedia_timer.is_none() {
+            let timer_duration = (1000.0 / self.animation_fps as f32) as u64;
+            self.multimedia_timer =
+                Some(MultimediaTimer::start(self.border_window, timer_duration));
+        }
+    }
+
+    pub fn destroy_anim_timer(&mut self) {
+        if let Some(multimedia_timer) = self.multimedia_timer.as_mut() {
+            multimedia_timer.stop();
+            self.multimedia_timer = None;
+        }
+    }
+
     // When CreateWindowExW is called, we can optionally pass a value to its LPARAM field which will
     // get sent to the window process on creation. In our code, we've passed a pointer to the
     // WindowBorder structure during the window creation process, and here we are getting that pointer
@@ -608,15 +615,13 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                let flags = if !is_window_visible(self.border_window) {
-                    Some(SWP_SHOWWINDOW)
-                } else {
-                    None
-                };
+                if !is_window_visible(self.border_window) {
+                    let _ = ShowWindow(self.border_window, SW_SHOWNA);
+                }
 
                 let old_rect = self.window_rect;
                 let _ = self.update_window_rect();
-                let _ = self.update_position(flags);
+                let _ = self.update_position(None);
 
                 // TODO When a window is minimized, all four points of the rect go way below 0. For
                 // some reason, after unminimizing/restoring, render() will sometimes render at
@@ -655,11 +660,17 @@ impl WindowBorder {
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
+
+                self.set_anim_timer();
+
                 self.pause = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED / EVENT_OBJECT_MINIMIZESTART
             WM_APP_HIDECLOAKED | WM_APP_MINIMIZESTART => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
+
+                self.destroy_anim_timer();
+
                 self.pause = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
@@ -686,6 +697,9 @@ impl WindowBorder {
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
+
+                self.set_anim_timer();
+
                 self.pause = false;
             }
             WM_APP_EVENTANIM => {
@@ -700,7 +714,7 @@ impl WindowBorder {
                     _ => {}
                 }
             }
-            WM_TIMER => {
+            WM_APP_ANIMATE => {
                 if self.pause {
                     return LRESULT(0);
                 }
@@ -715,6 +729,8 @@ impl WindowBorder {
                     .elapsed();
 
                 self.last_anim_time = Some(time::Instant::now());
+
+                let mut update = false;
 
                 for (anim_type, anim_speed) in self.animations.iter() {
                     match anim_type {
@@ -733,25 +749,30 @@ impl WindowBorder {
                                 center_x as f32,
                                 center_y as f32,
                             );
+
+                            update = true;
                         }
                         AnimationType::Fade => {}
                     }
                 }
 
-                //let before = std::time::Instant::now();
                 match self.in_event_anim {
                     ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE | ANIM_FADE_TO_VISIBLE => {
                         let anim_speed =
                             self.animations.get(&AnimationType::Fade).unwrap_or(&200.0);
                         // divide anim_speed by 15 just cuz otherwise it's too fast lol
                         self.animate_fade(&anim_elapsed, *anim_speed / 15.0);
-                        //println!("time elapsed: {:?}", before.elapsed());
+
+                        update = true;
                     }
                     _ => {}
                 }
 
-                if render_elapsed >= time::Duration::from_millis((1000 / self.animation_fps) as u64)
-                {
+                //println!("time since last render: {:?}", render_elapsed.as_secs_f32());
+
+                let interval = 1.0 / self.animation_fps as f32;
+                let diff = (render_elapsed.as_secs_f32() - interval).abs();
+                if update && (diff <= 0.001 || render_elapsed.as_secs_f32() >= interval) {
                     let _ = self.render();
                 }
             }
@@ -767,6 +788,8 @@ impl WindowBorder {
                 let _ = ValidateRect(window, None);
             }
             WM_DESTROY => {
+                self.destroy_anim_timer();
+
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
                 PostQuitMessage(0);
             }

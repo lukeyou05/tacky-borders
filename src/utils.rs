@@ -25,7 +25,8 @@ pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 2;
 pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
-pub const WM_APP_EVENTANIM: u32 = WM_APP + 6;
+pub const WM_APP_ANIMATE: u32 = WM_APP + 6;
+pub const WM_APP_EVENTANIM: u32 = WM_APP + 7;
 
 // TODO THE CODE IS STILL A MESS
 
@@ -151,7 +152,7 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
 }
 
 pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
-    println!("in create_border_for_window for: {:?}", tracking_window);
+    debug!("in create_border_for_window for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
@@ -160,7 +161,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let window_rule = get_window_rule(window_sent.0);
 
         if window_rule.enabled == Some(false) {
-            println!("border is disabled for this window, exiting!");
+            debug!("border is disabled for this window, exiting!");
             return;
         }
 
