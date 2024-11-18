@@ -86,7 +86,7 @@ impl Config {
             std::fs::write(&config_path, default_contents)
                 .expect("could not generate default config.yaml");
 
-            println!(
+            info!(
                 r"generating default config in {}\.config\tacky-borders",
                 home_dir.display()
             );

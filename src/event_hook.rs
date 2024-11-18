@@ -51,9 +51,7 @@ pub extern "system" fn handle_win_event(
         }
         EVENT_OBJECT_FOCUS => {
             // TODO not sure if I should use GA_ROOT or GA_ROOTOWNER
-            //let before = std::time::Instant::now();
             let parent = unsafe { GetAncestor(_hwnd, GA_ROOT) };
-            //println!("time elapsed: {:?}", before.elapsed());
 
             if has_filtered_style(parent) {
                 return;
@@ -113,12 +111,6 @@ pub extern "system" fn handle_win_event(
         EVENT_OBJECT_DESTROY => {
             if !has_filtered_style(_hwnd) {
                 let _ = destroy_border_for_window(_hwnd);
-
-                // Use below to debug whether window borders are properly destroyed
-                /*let mutex = &*BORDERS;
-                let borders = mutex.lock().unwrap();
-                println!("borders after destroying window: {:?}", borders);
-                drop(borders);*/
             }
         }
         _ => {}

@@ -11,7 +11,7 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
         Err(_) => {
-            println!("error getting icon!");
+            error!("Could not retrieve tray icon!");
             std::process::exit(1)
         }
     };
@@ -39,10 +39,10 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
         }
         "2" => unsafe {
             if UnhookWinEvent(EVENT_HOOK.get()).as_bool() {
-                println!("Exiting tacky-borders!");
+                debug!("Exiting tacky-borders!");
                 ExitProcess(0);
             } else {
-                println!("Error. Could not unhook win event hook");
+                error!("Could not unhook win event hook");
             }
         },
         _ => {}

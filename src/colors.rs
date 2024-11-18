@@ -83,7 +83,7 @@ impl ColorConfig {
                         DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend)
                     };
                     if result.is_err() {
-                        println!("Error getting Windows accent color!");
+                        error!("Could not retrieve Windows accent color!");
                     }
                     let accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
                     let accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
@@ -171,8 +171,6 @@ impl Color {
                 Some(brush.into())
             },
             Color::Gradient(gradient) => unsafe {
-                //let before = std::time::Instant::now();
-
                 let width = (window_rect.right - window_rect.left) as f32;
                 let height = (window_rect.bottom - window_rect.top) as f32;
                 let gradient_properties = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
@@ -195,13 +193,6 @@ impl Color {
                     panic!("could not create gradient_stop_collection!");
                 };
 
-                /*println!(
-                    "time it took to set up gradient brush variables: {:?}",
-                    before.elapsed()
-                );*/
-
-                //let before = std::time::Instant::now();
-
                 let Ok(brush) = render_target.CreateLinearGradientBrush(
                     &gradient_properties,
                     Some(brush_properties),
@@ -209,8 +200,6 @@ impl Color {
                 ) else {
                     return None;
                 };
-
-                //println!("time it took to create brush: {:?}", before.elapsed());
 
                 Some(brush.into())
             },

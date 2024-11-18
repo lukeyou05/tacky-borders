@@ -18,10 +18,10 @@ use windows::{
     Win32::UI::WindowsAndMessaging::*,
 };
 
+mod anim_timer;
 mod border_config;
 mod colors;
 mod event_hook;
-mod multimedia_timer;
 mod sys_tray_icon;
 mod utils;
 mod window_border;

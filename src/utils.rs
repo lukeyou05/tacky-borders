@@ -44,7 +44,7 @@ pub fn get_window_title(hwnd: HWND) -> String {
     let mut title_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
-        println!("error getting window title!");
+        error!("Could not retrieve window title!");
     }
 
     let title_binding = String::from_utf16_lossy(&title_arr);
@@ -55,7 +55,7 @@ pub fn get_window_class(hwnd: HWND) -> String {
     let mut class_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
-        println!("error getting class name!");
+        error!("Could not retrieve window class!");
     }
 
     let class_binding = String::from_utf16_lossy(&class_arr);
@@ -73,13 +73,13 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
             Some(MatchKind::Title) => &title,
             Some(MatchKind::Class) => &class,
             None => {
-                println!("Expected 'match' for window rule but None found!");
+                error!("Expected 'match' for window rule but None found!");
                 continue;
             }
         };
 
         let Some(pattern) = &rule.pattern else {
-            println!("Expected `pattern` for window rule but None found!");
+            error!("Expected `pattern` for window rule but None found!");
             continue;
         };
 
@@ -120,7 +120,7 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
         )
     };
     if result.is_err() {
-        println!("error getting is_cloaked");
+        error!("Could not check if window is cloaked");
         return true;
     }
     is_cloaked.as_bool()
@@ -145,14 +145,14 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
     let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
     let result = unsafe { GetWindowPlacement(hwnd, &mut wp) };
     if result.is_err() {
-        println!("error getting window_placement!");
+        error!("Could not retrieve window placement!");
         return 0;
     }
     wp.showCmd
 }
 
 pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
-    debug!("in create_border_for_window for: {:?}", tracking_window);
+    debug!("Creating border for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
@@ -161,7 +161,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let window_rule = get_window_rule(window_sent.0);
 
         if window_rule.enabled == Some(false) {
-            debug!("border is disabled for this window, exiting!");
+            info!("border is disabled for {:?}!", window_sent.0);
             return;
         }
 
@@ -281,7 +281,7 @@ pub fn convert_config_radius(
             )
         };
         if result.is_err() {
-            println!("Error getting window corner preference!");
+            error!("Could not retrieve window corner preference!");
         }
         match corner_preference {
             DWMWCP_DEFAULT => {
@@ -473,7 +473,7 @@ pub fn interpolate_direction(
 pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     if hex.len() != 7 && hex.len() != 9 && hex.len() != 4 && hex.len() != 5 || !hex.starts_with('#')
     {
-        println!("Invalid hex color format: {}", hex);
+        error!("Invalid hex color format: {}", hex);
         return D2D1_COLOR_F {
             r: 1.0,
             g: 1.0,
@@ -511,7 +511,7 @@ pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
         match u8::from_str_radix(s, 16) {
             Ok(val) => val as f32 / 255.0,
             Err(_) => {
-                println!("Error: Invalid component '{}' in hex: {}", s, expanded_hex);
+                error!("Invalid component '{}' in hex: {}", s, expanded_hex);
                 0.0
             }
         }

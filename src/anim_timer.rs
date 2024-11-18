@@ -11,11 +11,11 @@ use crate::utils::WM_APP_ANIMATE;
 use crate::SendHWND;
 
 #[derive(Debug, Clone)]
-pub struct MultimediaTimer {
+pub struct AnimationTimer {
     stop_flag: Arc<Mutex<bool>>,
 }
 
-impl MultimediaTimer {
+impl AnimationTimer {
     pub fn start(hwnd: HWND, interval_ms: u64) -> Self {
         unsafe {
             // Create a stop flag
@@ -31,12 +31,12 @@ impl MultimediaTimer {
                 let interval = Duration::from_millis(interval_ms);
                 while !*stop_flag_clone.lock().unwrap() {
                     if PostMessageW(window.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0)).is_err() {
-                        error!("error sending message in anim timer");
+                        error!("The animation timer failed to send the animate message");
                         break;
                     }
                     thread::sleep(interval);
                 }
-                debug!("stop flag for timer received!");
+                //debug!("stop flag for timer received!");
             });
 
             // Return the timer instance

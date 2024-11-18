@@ -1,6 +1,6 @@
 // TODO Add result handling. There's so many let _ =
+use crate::anim_timer::AnimationTimer;
 use crate::colors::*;
-use crate::multimedia_timer::MultimediaTimer;
 use crate::utils::*;
 use std::collections::HashMap;
 use std::ptr;
@@ -40,7 +40,7 @@ pub struct WindowBorder {
     pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
-    pub multimedia_timer: Option<MultimediaTimer>,
+    pub anim_timer: Option<AnimationTimer>,
     pub spiral_anim_angle: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
@@ -92,12 +92,12 @@ impl WindowBorder {
             if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 0, LWA_COLORKEY)
                 .is_err()
             {
-                println!("Error Setting Layered Window Attributes!");
+                error!("Could not set layered window attributes!");
             }
             if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
                 .is_err()
             {
-                println!("Error Setting Layered Window Attributes!");
+                error!("Could not set layered window attributes!");
             }
 
             let _ = self.create_render_targets();
@@ -134,7 +134,7 @@ impl WindowBorder {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            debug!("exiting border thread for {:?}!", self.tracking_window);
+            debug!("Exiting border thread for {:?}!", self.tracking_window);
         }
 
         Ok(())
@@ -200,7 +200,7 @@ impl WindowBorder {
             )
         };
         if result.is_err() {
-            println!("Error getting frame rect! This is normal for apps running with elevated privileges");
+            warn!("Could not get window rect. This is normal for elevated/admin windows.");
             unsafe {
                 let _ = ShowWindow(self.border_window, SW_HIDE);
                 self.pause = true;
@@ -240,7 +240,7 @@ impl WindowBorder {
                 u_flags,
             );
             if result.is_err() {
-                println!("Error setting window position! This is normal for apps running with elevated privileges");
+                warn!("Could not set window position! This is normal for elevated/admin windows.");
                 let _ = ShowWindow(self.border_window, SW_HIDE);
                 self.pause = true;
             }
@@ -288,8 +288,6 @@ impl WindowBorder {
         unsafe {
             let _ = render_target.Resize(&pixel_size);
 
-            //let before = std::time::Instant::now();
-
             let Some(brush) = self.current_color.create_brush(
                 render_target,
                 &self.window_rect,
@@ -297,8 +295,6 @@ impl WindowBorder {
             ) else {
                 return Ok(());
             };
-
-            //println!("time to create brush: {:?}", before.elapsed());
 
             render_target.BeginDraw();
             render_target.Clear(None);
@@ -329,17 +325,16 @@ impl WindowBorder {
     }
 
     pub fn interpolate_solids(&mut self, anim_elapsed: &time::Duration, anim_speed: f32) {
-        //let before = std::time::Instant::now();
         let Color::Solid(current_solid) = self.current_color.clone() else {
-            println!("an interpolation function failed pattern matching");
+            error!("Could not convert current_color for interpolation");
             return;
         };
         let Color::Solid(active_solid) = self.active_color.clone() else {
-            println!("an interpolation function failed pattern matching");
+            error!("Could not convert active_color for interpolation");
             return;
         };
         let Color::Solid(inactive_solid) = self.inactive_color.clone() else {
-            println!("an interpolation function failed pattern matching");
+            error!("Could not convert inactive_color for interpolation");
             return;
         };
 
@@ -383,11 +378,9 @@ impl WindowBorder {
         } else {
             self.current_color = Color::Solid(Solid { color });
         }
-        //println!("time elapsed: {:?}", before.elapsed());
     }
 
     pub fn interpolate_gradients(&mut self, anim_elapsed: &time::Duration, anim_speed: f32) {
-        //let before = time::Instant::now();
         let current_gradient = match self.current_color.clone() {
             Color::Gradient(gradient) => gradient,
             Color::Solid(solid) => {
@@ -398,7 +391,7 @@ impl WindowBorder {
                 } else if let Color::Gradient(inactive_gradient) = self.inactive_color.clone() {
                     inactive_gradient
                 } else {
-                    println!("an interpolation function failed pattern matching");
+                    error!("Could not convert active_color or inactive_color for interpolation");
                     return;
                 };
 
@@ -410,7 +403,6 @@ impl WindowBorder {
                 solid_as_gradient
             }
         };
-        //println!("time elapsed: {:?}", before.elapsed());
 
         let mut all_finished = true;
         let mut gradient_stops: Vec<D2D1_GRADIENT_STOP> = Vec::new();
@@ -556,17 +548,16 @@ impl WindowBorder {
     }
 
     pub fn set_anim_timer(&mut self) {
-        if !self.animations.is_empty() && self.multimedia_timer.is_none() {
+        if !self.animations.is_empty() && self.anim_timer.is_none() {
             let timer_duration = (1000.0 / self.animation_fps as f32) as u64;
-            self.multimedia_timer =
-                Some(MultimediaTimer::start(self.border_window, timer_duration));
+            self.anim_timer = Some(AnimationTimer::start(self.border_window, timer_duration));
         }
     }
 
     pub fn destroy_anim_timer(&mut self) {
-        if let Some(multimedia_timer) = self.multimedia_timer.as_mut() {
-            multimedia_timer.stop();
-            self.multimedia_timer = None;
+        if let Some(anim_timer) = self.anim_timer.as_mut() {
+            anim_timer.stop();
+            self.anim_timer = None;
         }
     }
 
@@ -771,8 +762,8 @@ impl WindowBorder {
                 //println!("time since last render: {:?}", render_elapsed.as_secs_f32());
 
                 let interval = 1.0 / self.animation_fps as f32;
-                let diff = (render_elapsed.as_secs_f32() - interval).abs();
-                if update && (diff <= 0.001 || render_elapsed.as_secs_f32() >= interval) {
+                let diff = render_elapsed.as_secs_f32() - interval;
+                if update && (diff.abs() <= 0.001 || diff >= 0.0) {
                     let _ = self.render();
                 }
             }
