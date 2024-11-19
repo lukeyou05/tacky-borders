@@ -379,7 +379,7 @@ pub fn interpolate_d2d1_colors(
     anim_speed: f32,
     finished: &mut bool,
 ) -> D2D1_COLOR_F {
-    // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy\
+    // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy
     let mut interpolated = *current_color;
 
     let anim_step = anim_elapsed * anim_speed;
@@ -387,23 +387,19 @@ pub fn interpolate_d2d1_colors(
     let diff_r = end_color.r - start_color.r;
     let diff_g = end_color.g - start_color.g;
     let diff_b = end_color.b - start_color.b;
+    let diff_a = end_color.a - start_color.a;
 
-    let direction_r = diff_r.signum();
-    let direction_g = diff_g.signum();
-    let direction_b = diff_b.signum();
-
-    let r_step = diff_r * anim_step;
-    let g_step = diff_g * anim_step;
-    let b_step = diff_b * anim_step;
-
-    interpolated.r += r_step;
-    interpolated.g += g_step;
-    interpolated.b += b_step;
+    interpolated.r += diff_r * anim_step;
+    interpolated.g += diff_g * anim_step;
+    interpolated.b += diff_b * anim_step;
+    interpolated.a += diff_a * anim_step;
 
     // Check if we have overshot the active_color
-    if (interpolated.r - end_color.r) * direction_r >= 0.0
-        && (interpolated.g - end_color.g) * direction_g >= 0.0
-        && (interpolated.b - end_color.b) * direction_b >= 0.0
+    // TODO if I also check the alpha here, then things start to break when opening windows, not
+    // sure why. Might be some sort of conflict with interpoalte_d2d1_to_visible().
+    if (interpolated.r - end_color.r) * diff_r.signum() >= 0.0
+        && (interpolated.g - end_color.g) * diff_g.signum() >= 0.0
+        && (interpolated.b - end_color.b) * diff_b.signum() >= 0.0
     {
         *finished = true;
         return *end_color;
@@ -414,10 +410,7 @@ pub fn interpolate_d2d1_colors(
     interpolated
 }
 
-// TODO i might want to rewrite this using a start_color, but I believe my code makes it such that
-// current_color will always go from 0 alpha to end_color's alpha, so just having end_color should
-// be enough information. I also shouldn't have to check diff.is_sign_positive(), but I do anyways.
-pub fn interpolate_d2d1_alphas(
+pub fn interpolate_d2d1_to_visible(
     current_color: &D2D1_COLOR_F,
     end_color: &D2D1_COLOR_F,
     anim_elapsed: f32,

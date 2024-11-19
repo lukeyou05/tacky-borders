@@ -64,6 +64,7 @@ fn main() {
         WriteLogger::new(
             LevelFilter::Info,
             Config::default(),
+            // TODO move the log somewhere else like to .config/tacky-borders
             File::create("tacky-log-lol.log").unwrap(),
         ),
     ])
