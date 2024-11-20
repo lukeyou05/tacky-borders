@@ -18,11 +18,11 @@ global:
       end: [0.0, 0.7] # [1.0, 1.0] is the bottom right corner
   #inactive_color: "#575660" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
 
-  init_delay: 150 # I reduce the delay here because of the fade animation which takes some time itself
-  unminimize_delay: 100
+  initialize_delay: 200 # I reduce the delay here because of the fade animation which takes some time itself
+  unminimize_delay: 150
 
   animations:
-    active: { Spiral, Fade }
+    active: { ReverseSpiral, Fade }
     inactive: { Spiral, Fade }
     fps: 60
 
