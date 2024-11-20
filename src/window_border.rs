@@ -74,9 +74,9 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn init(&mut self, init_delay: u64) -> Result<()> {
+    pub fn init(&mut self, initialize_delay: u64) -> Result<()> {
         // Delay the border while the tracking window is in its creation animation
-        thread::sleep(time::Duration::from_millis(init_delay));
+        thread::sleep(time::Duration::from_millis(initialize_delay));
 
         unsafe {
             // Make the window border transparent. Idk how this works. I took it from PowerToys.
@@ -111,7 +111,9 @@ impl WindowBorder {
                 false => self.inactive_animations.clone(),
             };
 
-            match self.current_animations.contains_key(&AnimationType::Fade) && init_delay != 0 {
+            match self.current_animations.contains_key(&AnimationType::Fade)
+                && initialize_delay != 0
+            {
                 true => {
                     animations::animate_fade_to_visible(self);
                 }
@@ -420,20 +422,21 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_FOCUS
             WM_APP_FOCUS => {
+                let is_active = is_active_window(self.tracking_window);
                 // Update the current animations list
-                self.current_animations = match is_active_window(self.tracking_window) {
+                self.current_animations = match is_active {
                     true => self.active_animations.clone(),
                     false => self.inactive_animations.clone(),
                 };
 
-                // Update event_anim if current_animations contains the corresponding animation
-                match wparam.0 as i32 {
-                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE => {
-                        if self.current_animations.contains_key(&AnimationType::Fade) {
-                            self.event_anim = wparam.0 as i32;
-                        }
+                // Update event_anim if applicable. TODO I could move this to the code right above
+                // to avoid having to check is_active twice, but it's kind of ugly to look at ...
+                // idk lol.
+                if self.current_animations.contains_key(&AnimationType::Fade) {
+                    self.event_anim = match is_active {
+                        true => ANIM_FADE_TO_ACTIVE,
+                        false => ANIM_FADE_TO_INACTIVE,
                     }
-                    _ => {}
                 }
 
                 let _ = self.update_color();

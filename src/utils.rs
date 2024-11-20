@@ -197,12 +197,12 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
 
         let window_isize = window_sent.0 .0 as isize;
 
-        let init_delay = if INITIAL_WINDOWS.lock().unwrap().contains(&window_isize) {
+        let initialize_delay = if INITIAL_WINDOWS.lock().unwrap().contains(&window_isize) {
             0
         } else {
             window_rule
-                .init_delay
-                .unwrap_or(config.global.init_delay.unwrap_or(250))
+                .initialize_delay
+                .unwrap_or(config.global.initialize_delay.unwrap_or(250))
         };
         let unminimize_delay = window_rule
             .unminimize_delay
@@ -252,7 +252,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
         let _ = window_isize;
         let _ = hinstance;
 
-        let _ = border.init(init_delay);
+        let _ = border.init(initialize_delay);
 
         drop(border);
     });

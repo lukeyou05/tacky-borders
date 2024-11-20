@@ -24,7 +24,7 @@ pub enum AnimationType {
     Fade,
 }
 
-// Custom deserializer for Option<HashMap<AnimationType, Option<f32>>>
+// Custom deserializer for HashMap<AnimationType, Option<f32>>
 pub fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimationType, f32>, D::Error>
 where
     D: Deserializer<'de>,

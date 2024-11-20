@@ -2,7 +2,6 @@ use windows::{
     Win32::Foundation::*, Win32::UI::Accessibility::*, Win32::UI::WindowsAndMessaging::*,
 };
 
-use crate::animations::*;
 use crate::utils::*;
 use crate::BORDERS;
 
@@ -57,26 +56,14 @@ pub extern "system" fn handle_win_event(
                 return;
             }
 
-            let borders = BORDERS.lock().unwrap();
-
-            for (key, val) in borders.iter() {
+            for val in BORDERS.lock().unwrap().values() {
                 let border_window: HWND = HWND(*val as _);
                 if is_window_visible(border_window) {
-                    let wparam = if *key == parent.0 as isize {
-                        // animate from inactive_color to active_color
-                        WPARAM(ANIM_FADE_TO_ACTIVE as _)
-                    } else {
-                        // animate from active_color to inactive_color
-                        WPARAM(ANIM_FADE_TO_INACTIVE as _)
-                    };
-
                     unsafe {
-                        let _ = PostMessageW(border_window, WM_APP_FOCUS, wparam, LPARAM(0));
+                        let _ = PostMessageW(border_window, WM_APP_FOCUS, WPARAM(0), LPARAM(0));
                     }
                 }
             }
-
-            drop(borders);
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
             show_border_for_window(_hwnd);

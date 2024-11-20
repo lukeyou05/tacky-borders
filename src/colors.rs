@@ -69,17 +69,18 @@ impl ColorConfig {
                 }
             }
             ColorConfig::GradientConfig(gradient_config) => {
-                let mut gradient_stops: Vec<D2D1_GRADIENT_STOP> = Vec::new();
                 let step = 1.0 / (gradient_config.colors.len() - 1) as f32;
 
-                for i in 0..gradient_config.colors.len() {
-                    let color = get_color_from_hex(gradient_config.colors[i].as_str());
-                    let gradient_stop = D2D1_GRADIENT_STOP {
+                let gradient_stops = gradient_config
+                    .clone()
+                    .colors
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, color)| D2D1_GRADIENT_STOP {
                         position: i as f32 * step,
-                        color,
-                    };
-                    gradient_stops.push(gradient_stop);
-                }
+                        color: get_color_from_hex(color.as_str()),
+                    })
+                    .collect();
 
                 Color::Gradient(Gradient {
                     gradient_stops,
