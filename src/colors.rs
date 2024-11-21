@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
+use std::f32::consts::PI;
 use windows::{
     Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*, Win32::Graphics::Direct2D::*,
     Win32::Graphics::Dwm::*,
@@ -15,11 +16,18 @@ pub enum ColorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GradientConfig {
     pub colors: Vec<String>,
-    pub direction: GradientDirectionCoordinates,
+    pub direction: GradientDirection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GradientDirectionCoordinates {
+#[serde(untagged)]
+pub enum GradientDirection {
+    Angle(String),
+    Coordinates(GradientCoordinates),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GradientCoordinates {
     pub start: [f32; 2],
     pub end: [f32; 2],
 }
@@ -82,12 +90,88 @@ impl ColorConfig {
                     })
                     .collect();
 
+                let direction = match gradient_config.direction.clone() {
+                    GradientDirection::Angle(angle) => {
+                        // If we have an angle, we need to convert it into Coordinates
+
+                        let Some(degree) = angle
+                            .strip_suffix("deg")
+                            .and_then(|d| d.trim().parse::<f32>().ok())
+                        else {
+                            error!("Invalid config for gradient direction... exiting");
+                            panic!("Invalid config for gradient direction");
+                        };
+
+                        // Tbh i'm not fully sure why this works, but we do 180 - degree to account
+                        // for the fact that Win32 API has its coordinate origin at the top left
+                        let rad = (180.0 - degree) * PI / 180.0;
+
+                        // Calculate the slope of the line
+                        let m = rad.sin() / rad.cos();
+
+                        // y - y_p = m(x - x_p);
+                        // y = m(x - x_p) + y_p;
+                        // y = m*x - m*x_p + y_p;
+                        // b = -m*x_p + y_p;
+
+                        // It's impossible to create a 90 degree slope for a linear line, but this
+                        // code honestly works well enough such that I'm not gonna bother checking
+                        // this edge case.
+                        //
+                        // Calculate the y-intercept of the line such that it goes through the
+                        // center point (0.5, 0.5)
+                        let b = -m * 0.5 + 0.5;
+
+                        // Create the line with the given slope and y-intercept
+                        let line = Line { m, b };
+
+                        // y = mx + b
+                        // 0 = mx + b
+                        // mx = -b
+                        // x = -b/m
+
+                        // y = mx + b
+                        // 1 = mx + b
+                        // mx = 1 - b
+                        // x = (1 - b)/m
+
+                        // I can't be bothered to explain this math lol. Basically we're just
+                        // checking the x and y-intercepts and seeing which one fits
+                        let start = match line.plug_in_x(0.0) {
+                            0.0..=1.0 => [0.0, line.plug_in_x(0.0)],
+                            1.0.. => [(1.0 - line.b) / line.m, 1.0],
+                            _ => [-line.b / line.m, 0.0],
+                        };
+
+                        let end = match line.plug_in_x(1.0) {
+                            0.0..=1.0 => [1.0, line.plug_in_x(1.0)],
+                            1.0.. => [(1.0 - line.b) / line.m, 1.0],
+                            _ => [-line.b / line.m, 0.0],
+                        };
+
+                        GradientCoordinates { start, end }
+                    }
+                    GradientDirection::Coordinates(coordinates) => coordinates,
+                };
+
                 Color::Gradient(Gradient {
                     gradient_stops,
-                    direction: gradient_config.direction.clone(),
+                    direction,
                 })
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Line {
+    m: f32,
+    b: f32,
+}
+
+impl Line {
+    pub fn plug_in_x(&self, x: f32) -> f32 {
+        self.m * x + self.b
     }
 }
 
@@ -105,7 +189,7 @@ pub struct Solid {
 #[derive(Debug, Clone)]
 pub struct Gradient {
     pub gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
-    pub direction: GradientDirectionCoordinates,
+    pub direction: GradientCoordinates,
 }
 
 impl Color {

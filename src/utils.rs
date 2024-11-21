@@ -11,7 +11,7 @@ use crate::border_config::MatchKind;
 use crate::border_config::MatchStrategy;
 use crate::border_config::WindowRule;
 use crate::border_config::CONFIG;
-use crate::colors::GradientDirectionCoordinates;
+use crate::colors::GradientCoordinates;
 use crate::window_border;
 use crate::SendHWND;
 use crate::__ImageBase;
@@ -439,12 +439,12 @@ pub fn interpolate_d2d1_to_visible(
 }
 
 pub fn interpolate_direction(
-    current_direction: &GradientDirectionCoordinates,
-    start_direction: &GradientDirectionCoordinates,
-    end_direction: &GradientDirectionCoordinates,
+    current_direction: &GradientCoordinates,
+    start_direction: &GradientCoordinates,
+    end_direction: &GradientCoordinates,
     anim_elapsed: f32,
     anim_speed: f32,
-) -> GradientDirectionCoordinates {
+) -> GradientCoordinates {
     let mut interpolated = (*current_direction).clone();
 
     let x_start_step = end_direction.start[0] - start_direction.start[0];
