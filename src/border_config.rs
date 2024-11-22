@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::fs::DirBuilder;
+use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::create_config()));
@@ -62,8 +63,7 @@ pub enum MatchStrategy {
 
 impl Config {
     pub fn create_config() -> Self {
-        let home_dir = home_dir().expect("can't find home path");
-        let config_dir = home_dir.join(".config").join("tacky-borders");
+        let config_dir = Self::get_config_location();
         let config_path = config_dir.join("config.yaml");
 
         // If .config/tacky-borders/config.yaml does not exist, create it
@@ -81,10 +81,7 @@ impl Config {
             std::fs::write(&config_path, default_contents)
                 .expect("could not generate default config.yaml");
 
-            info!(
-                r"generating default config in {}\.config\tacky-borders",
-                home_dir.display()
-            );
+            info!(r"generating default config in {}", config_dir.display());
         }
 
         let contents = match fs::read_to_string(&config_path) {
@@ -94,6 +91,11 @@ impl Config {
 
         let config: Config = serde_yaml::from_str(&contents).expect("error reading config.yaml");
         config
+    }
+
+    pub fn get_config_location() -> PathBuf {
+        let home_dir = home_dir().expect("can't find home path");
+        home_dir.join(".config").join("tacky-borders")
     }
 
     pub fn reload_config() {

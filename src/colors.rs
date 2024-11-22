@@ -1,3 +1,4 @@
+use core::f32;
 use serde::Deserialize;
 use serde::Serialize;
 use std::f32::consts::PI;
@@ -37,39 +38,9 @@ impl ColorConfig {
         match self {
             ColorConfig::SolidConfig(solid_config) => {
                 if solid_config == "accent" {
-                    // Get the Windows accent color
-                    let mut pcr_colorization: u32 = 0;
-                    let mut pf_opaqueblend: BOOL = FALSE;
-                    let result = unsafe {
-                        DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend)
-                    };
-                    if result.is_err() {
-                        error!("Could not retrieve Windows accent color!");
-                    }
-                    let accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
-                    let accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
-                    let accent_blue = (pcr_colorization & 0x000000FF) as f32 / 255.0;
-                    let accent_avg = (accent_red + accent_green + accent_blue) / 3.0;
-
-                    if is_active_color {
-                        Color::Solid(Solid {
-                            color: D2D1_COLOR_F {
-                                r: accent_red,
-                                g: accent_green,
-                                b: accent_blue,
-                                a: 1.0,
-                            },
-                        })
-                    } else {
-                        Color::Solid(Solid {
-                            color: D2D1_COLOR_F {
-                                r: accent_avg / 1.5 + accent_red / 10.0,
-                                g: accent_avg / 1.5 + accent_green / 10.0,
-                                b: accent_avg / 1.5 + accent_blue / 10.0,
-                                a: 1.0,
-                            },
-                        })
-                    }
+                    Color::Solid(Solid {
+                        color: get_accent_color(is_active_color),
+                    })
                 } else {
                     Color::Solid(Solid {
                         color: get_color_from_hex(solid_config.as_str()),
@@ -102,22 +73,23 @@ impl ColorConfig {
                             panic!("Invalid config for gradient direction");
                         };
 
-                        // Tbh i'm not fully sure why this works, but we do 180 - degree to account
-                        // for the fact that Win32 API has its coordinate origin at the top left
-                        let rad = (180.0 - degree) * PI / 180.0;
+                        // We multiply degree by -1 to account for the fact that Win32's coordinate
+                        // system has its origin at the top left instead of the bottom left
+                        let rad = -degree * PI / 180.0;
 
-                        // Calculate the slope of the line
-                        let m = rad.sin() / rad.cos();
+                        // Calculate the slope of the line whilst accounting for edge cases like 90
+                        // and 270 degrees where we would otherwise be dividing by 0 or something
+                        // close to 0.
+                        let m = match degree.abs() % 360.0 {
+                            90.0 | 270.0 => degree.signum() * f32::MAX,
+                            _ => rad.sin() / rad.cos(),
+                        };
 
                         // y - y_p = m(x - x_p);
                         // y = m(x - x_p) + y_p;
                         // y = m*x - m*x_p + y_p;
                         // b = -m*x_p + y_p;
 
-                        // It's impossible to create a 90 degree slope for a linear line, but this
-                        // code honestly works well enough such that I'm not gonna bother checking
-                        // this edge case.
-                        //
                         // Calculate the y-intercept of the line such that it goes through the
                         // center point (0.5, 0.5)
                         let b = -m * 0.5 + 0.5;
@@ -135,16 +107,29 @@ impl ColorConfig {
                         // mx = 1 - b
                         // x = (1 - b)/m
 
-                        // I can't be bothered to explain this math lol. Basically we're just
-                        // checking the x and y-intercepts and seeing which one fits
-                        let start = match line.plug_in_x(0.0) {
-                            0.0..=1.0 => [0.0, line.plug_in_x(0.0)],
+                        // Please don't ask lol. Basically when we cross certain thresholds like 90
+                        // degrees, we need to flip the x values (0.0 and 1.0) that we use to the
+                        // calculate the start and end points below due to the slope changing
+                        let (x_s, x_e) = match degree.abs() % 360.0 {
+                            0.0..90.0 => (0.0, 1.0),
+                            90.0..270.0 => (1.0, 0.0),
+                            270.0..360.0 => (0.0, 1.0),
+                            _ => {
+                                debug!("Reached a gradient angle that is not covered by the match statement in colors.rs");
+                                (0.0, 1.0)
+                            }
+                        };
+
+                        // I beg you don't ask me about this either. Basically we're just checking
+                        // the x and y-intercepts and seeing which one fits in the first quadrant
+                        let start = match line.plug_in_x(x_s) {
+                            0.0..=1.0 => [x_s, line.plug_in_x(x_s)],
                             1.0.. => [(1.0 - line.b) / line.m, 1.0],
                             _ => [-line.b / line.m, 0.0],
                         };
 
-                        let end = match line.plug_in_x(1.0) {
-                            0.0..=1.0 => [1.0, line.plug_in_x(1.0)],
+                        let end = match line.plug_in_x(x_e) {
+                            0.0..=1.0 => [x_e, line.plug_in_x(x_e)],
                             1.0.. => [(1.0 - line.b) / line.m, 1.0],
                             _ => [-line.b / line.m, 0.0],
                         };
@@ -250,6 +235,36 @@ impl Default for Color {
         Color::Solid(Solid {
             color: D2D1_COLOR_F::default(),
         })
+    }
+}
+
+pub fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
+    // Get the Windows accent color
+    let mut pcr_colorization: u32 = 0;
+    let mut pf_opaqueblend: BOOL = FALSE;
+    let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
+    if result.is_err() {
+        error!("Could not retrieve Windows accent color!");
+    }
+    let accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
+    let accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
+    let accent_blue = (pcr_colorization & 0x000000FF) as f32 / 255.0;
+    let accent_avg = (accent_red + accent_green + accent_blue) / 3.0;
+
+    if is_active_color {
+        D2D1_COLOR_F {
+            r: accent_red,
+            g: accent_green,
+            b: accent_blue,
+            a: 1.0,
+        }
+    } else {
+        D2D1_COLOR_F {
+            r: accent_avg / 1.5 + accent_red / 10.0,
+            g: accent_avg / 1.5 + accent_green / 10.0,
+            b: accent_avg / 1.5 + accent_blue / 10.0,
+            a: 1.0,
+        }
     }
 }
 

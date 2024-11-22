@@ -48,6 +48,9 @@ unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
+    // Note: this Config struct is different from the ones used for the Logger below
+    let log_path = border_config::Config::get_config_location().join("tacky-borders.log");
+
     CombinedLogger::init(vec![
         TermLogger::new(
             LevelFilter::Warn,
@@ -65,7 +68,7 @@ fn main() {
             LevelFilter::Info,
             Config::default(),
             // TODO move the log somewhere else like to .config/tacky-borders
-            File::create("tacky-log-lol.log").unwrap(),
+            File::create(log_path).unwrap(),
         ),
     ])
     .unwrap();
