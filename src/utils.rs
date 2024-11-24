@@ -316,7 +316,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
 
         let border_window: HWND = HWND(*border_isize as _);
         unsafe {
-            let _ = PostMessageW(border_window, WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
         }
         borders_hashmap.remove(&window_isize);
 

@@ -66,17 +66,14 @@ pub extern "system" fn handle_win_event(
             }
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
-            show_border_for_window(_hwnd);
-        }
-        EVENT_OBJECT_HIDE => {
-            // I have to check IsWindowVisible because for some reason, EVENT_OBJECT_HIDE can be
-            // sent even while the window is still visible (it does this for Vesktop)
-            if !is_window_visible(_hwnd) {
-                hide_border_for_window(_hwnd);
+            if _id_object == OBJID_WINDOW.0 {
+                show_border_for_window(_hwnd);
             }
         }
-        EVENT_OBJECT_CLOAKED => {
-            hide_border_for_window(_hwnd);
+        EVENT_OBJECT_HIDE | EVENT_OBJECT_CLOAKED => {
+            if _id_object == OBJID_WINDOW.0 {
+                hide_border_for_window(_hwnd);
+            }
         }
         EVENT_SYSTEM_MINIMIZESTART => {
             let border_option = get_border_from_window(_hwnd);
@@ -94,9 +91,10 @@ pub extern "system" fn handle_win_event(
                 }
             }
         }
-        // TODO this is called an unnecessary number of times which may hurt performance?
         EVENT_OBJECT_DESTROY => {
-            if !has_filtered_style(_hwnd) {
+            if (_id_object == OBJID_WINDOW.0 || _id_object == OBJID_CLIENT.0)
+                && !has_filtered_style(_hwnd)
+            {
                 let _ = destroy_border_for_window(_hwnd);
             }
         }

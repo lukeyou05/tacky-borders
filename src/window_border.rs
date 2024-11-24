@@ -50,15 +50,20 @@ pub struct WindowBorder {
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
     pub pause: bool,
+    pub is_active_window: bool,
 }
 
 impl WindowBorder {
     pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> Result<()> {
         unsafe {
+            let self_title = format!("{}{}", "tacky-", get_window_title(self.tracking_window));
+            let mut string: Vec<u16> = self_title.encode_utf16().collect();
+            string.push(0);
+
             self.border_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 w!("tacky-border"),
-                w!("tacky-border"),
+                PCWSTR::from_raw(string.as_ptr()),
                 WS_POPUP | WS_DISABLED,
                 0,
                 0,
@@ -106,21 +111,17 @@ impl WindowBorder {
 
             let _ = self.create_render_targets();
 
-            self.current_animations = match is_active_window(self.tracking_window) {
+            self.is_active_window = is_active_window(self.tracking_window);
+
+            self.current_animations = match self.is_active_window {
                 true => self.active_animations.clone(),
                 false => self.inactive_animations.clone(),
             };
 
-            match self.current_animations.contains_key(&AnimationType::Fade)
-                && initialize_delay != 0
-            {
-                true => {
-                    animations::animate_fade_to_visible(self);
-                }
-                false => {
-                    let _ = self.update_color();
-                }
+            if self.current_animations.contains_key(&AnimationType::Fade) {
+                self.event_anim = ANIM_FADE_TO_VISIBLE;
             }
+            let _ = self.update_color(Some(initialize_delay));
 
             let _ = self.update_window_rect();
 
@@ -176,7 +177,7 @@ impl WindowBorder {
             radiusY: self.border_radius,
         };
 
-        if is_active_window(self.tracking_window) {
+        if self.is_active_window {
             self.current_color = self.active_color.clone();
         } else {
             self.current_color = self.inactive_color.clone();
@@ -211,8 +212,8 @@ impl WindowBorder {
         if result.is_err() {
             warn!("Could not get window rect. This is normal for elevated/admin windows.");
             unsafe {
-                let _ = ShowWindow(self.border_window, SW_HIDE);
-                self.pause = true;
+                self.destroy_anim_timer();
+                PostQuitMessage(0);
             }
         }
 
@@ -250,24 +251,41 @@ impl WindowBorder {
             );
             if result.is_err() {
                 warn!("Could not set window position! This is normal for elevated/admin windows.");
-                let _ = ShowWindow(self.border_window, SW_HIDE);
-                self.pause = true;
+                self.destroy_anim_timer();
+                PostQuitMessage(0);
             }
         }
         Ok(())
     }
 
     // TODO this is kinda scuffed to work with fade animations
-    pub fn update_color(&mut self) -> Result<()> {
-        if self.current_animations.contains_key(&AnimationType::Fade) {
-            return Ok(());
-        }
+    pub fn update_color(&mut self, check_delay: Option<u64>) -> Result<()> {
+        match self.current_animations.contains_key(&AnimationType::Fade) {
+            true => {
+                if check_delay == Some(0) {
+                    self.current_color = match self.is_active_window {
+                        true => self.active_color.clone(),
+                        false => self.inactive_color.clone(),
+                    };
+                    return Ok(());
+                }
 
-        self.current_color = if is_active_window(self.tracking_window) {
-            self.active_color.clone()
-        } else {
-            self.inactive_color.clone()
-        };
+                if self.event_anim == ANIM_FADE_TO_VISIBLE {
+                    animations::animate_fade_to_visible(self);
+                } else {
+                    match self.is_active_window {
+                        true => self.event_anim = ANIM_FADE_TO_ACTIVE,
+                        false => self.event_anim = ANIM_FADE_TO_INACTIVE,
+                    }
+                }
+            }
+            false => {
+                self.current_color = match self.is_active_window {
+                    true => self.active_color.clone(),
+                    false => self.inactive_color.clone(),
+                };
+            }
+        }
 
         Ok(())
     }
@@ -364,7 +382,7 @@ impl WindowBorder {
             SetWindowLongPtrW(window, GWLP_USERDATA, border_pointer as _);
         }
         match !border_pointer.is_null() {
-            true => Self::wnd_proc(&mut *border_pointer, window, message, wparam, lparam),
+            true => (*border_pointer).wnd_proc(window, message, wparam, lparam),
             false => DefWindowProcW(window, message, wparam, lparam),
         }
     }
@@ -422,24 +440,15 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_FOCUS
             WM_APP_FOCUS => {
-                let is_active = is_active_window(self.tracking_window);
+                self.is_active_window = is_active_window(self.tracking_window);
+
                 // Update the current animations list
-                self.current_animations = match is_active {
+                self.current_animations = match self.is_active_window {
                     true => self.active_animations.clone(),
                     false => self.inactive_animations.clone(),
                 };
 
-                // Update event_anim if applicable. TODO I could move this to the code right above
-                // to avoid having to check is_active twice, but it's kind of ugly to look at ...
-                // idk lol.
-                if self.current_animations.contains_key(&AnimationType::Fade) {
-                    self.event_anim = match is_active {
-                        true => ANIM_FADE_TO_ACTIVE,
-                        false => ANIM_FADE_TO_INACTIVE,
-                    }
-                }
-
-                let _ = self.update_color();
+                let _ = self.update_color(None);
                 let _ = self.update_position(None);
                 let _ = self.render();
             }
@@ -456,7 +465,7 @@ impl WindowBorder {
                 }
 
                 if has_native_border(self.tracking_window) {
-                    let _ = self.update_color();
+                    let _ = self.update_color(Some(0));
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
@@ -480,16 +489,10 @@ impl WindowBorder {
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
                 if has_native_border(self.tracking_window) {
-                    match self.current_animations.contains_key(&AnimationType::Fade)
-                        && self.unminimize_delay != 0
-                    {
-                        true => {
-                            animations::animate_fade_to_visible(self);
-                        }
-                        false => {
-                            let _ = self.update_color();
-                        }
+                    if self.current_animations.contains_key(&AnimationType::Fade) {
+                        self.event_anim = ANIM_FADE_TO_VISIBLE;
                     }
+                    let _ = self.update_color(Some(self.unminimize_delay));
                     let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
@@ -570,7 +573,7 @@ impl WindowBorder {
                 //let _ = self.render();
                 let _ = ValidateRect(window, None);
             }
-            WM_DESTROY => {
+            WM_NCDESTROY => {
                 self.destroy_anim_timer();
 
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
