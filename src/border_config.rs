@@ -69,15 +69,6 @@ impl Config {
         // If .config/tacky-borders/config.yaml does not exist, create it
         if !fs::exists(&config_path).expect("couldn't check if config path exists") {
             let default_contents = DEFAULT_CONFIG.as_bytes();
-
-            // If .config/tacky-borders does not exist either, then create the directory too
-            if !fs::exists(&config_dir).expect("couldn't check if config directory exists") {
-                DirBuilder::new()
-                    .recursive(true)
-                    .create(&config_dir)
-                    .expect("could not create config directory!");
-            }
-
             std::fs::write(&config_path, default_contents)
                 .expect("could not generate default config.yaml");
 
@@ -95,7 +86,14 @@ impl Config {
 
     pub fn get_config_location() -> PathBuf {
         let home_dir = home_dir().expect("can't find home path");
-        home_dir.join(".config").join("tacky-borders")
+        let config_dir = home_dir.join(".config").join("tacky-borders");
+        if !config_dir.exists() {
+            DirBuilder::new()
+                .recursive(true)
+                .create(&config_dir)
+                .expect("could not create config directory!");
+        }
+        config_dir
     }
 
     pub fn reload_config() {
