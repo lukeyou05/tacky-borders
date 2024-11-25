@@ -332,7 +332,7 @@ impl WindowBorder {
             render_target.BeginDraw();
             render_target.Clear(None);
 
-            if self.event_anim == ANIM_FADE_TO_ACTIVE || self.event_anim == ANIM_FADE_TO_INACTIVE {
+            if self.event_anim != ANIM_NONE {
                 let Some(brush2) = self.fade_anim_temp.create_brush(
                     render_target,
                     &self.window_rect,
@@ -340,6 +340,7 @@ impl WindowBorder {
                 ) else {
                     return Ok(());
                 };
+
                 self.draw_rectangle(render_target, &brush2);
             }
             self.draw_rectangle(render_target, &brush);
@@ -572,7 +573,7 @@ impl WindowBorder {
                             .unwrap_or(&200.0);
 
                         // divide anim_speed by 15 just cuz otherwise it's too fast lol
-                        animations::animate_fade_colors(self, &anim_elapsed, *anim_speed / 15.0);
+                        animations::animate_fade(self, &anim_elapsed, *anim_speed / 15.0);
                         update = true;
                     }
                     _ => {}

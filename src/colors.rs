@@ -27,7 +27,7 @@ pub enum GradientDirection {
     Coordinates(GradientCoordinates),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GradientCoordinates {
     pub start: [f32; 2],
     pub end: [f32; 2],
@@ -40,10 +40,12 @@ impl ColorConfig {
                 if solid_config == "accent" {
                     Color::Solid(Solid {
                         color: get_accent_color(is_active_color),
+                        opacity: 1.0,
                     })
                 } else {
                     Color::Solid(Solid {
                         color: get_color_from_hex(solid_config.as_str()),
+                        opacity: 1.0,
                     })
                 }
             }
@@ -142,6 +144,7 @@ impl ColorConfig {
                 Color::Gradient(Gradient {
                     gradient_stops,
                     direction,
+                    opacity: 1.0,
                 })
             }
         }
@@ -160,21 +163,23 @@ impl Line {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Color {
     Solid(Solid),
     Gradient(Gradient),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Solid {
     pub color: D2D1_COLOR_F,
+    pub opacity: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Gradient {
     pub gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
     pub direction: GradientCoordinates,
+    pub opacity: f32,
 }
 
 impl Color {
@@ -191,6 +196,9 @@ impl Color {
                 else {
                     return None;
                 };
+
+                brush.SetOpacity(solid.opacity);
+
                 Some(brush.into())
             },
             Color::Gradient(gradient) => unsafe {
@@ -224,6 +232,8 @@ impl Color {
                     return None;
                 };
 
+                brush.SetOpacity(gradient.opacity);
+
                 Some(brush.into())
             },
         }
@@ -234,6 +244,7 @@ impl Default for Color {
     fn default() -> Self {
         Color::Solid(Solid {
             color: D2D1_COLOR_F::default(),
+            opacity: 1.0,
         })
     }
 }
