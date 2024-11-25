@@ -45,6 +45,8 @@ pub struct WindowBorder {
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
     pub anim_timer: Option<AnimationTimer>,
+    // I think I should avoid needing to have this
+    pub fade_anim_temp: Color,
     pub spiral_anim_angle: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
@@ -271,8 +273,12 @@ impl WindowBorder {
                 }
 
                 if self.event_anim == ANIM_FADE_TO_VISIBLE {
-                    animations::animate_fade_to_visible(self);
+                    animations::animate_fade_setup(self);
                 } else {
+                    if self.event_anim == ANIM_NONE {
+                        self.fade_anim_temp = self.current_color.clone();
+                        animations::animate_fade_setup(self);
+                    }
                     match self.is_active_window {
                         true => self.event_anim = ANIM_FADE_TO_ACTIVE,
                         false => self.event_anim = ANIM_FADE_TO_INACTIVE,
@@ -325,20 +331,19 @@ impl WindowBorder {
 
             render_target.BeginDraw();
             render_target.Clear(None);
-            match self.border_radius {
-                0.0 => render_target.DrawRectangle(
-                    &self.rounded_rect.rect,
-                    &brush,
-                    self.border_width as f32,
-                    None,
-                ),
-                _ => render_target.DrawRoundedRectangle(
-                    &self.rounded_rect,
-                    &brush,
-                    self.border_width as f32,
-                    None,
-                ),
+
+            if self.event_anim == ANIM_FADE_TO_ACTIVE || self.event_anim == ANIM_FADE_TO_INACTIVE {
+                let Some(brush2) = self.fade_anim_temp.create_brush(
+                    render_target,
+                    &self.window_rect,
+                    &self.brush_properties,
+                ) else {
+                    return Ok(());
+                };
+                self.draw_rectangle(render_target, &brush2);
             }
+            self.draw_rectangle(render_target, &brush);
+
             let _ = render_target.EndDraw(None, None);
 
             // TODO figure out the other TODO in the WM_PAINT message
@@ -346,6 +351,25 @@ impl WindowBorder {
         }
 
         Ok(())
+    }
+
+    pub fn draw_rectangle(&self, render_target: &ID2D1HwndRenderTarget, brush: &ID2D1Brush) {
+        unsafe {
+            match self.border_radius {
+                0.0 => render_target.DrawRectangle(
+                    &self.rounded_rect.rect,
+                    brush,
+                    self.border_width as f32,
+                    None,
+                ),
+                _ => render_target.DrawRoundedRectangle(
+                    &self.rounded_rect,
+                    brush,
+                    self.border_width as f32,
+                    None,
+                ),
+            }
+        }
     }
 
     pub fn set_anim_timer(&mut self) {
@@ -465,7 +489,7 @@ impl WindowBorder {
                 }
 
                 if has_native_border(self.tracking_window) {
-                    let _ = self.update_color(Some(0));
+                    //let _ = self.update_color(Some(0));
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
