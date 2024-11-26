@@ -7,13 +7,10 @@ use std::time;
 
 use windows::Foundation::Numerics::*;
 
-use crate::colors::*;
 use crate::window_border::WindowBorder;
 
 pub const ANIM_NONE: i32 = 0;
-pub const ANIM_FADE_TO_ACTIVE: i32 = 1;
-pub const ANIM_FADE_TO_INACTIVE: i32 = 2;
-pub const ANIM_FADE_TO_VISIBLE: i32 = 3;
+pub const ANIM_FADE: i32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AnimationType {
@@ -95,57 +92,23 @@ pub fn animate_reverse_spiral(
         Matrix3x2::rotation(border.spiral_anim_angle, center_x as f32, center_y as f32);
 }
 
-pub fn animate_fade_setup(border: &mut WindowBorder) {
-    // Reset last_anim_time here because otherwise, anim_elapsed will be
-    // too large due to being paused and interpolation won't work correctly
-    border.last_anim_time = Some(time::Instant::now());
+pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_speed: f32) {
+    let anim_step = anim_elapsed.as_secs_f32() * anim_speed;
 
-    border.current_color = if border.is_active_window {
-        border.active_color.clone()
-    } else {
-        border.inactive_color.clone()
+    let (bottom_color, top_color) = match border.is_active_window {
+        true => (&mut border.inactive_color, &mut border.active_color),
+        false => (&mut border.active_color, &mut border.inactive_color),
     };
 
-    match border.current_color {
-        Color::Gradient(ref mut gradient) => {
-            gradient.opacity = 0.0;
-        }
-        Color::Solid(ref mut solid) => {
-            solid.opacity = 0.0;
-        }
-    }
-    match border.fade_anim_temp {
-        Color::Gradient(ref mut gradient) => {
-            gradient.opacity = 1.0;
-        }
-        Color::Solid(ref mut solid) => {
-            solid.opacity = 1.0;
-        }
-    }
-}
+    let mut new_top_opacity = top_color.get_opacity() + anim_step;
+    let mut new_bottom_opacity = bottom_color.get_opacity() - anim_step;
 
-pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_speed: f32) {
-    // TODO is there a better way to deal with enums like this
-    match border.current_color {
-        Color::Gradient(ref mut gradient) => {
-            gradient.opacity += anim_elapsed.as_secs_f32() * anim_speed;
-            if gradient.opacity >= 1.0 {
-                border.event_anim = ANIM_NONE;
-            }
-        }
-        Color::Solid(ref mut solid) => {
-            solid.opacity += anim_elapsed.as_secs_f32() * anim_speed;
-            if solid.opacity >= 1.0 {
-                border.event_anim = ANIM_NONE;
-            }
-        }
+    if new_top_opacity >= 1.0 {
+        new_top_opacity = 1.0;
+        new_bottom_opacity = 0.0;
+        border.event_anim = ANIM_NONE;
     }
-    match border.fade_anim_temp {
-        Color::Gradient(ref mut gradient) => {
-            gradient.opacity -= anim_elapsed.as_secs_f32() * anim_speed;
-        }
-        Color::Solid(ref mut solid) => {
-            solid.opacity -= anim_elapsed.as_secs_f32() * anim_speed;
-        }
-    }
+
+    top_color.set_opacity(new_top_opacity);
+    bottom_color.set_opacity(new_bottom_opacity);
 }

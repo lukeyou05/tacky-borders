@@ -40,12 +40,12 @@ impl ColorConfig {
                 if solid_config == "accent" {
                     Color::Solid(Solid {
                         color: get_accent_color(is_active_color),
-                        opacity: 1.0,
+                        opacity: 0.0,
                     })
                 } else {
                     Color::Solid(Solid {
                         color: get_color_from_hex(solid_config.as_str()),
-                        opacity: 1.0,
+                        opacity: 0.0,
                     })
                 }
             }
@@ -144,7 +144,7 @@ impl ColorConfig {
                 Color::Gradient(Gradient {
                     gradient_stops,
                     direction,
-                    opacity: 1.0,
+                    opacity: 0.0,
                 })
             }
         }
@@ -184,7 +184,7 @@ pub struct Gradient {
 
 impl Color {
     pub fn create_brush(
-        &mut self,
+        &self,
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
@@ -238,13 +238,27 @@ impl Color {
             },
         }
     }
+
+    pub fn set_opacity(&mut self, opacity: f32) {
+        match self {
+            Color::Gradient(gradient) => gradient.opacity = opacity,
+            Color::Solid(solid) => solid.opacity = opacity,
+        }
+    }
+
+    pub fn get_opacity(&self) -> f32 {
+        match self {
+            Color::Gradient(gradient) => gradient.opacity,
+            Color::Solid(solid) => solid.opacity,
+        }
+    }
 }
 
 impl Default for Color {
     fn default() -> Self {
         Color::Solid(Solid {
             color: D2D1_COLOR_F::default(),
-            opacity: 1.0,
+            opacity: 0.0,
         })
     }
 }
