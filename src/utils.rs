@@ -214,9 +214,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             border_radius,
             active_color,
             inactive_color,
-            active_animations: animations.active,
-            inactive_animations: animations.inactive,
-            animation_fps: animations.fps,
+            animations,
             unminimize_delay,
             ..Default::default()
         };

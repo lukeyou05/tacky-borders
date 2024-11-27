@@ -4,7 +4,6 @@ use crate::animations;
 use crate::animations::*;
 use crate::colors::*;
 use crate::utils::*;
-use std::collections::HashMap;
 use std::ptr;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
@@ -36,15 +35,11 @@ pub struct WindowBorder {
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: Color,
     pub inactive_color: Color,
-    pub active_animations: HashMap<AnimationType, f32>,
-    pub inactive_animations: HashMap<AnimationType, f32>,
-    pub current_animations: HashMap<AnimationType, f32>,
+    pub animations: Animations,
     pub event_anim: i32,
-    pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
     pub anim_timer: Option<AnimationTimer>,
-    pub spiral_anim_angle: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -112,9 +107,9 @@ impl WindowBorder {
 
             self.is_active_window = is_active_window(self.tracking_window);
 
-            self.current_animations = match self.is_active_window {
-                true => self.active_animations.clone(),
-                false => self.inactive_animations.clone(),
+            self.animations.current = match self.is_active_window {
+                true => self.animations.active.clone(),
+                false => self.animations.inactive.clone(),
             };
 
             let _ = self.update_color(Some(initialize_delay));
@@ -250,7 +245,7 @@ impl WindowBorder {
 
     // TODO this is kinda scuffed to work with fade animations
     pub fn update_color(&mut self, check_delay: Option<u64>) -> Result<()> {
-        match self.current_animations.contains_key(&AnimationType::Fade) && check_delay != Some(0) {
+        match self.animations.current.contains_key(&AnimationType::Fade) && check_delay != Some(0) {
             true => {
                 self.event_anim = ANIM_FADE;
             }
@@ -356,10 +351,10 @@ impl WindowBorder {
     }
 
     pub fn set_anim_timer(&mut self) {
-        if (!self.active_animations.is_empty() || !self.inactive_animations.is_empty())
+        if (!self.animations.active.is_empty() || !self.animations.inactive.is_empty())
             && self.anim_timer.is_none()
         {
-            let timer_duration = (1000.0 / self.animation_fps as f32) as u64;
+            let timer_duration = (1000.0 / self.animations.fps as f32) as u64;
             self.anim_timer = Some(AnimationTimer::start(self.border_window, timer_duration));
         }
     }
@@ -450,9 +445,9 @@ impl WindowBorder {
                 self.is_active_window = is_active_window(self.tracking_window);
 
                 // Update the current animations list
-                self.current_animations = match self.is_active_window {
-                    true => self.active_animations.clone(),
-                    false => self.inactive_animations.clone(),
+                self.animations.current = match self.is_active_window {
+                    true => self.animations.active.clone(),
+                    false => self.animations.inactive.clone(),
                 };
 
                 let _ = self.update_color(None);
@@ -541,7 +536,7 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_speed) in self.current_animations.clone().iter() {
+                for (anim_type, anim_speed) in self.animations.current.clone().iter() {
                     match anim_type {
                         AnimationType::Spiral => {
                             // multiply anim_speed by 2.0 otherwise it's too slow lol
@@ -563,16 +558,17 @@ impl WindowBorder {
 
                 if self.event_anim == ANIM_FADE {
                     let anim_speed = self
-                        .current_animations
+                        .animations
+                        .current
                         .get(&AnimationType::Fade)
                         .unwrap_or(&200.0);
 
-                    // divide anim_speed by 15 just cuz otherwise it's too fast lol
-                    animations::animate_fade(self, &anim_elapsed, *anim_speed / 15.0);
+                    // divide anim_speed by 20 just cuz otherwise it's too fast lol
+                    animations::animate_fade(self, &anim_elapsed, *anim_speed / 20.0);
                     update = true;
                 }
 
-                let interval = 1.0 / self.animation_fps as f32;
+                let interval = 1.0 / self.animations.fps as f32;
                 let diff = render_elapsed.as_secs_f32() - interval;
                 if update && (diff.abs() <= 0.001 || diff >= 0.0) {
                     let _ = self.render();
