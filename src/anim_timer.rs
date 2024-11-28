@@ -1,10 +1,7 @@
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::Foundation::LPARAM;
-use windows::Win32::Foundation::WPARAM;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::utils::WM_APP_ANIMATE;

@@ -12,10 +12,18 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::{LazyLock, Mutex};
-use windows::{
-    core::*, Win32::Foundation::*, Win32::System::SystemServices::IMAGE_DOS_HEADER,
-    Win32::UI::Accessibility::*, Win32::UI::HiDpi::*, Win32::UI::Input::Ime::*,
-    Win32::UI::WindowsAndMessaging::*,
+use windows::core::w;
+use windows::Win32::Foundation::{GetLastError, BOOL, HINSTANCE, HWND, LPARAM, TRUE, WPARAM};
+use windows::Win32::System::SystemServices::IMAGE_DOS_HEADER;
+use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
+use windows::Win32::UI::Input::Ime::ImmDisableIME;
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, PostMessageW, RegisterClassExW,
+    TranslateMessage, EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
 
 mod anim_timer;
@@ -105,7 +113,7 @@ fn main() {
     }
 }
 
-pub fn register_window_class() -> Result<()> {
+pub fn register_window_class() -> windows::core::Result<()> {
     unsafe {
         let window_class = w!("tacky-border");
         let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
@@ -143,9 +151,9 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
     }
 }
 
-pub fn enum_windows() -> Result<()> {
+pub fn enum_windows() -> windows::core::Result<()> {
     unsafe {
-        let _ = EnumWindows(Some(enum_windows_callback), LPARAM::default());
+        EnumWindows(Some(enum_windows_callback), LPARAM::default())?;
     }
     debug!("Windows have been enumerated!");
     Ok(())

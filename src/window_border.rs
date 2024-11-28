@@ -5,14 +5,37 @@ use crate::animations::*;
 use crate::colors::*;
 use crate::utils::*;
 use std::ptr;
-use std::sync::LazyLock;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 use std::thread;
 use std::time;
-use windows::{
-    core::*, Foundation::Numerics::*, Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*,
-    Win32::Graphics::Direct2D::*, Win32::Graphics::Dwm::*, Win32::Graphics::Dxgi::Common::*,
-    Win32::Graphics::Gdi::*, Win32::UI::WindowsAndMessaging::*,
+use windows::core::{w, PCWSTR};
+use windows::Foundation::Numerics::Matrix3x2;
+use windows::Win32::Foundation::{
+    COLORREF, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
+};
+use windows::Win32::Graphics::Direct2D::Common::{
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
+};
+use windows::Win32::Graphics::Direct2D::{
+    D2D1CreateFactory, ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BRUSH_PROPERTIES, D2D1_FACTORY_TYPE_MULTI_THREADED,
+    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_ROUNDED_RECT,
+};
+use windows::Win32::Graphics::Dwm::{
+    DwmEnableBlurBehindWindow, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
+    DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
+};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
+use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
+    GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, GW_HWNDPREV,
+    HWND_TOP, LWA_ALPHA, LWA_COLORKEY, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN,
+    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SW_SHOWNA, WM_CREATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING,
+    WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 pub static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
@@ -48,7 +71,7 @@ pub struct WindowBorder {
 }
 
 impl WindowBorder {
-    pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> Result<()> {
+    pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> windows::core::Result<()> {
         unsafe {
             let self_title = format!("{}{}", "tacky-", get_window_title(self.tracking_window));
             let mut string: Vec<u16> = self_title.encode_utf16().collect();
@@ -73,7 +96,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn init(&mut self, initialize_delay: u64) -> Result<()> {
+    pub fn init(&mut self, initialize_delay: u64) -> Result<(), ()> {
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(initialize_delay));
 
@@ -141,7 +164,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn create_render_targets(&mut self) -> Result<()> {
+    pub fn create_render_targets(&mut self) -> Result<(), ()> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -185,7 +208,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn update_window_rect(&mut self) -> Result<()> {
+    pub fn update_window_rect(&mut self) -> Result<(), ()> {
         let result = unsafe {
             DwmGetWindowAttribute(
                 self.tracking_window,
@@ -210,7 +233,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> Result<()> {
+    pub fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> Result<(), ()> {
         unsafe {
             // Place the window border above the tracking window
             let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
@@ -244,7 +267,7 @@ impl WindowBorder {
     }
 
     // TODO this is kinda scuffed to work with fade animations
-    pub fn update_color(&mut self, check_delay: Option<u64>) -> Result<()> {
+    pub fn update_color(&mut self, check_delay: Option<u64>) -> Result<(), ()> {
         match self.animations.current.contains_key(&AnimationType::Fade) && check_delay != Some(0) {
             true => {
                 self.event_anim = ANIM_FADE;
@@ -267,7 +290,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<()> {
+    pub fn render(&mut self) -> Result<(), ()> {
         self.last_render_time = Some(time::Instant::now());
 
         // Get the render target

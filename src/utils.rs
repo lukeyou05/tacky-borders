@@ -1,21 +1,22 @@
-use windows::{
-    Win32::Foundation::*, Win32::Graphics::Dwm::*, Win32::UI::HiDpi::*,
-    Win32::UI::WindowsAndMessaging::*,
+use windows::Win32::Foundation::{BOOL, FALSE, HINSTANCE, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT,
+    DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DWM_WINDOW_CORNER_PREFERENCE,
+};
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowTextW,
+    IsWindowVisible, PostMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOWPLACEMENT, WM_APP, WM_NCDESTROY,
+    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
 
 use regex::Regex;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::MatchKind;
-use crate::border_config::MatchStrategy;
-use crate::border_config::WindowRule;
-use crate::border_config::CONFIG;
+use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
 use crate::window_border;
-use crate::SendHWND;
-use crate::__ImageBase;
-use crate::BORDERS;
-use crate::INITIAL_WINDOWS;
+use crate::{SendHWND, __ImageBase, BORDERS, INITIAL_WINDOWS};
 
 // I need these because Rust doesn't allow expressions for a match pattern
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;

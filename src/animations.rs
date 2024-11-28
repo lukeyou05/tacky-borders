@@ -1,11 +1,9 @@
-use serde::Deserialize;
-use serde::Deserializer;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_yaml::Value;
 use std::collections::HashMap;
 use std::time;
 
-use windows::Foundation::Numerics::*;
+use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;

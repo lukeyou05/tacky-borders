@@ -1,8 +1,7 @@
 use crate::animations::Animations;
 use crate::colors::ColorConfig;
 use dirs::home_dir;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::DirBuilder;
 use std::path::PathBuf;

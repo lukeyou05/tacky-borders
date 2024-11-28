@@ -1,11 +1,13 @@
 use core::f32;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
-use windows::{
-    Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*, Win32::Graphics::Direct2D::*,
-    Win32::Graphics::Dwm::*,
+use windows::Win32::Foundation::{BOOL, FALSE, RECT};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D_POINT_2F};
+use windows::Win32::Graphics::Direct2D::{
+    ID2D1Brush, ID2D1HwndRenderTarget, D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP,
+    D2D1_GAMMA_2_2, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
 };
+use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
