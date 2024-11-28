@@ -7,6 +7,7 @@ use std::time;
 
 use windows::Foundation::Numerics::*;
 
+use crate::utils::bezier;
 use crate::window_border::WindowBorder;
 
 pub const ANIM_NONE: i32 = 0;
@@ -112,10 +113,15 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         false => (&mut border.active_color, &mut border.inactive_color),
     };
 
-    let top_opacity = top_color.get_opacity();
-    let bottom_opacity = bottom_color.get_opacity();
+    let delta_x = anim_elapsed.as_secs_f32() * anim_speed;
+    border.animations.fade_progress += delta_x;
 
-    if top_opacity >= 0.99 {
+    let bottom_opacity = bottom_color.get_opacity();
+    let top_opacity = top_color.get_opacity();
+
+    // Check if the fade animation is finished. This also prevents the animation from playing when
+    // windows are shown/uncloaked and the opacity is already 1.0.
+    if border.animations.fade_progress >= 1.0 || top_opacity >= 1.0 {
         top_color.set_opacity(1.0);
         bottom_color.set_opacity(0.0);
 
@@ -125,26 +131,15 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         return;
     }
 
-    // EaseInOutQuad using the following two equations:
-    // y = 2t^2              0<=t<0.5
-    // y = 1 - 2(t - 1)^2    0.5<=t<=1
-    let delta_t = anim_elapsed.as_secs_f32() * anim_speed;
-    let new_top_opacity = match top_opacity <= 0.5 {
-        true => {
-            // Increment fade_progress
-            border.animations.fade_progress += delta_t;
-
-            // Recalculate opacity using above equations
-            2.0 * border.animations.fade_progress.powi(2) // Quadratic ease-in formula
-        }
-        false => {
-            // Increment fade_progress
-            border.animations.fade_progress += delta_t;
-
-            // Recalculate opacity using above equations
-            1.0 - (2.0 * (border.animations.fade_progress - 1.0).powi(2))
-        }
+    // TODO perhaps add config options for this
+    //
+    // Basically EaseInOutQuad
+    let Ok(ease_in_out_quad) = bezier(0.42, 0.0, 0.58, 1.0) else {
+        return;
     };
+
+    let new_top_opacity = ease_in_out_quad(border.animations.fade_progress);
+
     // I do the following because I want this to work when a window is first opened (when only the
     // top color should be visible) without having to write a separate function for it lol.
     let new_bottom_opacity = match bottom_opacity == 0.0 {

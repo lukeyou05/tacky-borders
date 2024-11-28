@@ -27,7 +27,7 @@ pub enum GradientDirection {
     Coordinates(GradientCoordinates),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GradientCoordinates {
     pub start: [f32; 2],
     pub end: [f32; 2],
@@ -63,8 +63,8 @@ impl ColorConfig {
                     })
                     .collect();
 
-                let direction = match gradient_config.direction.clone() {
-                    GradientDirection::Angle(angle) => {
+                let direction = match gradient_config.direction {
+                    GradientDirection::Angle(ref angle) => {
                         // If we have an angle, we need to convert it into Coordinates
 
                         let Some(degree) = angle
@@ -138,7 +138,7 @@ impl ColorConfig {
 
                         GradientCoordinates { start, end }
                     }
-                    GradientDirection::Coordinates(coordinates) => coordinates,
+                    GradientDirection::Coordinates(ref coordinates) => coordinates.clone(),
                 };
 
                 Color::Gradient(Gradient {
@@ -163,19 +163,19 @@ impl Line {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Color {
     Solid(Solid),
     Gradient(Gradient),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Solid {
     pub color: D2D1_COLOR_F,
     pub opacity: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Gradient {
     pub gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
     pub direction: GradientCoordinates,
