@@ -1,30 +1,85 @@
 # Customize global config options
 global:
-  border_width: 3 # Width of the border
-  border_offset: -1 # How close the border is to the window edges
-  border_radius: -1 # Radius of the corners. Leave it at -1 to let tacky-borders handle the radius or set your own custom value.
+  # border_width: the width of the border in pixels
+  border_width: 3
 
+  # border_offset: how many pixels to shrink or expand the border by
+  border_offset: -1
+
+  # border-radius: the radius of the corners.
+  # Leave it at -1 to let tacky-borders handle the radius, or set your own custom value.
+  border_radius: -1
+
+  # active_color: the color of the active window's border
+  # inactive_color: the color of the inactive window's border
+  #
+  # Two types of colors are supported: solid and gradient.
+  #   Gradient colors support hex codes.
+  #   Solid colors support both a hex code and "accent".
+  #
+  # SOLID EXAMPLE:
+  #   active_color: "#ffffff"
+  #
+  #   OR
+  #
+  #   active_color: "accent"
+  #
+  # GRADIENT EXAMPLE:
+  #   active_color:
+  #     colors: ["#000000", "#ffffff"]
+  #     direction: 45deg
+  #
+  #   OR
+  #
+  #   active_color:
+  #     colors: ["#000000", "#ffffff"]
+  #     direction:
+  #       start: [0.0, 1.0]
+  #       end: [1.0, 0.0]
+  #
+  #   Note: [0.0, 0.0] is the top left corner
+  #         [1.0, 1.0] is the bottom right corner
   active_color:
     colors: ["#6274e7", "#8752a3"]
     direction: 45deg
-  #active_color: "#7F7FD5"
 
   inactive_color:
     colors: ["#30304f", "#363c69"]
     direction:
-      start: [0.0, 1.0] # [0.0, 0.0] is the top left corner (windows api is weird like that)
-      end: [1.0, 0.0] # [1.0, 1.0] is the bottom right corner
-  #inactive_color: "#575660" # Color of unfocused windows. Currently supports a hex code like "#ffffff" or "accent" (and now gradients!)
+      start: [0.0, 1.0]
+      end: [1.0, 0.0]
 
-  initialize_delay: 200 # I reduce the delay here because of the fade animation which takes some time itself
+  # intialize_delay: the time (in milliseconds) it takes for the border to show after a window is opened.
+  # unminimize_delay: the time (in milliseconds) it takes for the border to show after a window is unminimized.
+  #
+  # There is no easy way to deal with window animations (such as when a window is opened or unminimized), and these
+  # delays are here to help account for that. If you have window animations disabled, I recommend setting these to 0.
+  #
+  # These can also be adjusted to account for things like fade animations, which take additional time.
+  initialize_delay: 200
   unminimize_delay: 150
 
+  # animations:
+  #   active: adjusts the active window's animations
+  #   inactive: adjusts the inactive window's animations
+  #   fps: adjusts the animation fps
+  #
+  #   Currently, three types of animations are supported:
+  #     Spiral,
+  #     ReverseSpiral,
+  #     Fade,
+  #
+  #   Animation speeds can be adjusted by appending a number to active or inactive like follows:
+  #     active: { Spiral: 100, Fade: 100 }
+  #
+  #   Note: animation speed is not the duration of the animation.
+  #   Note: spiral animations can use a lot of CPU and GPU.
   animations:
-    active: { ReverseSpiral, Fade }
-    inactive: { Spiral, Fade }
+    active: { Fade }
+    inactive: { Fade }
     fps: 60
 
-# Customize config options on a per-app basis
+# Customize config options on a per-app basis.
 window_rules:
   - match: "Class"
     name: "Windows.UI.Core.CoreWindow"
@@ -45,13 +100,12 @@ window_rules:
   - match: "Title"
     name: "keyviz"
     enabled: false
+
   # EXAMPLE CONFIGURATION:
   # - match: "Class"               # Currently supports "Class" or "Title"
   #   name: "MozillaWindowClass"   # Name of the class or title
   #   strategy: "Equals"           # Optional. Currently supports "Equals", "Contains", or "Regex". Defaults to "Equals"
-  #   border_width: 10             # The next few options are all optional and default to global config if nothing is specified
-  #   border_radius: -10
-  #   border_offset: -10
-  #   active_color: "#ffffff"
-  #   inactive_color: "#000000"
-  #   enabled: true                # Optional. Enables or disables the border. Defaults to true. Note: you can't forcibly enable borders yet
+  #   enabled: true                # Optional. Enables/disables the border. Defaults to true. Note: you can't forcibly enable borders
+  #
+  # Any option in the global config can also be defined in window_rules.
+  # If something isn't defined here, it will default to global config options.
