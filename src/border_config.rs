@@ -25,8 +25,9 @@ pub struct Global {
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
     pub animations: Option<Animations>,
-    // TODO maybe need better names for these two below
+    #[serde(alias = "init_delay")]
     pub initialize_delay: Option<u64>, // Adjust delay when creating new windows/borders
+    #[serde(alias = "restore_delay")]
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
 }
 
@@ -44,7 +45,9 @@ pub struct WindowRule {
     pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,
     pub animations: Option<Animations>,
+    #[serde(alias = "init_delay")]
     pub initialize_delay: Option<u64>,
+    #[serde(alias = "restore_delay")]
     pub unminimize_delay: Option<u64>,
 }
 
