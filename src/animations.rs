@@ -7,7 +7,7 @@ use std::time;
 
 use windows::Foundation::Numerics::*;
 
-use crate::utils::bezier;
+use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
 pub const ANIM_NONE: i32 = 0;
@@ -142,7 +142,7 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
     // TODO perhaps add config options for this
     //
     // Basically EaseInOutQuad
-    let Ok(ease_in_out_quad) = bezier(0.42, 0.0, 0.58, 1.0) else {
+    let Ok(ease_in_out_quad) = cubic_bezier(0.42, 0.0, 0.58, 1.0) else {
         return;
     };
 

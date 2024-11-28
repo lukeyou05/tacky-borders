@@ -391,30 +391,32 @@ struct Point {
     y: f32,
 }
 
-fn lerp(t: f32, p1: &Point, p2: &Point) -> Point {
-    Point {
-        x: p1.x + (p2.x - p1.x) * t,
-        y: p1.y + (p2.y - p1.y) * t,
-    }
+fn lerp(t: f32, p1: f32, p2: f32) -> f32 {
+    p1 + (p2 - p1) * t
 }
 
 // Compute the cubic Bézier curve using De Casteljau's algorithm.
-fn de_casteljau(t: f32, p_i: &Point, p1: &Point, p2: &Point, p_f: &Point) -> Point {
+fn de_casteljau(t: f32, p_i: f32, p1: f32, p2: f32, p_f: f32) -> f32 {
     // First level
     let q1 = lerp(t, p_i, p1);
     let q2 = lerp(t, p1, p2);
     let q3 = lerp(t, p2, p_f);
 
     // Second level
-    let r1 = lerp(t, &q1, &q2);
-    let r2 = lerp(t, &q2, &q3);
+    let r1 = lerp(t, q1, q2);
+    let r2 = lerp(t, q2, q3);
 
     // Final level
-    lerp(t, &r1, &r2)
+    lerp(t, r1, r2)
 }
 
 // Generates a cubic Bézier curve function from control points.
-pub fn bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Result<impl Fn(f32) -> f32, BezierError> {
+pub fn cubic_bezier(
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+) -> Result<impl Fn(f32) -> f32, BezierError> {
     // Ensure control points are within bounds.
     if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
         return Err(BezierError::InvalidControlPoint);
@@ -440,16 +442,14 @@ pub fn bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Result<impl Fn(f32) -> f32,
         let p2 = Point { x: x2, y: y2 }; // Second control point
         let p_f = Point { x: 1.0, y: 1.0 }; // End point
 
-        let mut point_at_t = Point { x: 0.0, y: 0.0 };
-
-        // Search for `t`, then return the y-coordinate of the Bézier curve at this 't'.
+        // Search for `t` from the 'x' given as an argument to this function.
         //
         // Note: 'x' and 't' are not the same. 'x' refers to the position along the x-axis, whereas
         // 't' refers to the position along the control point lines, hence why we need to search.
         for _ in 0..SUBDIVISION_MAX_ITERATIONS {
-            // Evaluate the Bézier curve at `t`.
-            point_at_t = de_casteljau(t, &p_i, &p1, &p2, &p_f);
-            let error = x - point_at_t.x;
+            // Evaluate the x-component of the Bézier curve at `t`
+            let x_val = de_casteljau(t, p_i.x, p1.x, p2.x, p_f.x);
+            let error = x - x_val;
 
             // Adjust the range based on the error.
             if error.abs() < SUBDIVISION_PRECISION {
@@ -463,6 +463,7 @@ pub fn bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Result<impl Fn(f32) -> f32,
             t = (t0 + t1) / 2.0;
         }
 
-        point_at_t.y
+        // After finding 't', evalaute the y-component of the Bezier curve
+        de_casteljau(t, p_i.y, p1.y, p2.y, p_f.y)
     })
 }
