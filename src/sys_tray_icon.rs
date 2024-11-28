@@ -16,7 +16,7 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
         }
     };
 
-    let tooltip = format!("{} {}", "tacky-borders", env!("CARGO_PKG_VERSION"));
+    let tooltip = format!("{}{}", "tacky-borders v", env!("CARGO_PKG_VERSION"));
 
     let tray_menu = Menu::new();
     let _ = tray_menu.append(&MenuItem::with_id("0", "Show Config", true, None));

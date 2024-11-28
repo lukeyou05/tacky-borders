@@ -59,10 +59,10 @@ pub struct Animations {
     pub current: HashMap<AnimationType, f32>,
     #[serde(default = "default_fps")]
     pub fps: i32,
-    // fade_progress is used for fade animations
     #[serde(skip)]
     pub fade_progress: f32,
-    // spiral_angle is used for spiral animations
+    #[serde(skip)]
+    pub fade_to_visible: bool,
     #[serde(skip)]
     pub spiral_angle: f32,
 }
@@ -108,25 +108,33 @@ pub fn animate_reverse_spiral(
 }
 
 pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_speed: f32) {
-    let (bottom_color, top_color) = match border.is_active_window {
-        true => (&mut border.inactive_color, &mut border.active_color),
-        false => (&mut border.active_color, &mut border.inactive_color),
+    // If both are 0, that means the window has been opened for the first time or has been
+    // unminimized. If that is the case, we should only fade one of the colors.
+    if border.active_color.get_opacity() == 0.0 && border.inactive_color.get_opacity() == 0.0 {
+        border.animations.fade_progress = match border.is_active_window {
+            true => 0.0,
+            false => 1.0,
+        };
+        border.animations.fade_to_visible = true;
+    }
+
+    let direction = match border.is_active_window {
+        true => 1.0,
+        false => -1.0,
     };
 
-    let delta_x = anim_elapsed.as_secs_f32() * anim_speed;
+    let delta_x = anim_elapsed.as_secs_f32() * anim_speed * direction;
     border.animations.fade_progress += delta_x;
 
-    let bottom_opacity = bottom_color.get_opacity();
-    let top_opacity = top_color.get_opacity();
+    // Check if the fade animation is finished
+    if !(0.0..=1.0).contains(&border.animations.fade_progress) {
+        let final_opacity = border.animations.fade_progress.clamp(0.0, 1.0);
 
-    // Check if the fade animation is finished. This also prevents the animation from playing when
-    // windows are shown/uncloaked and the opacity is already 1.0.
-    if border.animations.fade_progress >= 1.0 || top_opacity >= 1.0 {
-        top_color.set_opacity(1.0);
-        bottom_color.set_opacity(0.0);
+        border.active_color.set_opacity(final_opacity);
+        border.inactive_color.set_opacity(1.0 - final_opacity);
 
-        // Reset fade_progress so we can reuse it next time
-        border.animations.fade_progress = 0.0;
+        border.animations.fade_progress = final_opacity;
+        border.animations.fade_to_visible = false;
         border.event_anim = ANIM_NONE;
         return;
     }
@@ -138,15 +146,16 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         return;
     };
 
-    let new_top_opacity = ease_in_out_quad(border.animations.fade_progress);
+    let y_coord = ease_in_out_quad(border.animations.fade_progress);
 
-    // I do the following because I want this to work when a window is first opened (when only the
-    // top color should be visible) without having to write a separate function for it lol.
-    let new_bottom_opacity = match bottom_opacity == 0.0 {
-        true => 0.0,
-        false => 1.0 - new_top_opacity,
+    let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_to_visible {
+        true => match border.is_active_window {
+            true => (y_coord, 0.0),
+            false => (0.0, 1.0 - y_coord),
+        },
+        false => (y_coord, 1.0 - y_coord),
     };
 
-    top_color.set_opacity(new_top_opacity);
-    bottom_color.set_opacity(new_bottom_opacity);
+    border.active_color.set_opacity(new_active_opacity);
+    border.inactive_color.set_opacity(new_inactive_opacity);
 }
