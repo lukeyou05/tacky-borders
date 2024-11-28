@@ -1,6 +1,6 @@
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct2D::Common::*, Win32::Graphics::Dwm::*,
-    Win32::UI::HiDpi::*, Win32::UI::WindowsAndMessaging::*,
+    Win32::Foundation::*, Win32::Graphics::Dwm::*, Win32::UI::HiDpi::*,
+    Win32::UI::WindowsAndMessaging::*,
 };
 
 use regex::Regex;
@@ -11,7 +11,6 @@ use crate::border_config::MatchKind;
 use crate::border_config::MatchStrategy;
 use crate::border_config::WindowRule;
 use crate::border_config::CONFIG;
-use crate::colors::GradientCoordinates;
 use crate::window_border;
 use crate::SendHWND;
 use crate::__ImageBase;
@@ -151,7 +150,7 @@ pub fn get_show_cmd(hwnd: HWND) -> u32 {
     wp.showCmd
 }
 
-pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
+pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
     debug!("Creating border for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
@@ -215,9 +214,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<()> {
             border_radius,
             active_color,
             inactive_color,
-            active_animations: animations.active,
-            inactive_animations: animations.inactive,
-            animation_fps: animations.fps,
+            animations,
             unminimize_delay,
             ..Default::default()
         };
@@ -302,7 +299,7 @@ pub fn convert_config_radius(
     config_radius * dpi / 96.0
 }
 
-pub fn destroy_border_for_window(tracking_window: HWND) -> Result<()> {
+pub fn destroy_border_for_window(tracking_window: HWND) -> Result<(), ()> {
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
@@ -371,93 +368,101 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
     true
 }
 
-pub fn interpolate_d2d1_colors(
-    current_color: &D2D1_COLOR_F,
-    start_color: &D2D1_COLOR_F,
-    end_color: &D2D1_COLOR_F,
-    anim_elapsed: f32,
-    anim_speed: f32,
-    finished: &mut bool,
-) -> D2D1_COLOR_F {
-    // D2D1_COLOR_F has the copy trait so we can just do this to create an implicit copy
-    let mut interpolated = *current_color;
+// Bezier curve algorithm together with @0xJWLabs
+const SUBDIVISION_PRECISION: f32 = 0.0001; // Precision for binary subdivision
+const SUBDIVISION_MAX_ITERATIONS: u32 = 10; // Maximum number of iterations for binary subdivision
 
-    let anim_step = anim_elapsed * anim_speed;
-
-    let diff_r = end_color.r - start_color.r;
-    let diff_g = end_color.g - start_color.g;
-    let diff_b = end_color.b - start_color.b;
-    let diff_a = end_color.a - start_color.a;
-
-    interpolated.r += diff_r * anim_step;
-    interpolated.g += diff_g * anim_step;
-    interpolated.b += diff_b * anim_step;
-    interpolated.a += diff_a * anim_step;
-
-    // Check if we have overshot the active_color
-    // TODO if I also check the alpha here, then things start to break when opening windows, not
-    // sure why. Might be some sort of conflict with interpoalte_d2d1_to_visible().
-    if (interpolated.r - end_color.r) * diff_r.signum() >= 0.0
-        && (interpolated.g - end_color.g) * diff_g.signum() >= 0.0
-        && (interpolated.b - end_color.b) * diff_b.signum() >= 0.0
-    {
-        *finished = true;
-        return *end_color;
-    } else {
-        *finished = false;
-    }
-
-    interpolated
+pub enum BezierError {
+    InvalidControlPoint,
 }
 
-pub fn interpolate_d2d1_to_visible(
-    current_color: &D2D1_COLOR_F,
-    end_color: &D2D1_COLOR_F,
-    anim_elapsed: f32,
-    anim_speed: f32,
-    finished: &mut bool,
-) -> D2D1_COLOR_F {
-    let mut interpolated = *current_color;
-
-    let anim_step = anim_elapsed * anim_speed;
-
-    // Figure out which direction we should be interpolating
-    let diff = end_color.a - interpolated.a;
-    match diff.is_sign_positive() {
-        true => interpolated.a += anim_step,
-        false => interpolated.a -= anim_step,
+impl std::fmt::Display for BezierError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BezierError::InvalidControlPoint => {
+                write!(f, "Control points must be in the range [0, 1]")
+            }
+        }
     }
-
-    if (interpolated.a - end_color.a) * diff.signum() >= 0.0 {
-        *finished = true;
-        return *end_color;
-    } else {
-        *finished = false;
-    }
-
-    interpolated
 }
 
-pub fn interpolate_direction(
-    current_direction: &GradientCoordinates,
-    start_direction: &GradientCoordinates,
-    end_direction: &GradientCoordinates,
-    anim_elapsed: f32,
-    anim_speed: f32,
-) -> GradientCoordinates {
-    let mut interpolated = (*current_direction).clone();
+struct Point {
+    x: f32,
+    y: f32,
+}
 
-    let x_start_step = end_direction.start[0] - start_direction.start[0];
-    let y_start_step = end_direction.start[1] - start_direction.start[1];
-    let x_end_step = end_direction.end[0] - start_direction.end[0];
-    let y_end_step = end_direction.end[1] - start_direction.end[1];
+fn lerp(t: f32, p1: &Point, p2: &Point) -> Point {
+    Point {
+        x: p1.x + (p2.x - p1.x) * t,
+        y: p1.y + (p2.y - p1.y) * t,
+    }
+}
 
-    // Not gonna bother checking if we overshot the direction tbh
-    let anim_step = anim_elapsed * anim_speed;
-    interpolated.start[0] += x_start_step * anim_step;
-    interpolated.start[1] += y_start_step * anim_step;
-    interpolated.end[0] += x_end_step * anim_step;
-    interpolated.end[1] += y_end_step * anim_step;
+// Compute the cubic Bézier curve using De Casteljau's algorithm.
+fn de_casteljau(t: f32, p_i: &Point, p1: &Point, p2: &Point, p_f: &Point) -> Point {
+    // First level
+    let q1 = lerp(t, p_i, p1);
+    let q2 = lerp(t, p1, p2);
+    let q3 = lerp(t, p2, p_f);
 
-    interpolated
+    // Second level
+    let r1 = lerp(t, &q1, &q2);
+    let r2 = lerp(t, &q2, &q3);
+
+    // Final level
+    lerp(t, &r1, &r2)
+}
+
+// Generates a cubic Bézier curve function from control points.
+pub fn bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Result<impl Fn(f32) -> f32, BezierError> {
+    // Ensure control points are within bounds.
+    if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
+        return Err(BezierError::InvalidControlPoint);
+    }
+
+    Ok(move |x: f32| {
+        // If the curve is linear, shortcut.
+        if x1 == y1 && x2 == y2 {
+            return x;
+        }
+
+        // Boundary cases
+        if x == 0.0 || x == 1.0 {
+            return x;
+        }
+
+        let mut t0 = 0.0;
+        let mut t1 = 1.0;
+        let mut t = x;
+
+        let p_i = Point { x: 0.0, y: 0.0 }; // Start point
+        let p1 = Point { x: x1, y: y1 }; // First control point
+        let p2 = Point { x: x2, y: y2 }; // Second control point
+        let p_f = Point { x: 1.0, y: 1.0 }; // End point
+
+        let mut point_at_t = Point { x: 0.0, y: 0.0 };
+
+        // Search for `t`, then return the y-coordinate of the Bézier curve at this 't'.
+        //
+        // Note: 'x' and 't' are not the same. 'x' refers to the position along the x-axis, whereas
+        // 't' refers to the position along the control point lines, hence why we need to search.
+        for _ in 0..SUBDIVISION_MAX_ITERATIONS {
+            // Evaluate the Bézier curve at `t`.
+            point_at_t = de_casteljau(t, &p_i, &p1, &p2, &p_f);
+            let error = x - point_at_t.x;
+
+            // Adjust the range based on the error.
+            if error.abs() < SUBDIVISION_PRECISION {
+                break;
+            }
+            if error > 0.0 {
+                t0 = t;
+            } else {
+                t1 = t;
+            }
+            t = (t0 + t1) / 2.0;
+        }
+
+        point_at_t.y
+    })
 }

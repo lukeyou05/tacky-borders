@@ -40,10 +40,12 @@ impl ColorConfig {
                 if solid_config == "accent" {
                     Color::Solid(Solid {
                         color: get_accent_color(is_active_color),
+                        opacity: 0.0,
                     })
                 } else {
                     Color::Solid(Solid {
                         color: get_color_from_hex(solid_config.as_str()),
+                        opacity: 0.0,
                     })
                 }
             }
@@ -61,8 +63,8 @@ impl ColorConfig {
                     })
                     .collect();
 
-                let direction = match gradient_config.direction.clone() {
-                    GradientDirection::Angle(angle) => {
+                let direction = match gradient_config.direction {
+                    GradientDirection::Angle(ref angle) => {
                         // If we have an angle, we need to convert it into Coordinates
 
                         let Some(degree) = angle
@@ -136,12 +138,13 @@ impl ColorConfig {
 
                         GradientCoordinates { start, end }
                     }
-                    GradientDirection::Coordinates(coordinates) => coordinates,
+                    GradientDirection::Coordinates(ref coordinates) => coordinates.clone(),
                 };
 
                 Color::Gradient(Gradient {
                     gradient_stops,
                     direction,
+                    opacity: 0.0,
                 })
             }
         }
@@ -169,17 +172,19 @@ pub enum Color {
 #[derive(Debug, Clone)]
 pub struct Solid {
     pub color: D2D1_COLOR_F,
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Gradient {
     pub gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
     pub direction: GradientCoordinates,
+    pub opacity: f32,
 }
 
 impl Color {
     pub fn create_brush(
-        &mut self,
+        &self,
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
@@ -191,6 +196,9 @@ impl Color {
                 else {
                     return None;
                 };
+
+                brush.SetOpacity(solid.opacity);
+
                 Some(brush.into())
             },
             Color::Gradient(gradient) => unsafe {
@@ -224,8 +232,24 @@ impl Color {
                     return None;
                 };
 
+                brush.SetOpacity(gradient.opacity);
+
                 Some(brush.into())
             },
+        }
+    }
+
+    pub fn set_opacity(&mut self, opacity: f32) {
+        match self {
+            Color::Gradient(gradient) => gradient.opacity = opacity,
+            Color::Solid(solid) => solid.opacity = opacity,
+        }
+    }
+
+    pub fn get_opacity(&self) -> f32 {
+        match self {
+            Color::Gradient(gradient) => gradient.opacity,
+            Color::Solid(solid) => solid.opacity,
         }
     }
 }
@@ -234,6 +258,7 @@ impl Default for Color {
     fn default() -> Self {
         Color::Solid(Solid {
             color: D2D1_COLOR_F::default(),
+            opacity: 0.0,
         })
     }
 }

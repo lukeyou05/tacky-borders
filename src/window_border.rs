@@ -4,7 +4,6 @@ use crate::animations;
 use crate::animations::*;
 use crate::colors::*;
 use crate::utils::*;
-use std::collections::HashMap;
 use std::ptr;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
@@ -36,16 +35,11 @@ pub struct WindowBorder {
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: Color,
     pub inactive_color: Color,
-    pub current_color: Color,
-    pub active_animations: HashMap<AnimationType, f32>,
-    pub inactive_animations: HashMap<AnimationType, f32>,
-    pub current_animations: HashMap<AnimationType, f32>,
+    pub animations: Animations,
     pub event_anim: i32,
-    pub animation_fps: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
     pub anim_timer: Option<AnimationTimer>,
-    pub spiral_anim_angle: f32,
     // Delay border visbility when tracking window is in unminimize animation
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
@@ -113,14 +107,11 @@ impl WindowBorder {
 
             self.is_active_window = is_active_window(self.tracking_window);
 
-            self.current_animations = match self.is_active_window {
-                true => self.active_animations.clone(),
-                false => self.inactive_animations.clone(),
+            self.animations.current = match self.is_active_window {
+                true => self.animations.active.clone(),
+                false => self.animations.inactive.clone(),
             };
 
-            if self.current_animations.contains_key(&AnimationType::Fade) {
-                self.event_anim = ANIM_FADE_TO_VISIBLE;
-            }
             let _ = self.update_color(Some(initialize_delay));
 
             let _ = self.update_window_rect();
@@ -176,12 +167,6 @@ impl WindowBorder {
             radiusX: self.border_radius,
             radiusY: self.border_radius,
         };
-
-        if self.is_active_window {
-            self.current_color = self.active_color.clone();
-        } else {
-            self.current_color = self.inactive_color.clone();
-        }
 
         unsafe {
             let factory = &*RENDER_FACTORY;
@@ -260,30 +245,17 @@ impl WindowBorder {
 
     // TODO this is kinda scuffed to work with fade animations
     pub fn update_color(&mut self, check_delay: Option<u64>) -> Result<()> {
-        match self.current_animations.contains_key(&AnimationType::Fade) {
+        match self.animations.current.contains_key(&AnimationType::Fade) && check_delay != Some(0) {
             true => {
-                if check_delay == Some(0) {
-                    self.current_color = match self.is_active_window {
-                        true => self.active_color.clone(),
-                        false => self.inactive_color.clone(),
-                    };
-                    return Ok(());
-                }
-
-                if self.event_anim == ANIM_FADE_TO_VISIBLE {
-                    animations::animate_fade_to_visible(self);
-                } else {
-                    match self.is_active_window {
-                        true => self.event_anim = ANIM_FADE_TO_ACTIVE,
-                        false => self.event_anim = ANIM_FADE_TO_INACTIVE,
-                    }
-                }
+                self.event_anim = ANIM_FADE;
             }
             false => {
-                self.current_color = match self.is_active_window {
-                    true => self.active_color.clone(),
-                    false => self.inactive_color.clone(),
+                let (top_color, bottom_color) = match self.is_active_window {
+                    true => (&mut self.active_color, &mut self.inactive_color),
+                    false => (&mut self.inactive_color, &mut self.active_color),
                 };
+                top_color.set_opacity(1.0);
+                bottom_color.set_opacity(0.0);
             }
         }
 
@@ -315,44 +287,74 @@ impl WindowBorder {
         unsafe {
             let _ = render_target.Resize(&pixel_size);
 
-            let Some(brush) = self.current_color.create_brush(
-                render_target,
-                &self.window_rect,
-                &self.brush_properties,
-            ) else {
-                return Ok(());
+            // TODO wtf is this mess..
+            let active_opacity = self.active_color.get_opacity();
+            let inactive_opacity = self.inactive_color.get_opacity();
+
+            let (bottom_opacity, top_opacity) = match self.is_active_window {
+                true => (inactive_opacity, active_opacity),
+                false => (active_opacity, inactive_opacity),
+            };
+
+            let (bottom_color, top_color) = match self.is_active_window {
+                true => (&self.inactive_color, &self.active_color),
+                false => (&self.active_color, &self.inactive_color),
             };
 
             render_target.BeginDraw();
             render_target.Clear(None);
-            match self.border_radius {
-                0.0 => render_target.DrawRectangle(
-                    &self.rounded_rect.rect,
-                    &brush,
-                    self.border_width as f32,
-                    None,
-                ),
-                _ => render_target.DrawRoundedRectangle(
-                    &self.rounded_rect,
-                    &brush,
-                    self.border_width as f32,
-                    None,
-                ),
-            }
-            let _ = render_target.EndDraw(None, None);
 
-            // TODO figure out the other TODO in the WM_PAINT message
-            //let _ = InvalidateRect(self.border_window, None, false);
+            if bottom_opacity > 0.0 {
+                let Some(brush) = bottom_color.create_brush(
+                    render_target,
+                    &self.window_rect,
+                    &self.brush_properties,
+                ) else {
+                    return Ok(());
+                };
+                self.draw_rectangle(render_target, &brush);
+            }
+            if top_opacity > 0.0 {
+                let Some(brush) = top_color.create_brush(
+                    render_target,
+                    &self.window_rect,
+                    &self.brush_properties,
+                ) else {
+                    return Ok(());
+                };
+                self.draw_rectangle(render_target, &brush);
+            }
+
+            let _ = render_target.EndDraw(None, None);
         }
 
         Ok(())
     }
 
+    pub fn draw_rectangle(&self, render_target: &ID2D1HwndRenderTarget, brush: &ID2D1Brush) {
+        unsafe {
+            match self.border_radius {
+                0.0 => render_target.DrawRectangle(
+                    &self.rounded_rect.rect,
+                    brush,
+                    self.border_width as f32,
+                    None,
+                ),
+                _ => render_target.DrawRoundedRectangle(
+                    &self.rounded_rect,
+                    brush,
+                    self.border_width as f32,
+                    None,
+                ),
+            }
+        }
+    }
+
     pub fn set_anim_timer(&mut self) {
-        if (!self.active_animations.is_empty() || !self.inactive_animations.is_empty())
+        if (!self.animations.active.is_empty() || !self.animations.inactive.is_empty())
             && self.anim_timer.is_none()
         {
-            let timer_duration = (1000.0 / self.animation_fps as f32) as u64;
+            let timer_duration = (1000.0 / self.animations.fps as f32) as u64;
             self.anim_timer = Some(AnimationTimer::start(self.border_window, timer_duration));
         }
     }
@@ -443,9 +445,9 @@ impl WindowBorder {
                 self.is_active_window = is_active_window(self.tracking_window);
 
                 // Update the current animations list
-                self.current_animations = match self.is_active_window {
-                    true => self.active_animations.clone(),
-                    false => self.inactive_animations.clone(),
+                self.animations.current = match self.is_active_window {
+                    true => self.animations.active.clone(),
+                    false => self.animations.inactive.clone(),
                 };
 
                 let _ = self.update_color(None);
@@ -465,7 +467,7 @@ impl WindowBorder {
                 }
 
                 if has_native_border(self.tracking_window) {
-                    let _ = self.update_color(Some(0));
+                    //let _ = self.update_color(Some(0));
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
@@ -474,9 +476,21 @@ impl WindowBorder {
 
                 self.pause = false;
             }
-            // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED / EVENT_OBJECT_MINIMIZESTART
-            WM_APP_HIDECLOAKED | WM_APP_MINIMIZESTART => {
+            // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
+            WM_APP_HIDECLOAKED => {
                 let _ = self.update_position(Some(SWP_HIDEWINDOW));
+
+                self.destroy_anim_timer();
+
+                self.pause = true;
+            }
+            // EVENT_OBJECT_MINIMIZESTART
+            WM_APP_MINIMIZESTART => {
+                let _ = self.update_position(Some(SWP_HIDEWINDOW));
+
+                // TODO this is scuffed to work with fade animations
+                self.active_color.set_opacity(0.0);
+                self.inactive_color.set_opacity(0.0);
 
                 self.destroy_anim_timer();
 
@@ -488,10 +502,12 @@ impl WindowBorder {
             WM_APP_MINIMIZEEND => {
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
+                // TODO scuffed to work with fade animations. When the window is minimized,
+                // last_anim_time stops updating so when we go back to unminimize it,
+                // last_anim_time.elapsed() will be large. So, we have to reset it here.
+                self.last_anim_time = Some(time::Instant::now());
+
                 if has_native_border(self.tracking_window) {
-                    if self.current_animations.contains_key(&AnimationType::Fade) {
-                        self.event_anim = ANIM_FADE_TO_VISIBLE;
-                    }
                     let _ = self.update_color(Some(self.unminimize_delay));
                     let _ = self.update_window_rect();
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
@@ -520,7 +536,7 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_speed) in self.current_animations.clone().iter() {
+                for (anim_type, anim_speed) in self.animations.current.clone().iter() {
                     match anim_type {
                         AnimationType::Spiral => {
                             // multiply anim_speed by 2.0 otherwise it's too slow lol
@@ -540,37 +556,25 @@ impl WindowBorder {
                     }
                 }
 
-                match self.event_anim {
-                    ANIM_FADE_TO_ACTIVE | ANIM_FADE_TO_INACTIVE | ANIM_FADE_TO_VISIBLE => {
-                        let anim_speed = self
-                            .current_animations
-                            .get(&AnimationType::Fade)
-                            .unwrap_or(&200.0);
+                if self.event_anim == ANIM_FADE {
+                    let anim_speed = self
+                        .animations
+                        .current
+                        .get(&AnimationType::Fade)
+                        .unwrap_or(&200.0);
 
-                        // divide anim_speed by 15 just cuz otherwise it's too fast lol
-                        animations::animate_fade_colors(self, &anim_elapsed, *anim_speed / 15.0);
-                        update = true;
-                    }
-                    _ => {}
+                    // divide anim_speed by 20 just cuz otherwise it's too fast lol
+                    animations::animate_fade(self, &anim_elapsed, *anim_speed / 20.0);
+                    update = true;
                 }
 
-                //println!("time since last render: {:?}", render_elapsed.as_secs_f32());
-
-                let interval = 1.0 / self.animation_fps as f32;
+                let interval = 1.0 / self.animations.fps as f32;
                 let diff = render_elapsed.as_secs_f32() - interval;
                 if update && (diff.abs() <= 0.001 || diff >= 0.0) {
                     let _ = self.render();
                 }
             }
-            // TODO if we call InvalidateRect within the render() function, then we get brought to
-            // this WM_PAINT message. And if we call self.render() again within this message, it
-            // fixes an issue with task manager reporting high GPU usage on my pc but makes it
-            // worse my laptop. Figure out why. Hopefully it's just a bug with task manager because
-            // logically, this fix should not work.
             WM_PAINT => {
-                //println!("window: {:?}", window);
-
-                //let _ = self.render();
                 let _ = ValidateRect(window, None);
             }
             WM_NCDESTROY => {
