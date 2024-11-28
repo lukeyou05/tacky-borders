@@ -16,6 +16,8 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
         }
     };
 
+    let tooltip = format!("{} {}", "tacky-borders", env!("CARGO_PKG_VERSION"));
+
     let tray_menu = Menu::new();
     let _ = tray_menu.append(&MenuItem::with_id("0", "Show Config", true, None));
     let _ = tray_menu.append(&MenuItem::with_id("1", "Reload", true, None));
@@ -23,7 +25,7 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
 
     let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
-        .with_tooltip("tacky-borders")
+        .with_tooltip(tooltip)
         .with_icon(icon)
         .build();
 
