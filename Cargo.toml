@@ -4,10 +4,10 @@ version = "1.0.0-preview"
 edition = "2021"
 
 [dependencies]
-serde = "1.0.213"
+serde = "1.0.215"
 serde_yaml = "0.9.34"
-tray-icon = "0.19.1"
-open = "5.1.4"
+tray-icon = "0.19.2"
+open = "5.3.1"
 dirs = "5.0.1"
 regex = "1.11.1"
 simplelog = "0.12.2"

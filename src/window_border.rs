@@ -38,7 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
-pub static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
+static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
     LazyLock::new(|| {
         D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None)
             .expect("creating RENDER_FACTORY failed")
@@ -164,7 +164,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn create_render_targets(&mut self) -> Result<(), ()> {
+    fn create_render_targets(&mut self) -> Result<(), ()> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -208,7 +208,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn update_window_rect(&mut self) -> Result<(), ()> {
+    fn update_window_rect(&mut self) -> Result<(), ()> {
         let result = unsafe {
             DwmGetWindowAttribute(
                 self.tracking_window,
@@ -233,7 +233,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> Result<(), ()> {
+    fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> Result<(), ()> {
         unsafe {
             // Place the window border above the tracking window
             let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
@@ -267,7 +267,7 @@ impl WindowBorder {
     }
 
     // TODO this is kinda scuffed to work with fade animations
-    pub fn update_color(&mut self, check_delay: Option<u64>) -> Result<(), ()> {
+    fn update_color(&mut self, check_delay: Option<u64>) -> Result<(), ()> {
         match self.animations.current.contains_key(&AnimationType::Fade) && check_delay != Some(0) {
             true => {
                 self.event_anim = ANIM_FADE;
@@ -290,7 +290,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<(), ()> {
+    fn render(&mut self) -> Result<(), ()> {
         self.last_render_time = Some(time::Instant::now());
 
         // Get the render target
@@ -359,7 +359,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn draw_rectangle(&self, render_target: &ID2D1HwndRenderTarget, brush: &ID2D1Brush) {
+    fn draw_rectangle(&self, render_target: &ID2D1HwndRenderTarget, brush: &ID2D1Brush) {
         unsafe {
             match self.border_radius {
                 0.0 => render_target.DrawRectangle(
@@ -378,7 +378,7 @@ impl WindowBorder {
         }
     }
 
-    pub fn set_anim_timer(&mut self) {
+    fn set_anim_timer(&mut self) {
         if (!self.animations.active.is_empty() || !self.animations.inactive.is_empty())
             && self.anim_timer.is_none()
         {
@@ -387,7 +387,7 @@ impl WindowBorder {
         }
     }
 
-    pub fn destroy_anim_timer(&mut self) {
+    fn destroy_anim_timer(&mut self) {
         if let Some(anim_timer) = self.anim_timer.as_mut() {
             anim_timer.stop();
             self.anim_timer = None;
@@ -417,7 +417,7 @@ impl WindowBorder {
         }
     }
 
-    pub unsafe fn wnd_proc(
+    unsafe fn wnd_proc(
         &mut self,
         window: HWND,
         message: u32,

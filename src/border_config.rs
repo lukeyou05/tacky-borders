@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| Mutex::new(Config::create_config()));
-pub const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
+const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {

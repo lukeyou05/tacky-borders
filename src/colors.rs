@@ -154,13 +154,13 @@ impl ColorConfig {
 }
 
 #[derive(Debug)]
-pub struct Line {
+struct Line {
     m: f32,
     b: f32,
 }
 
 impl Line {
-    pub fn plug_in_x(&self, x: f32) -> f32 {
+    fn plug_in_x(&self, x: f32) -> f32 {
         self.m * x + self.b
     }
 }
@@ -265,7 +265,7 @@ impl Default for Color {
     }
 }
 
-pub fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
+fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
     // Get the Windows accent color
     let mut pcr_colorization: u32 = 0;
     let mut pf_opaqueblend: BOOL = FALSE;
@@ -295,7 +295,7 @@ pub fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
     }
 }
 
-pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
+fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     if hex.len() != 7 && hex.len() != 9 && hex.len() != 4 && hex.len() != 5 || !hex.starts_with('#')
     {
         error!("Invalid hex color format: {}", hex);
@@ -356,7 +356,7 @@ pub fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
 
     D2D1_COLOR_F { r, g, b, a }
 }
-pub fn get_color_from_rgba(rgba: &str) -> D2D1_COLOR_F {
+fn get_color_from_rgba(rgba: &str) -> D2D1_COLOR_F {
     let rgba = rgba
         .trim_start_matches("rgb(")
         .trim_start_matches("rgba(")

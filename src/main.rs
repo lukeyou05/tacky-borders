@@ -38,20 +38,20 @@ mod window_border;
 use crate::utils::*;
 
 extern "C" {
-    pub static __ImageBase: IMAGE_DOS_HEADER;
+    static __ImageBase: IMAGE_DOS_HEADER;
 }
 
 thread_local! {
-    pub static EVENT_HOOK: Cell<HWINEVENTHOOK> = Cell::new(HWINEVENTHOOK::default());
+    static EVENT_HOOK: Cell<HWINEVENTHOOK> = Cell::new(HWINEVENTHOOK::default());
 }
 
-pub static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
+static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub static INITIAL_WINDOWS: LazyLock<Mutex<Vec<isize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static INITIAL_WINDOWS: LazyLock<Mutex<Vec<isize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 // This is supposedly unsafe af but it works soo + I never dereference anything
-pub struct SendHWND(HWND);
+struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
@@ -113,7 +113,7 @@ fn main() {
     }
 }
 
-pub fn register_window_class() -> windows::core::Result<()> {
+fn register_window_class() -> windows::core::Result<()> {
     unsafe {
         let window_class = w!("tacky-border");
         let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
@@ -137,7 +137,7 @@ pub fn register_window_class() -> windows::core::Result<()> {
     Ok(())
 }
 
-pub fn set_event_hook() -> HWINEVENTHOOK {
+fn set_event_hook() -> HWINEVENTHOOK {
     unsafe {
         SetWinEventHook(
             EVENT_MIN,
@@ -151,7 +151,7 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
     }
 }
 
-pub fn enum_windows() -> windows::core::Result<()> {
+fn enum_windows() -> windows::core::Result<()> {
     unsafe {
         EnumWindows(Some(enum_windows_callback), LPARAM::default())?;
     }
@@ -159,7 +159,7 @@ pub fn enum_windows() -> windows::core::Result<()> {
     Ok(())
 }
 
-pub fn reload_borders() {
+fn reload_borders() {
     let mut borders = BORDERS.lock().unwrap();
     for value in borders.values() {
         let border_window = HWND(*value as _);

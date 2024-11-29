@@ -39,7 +39,6 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
         || ex_style & WS_EX_NOACTIVATE.0 != 0
 }
 
-// Getting the window title sometimes takes unexpectedly long (over 1ms), but it should be fine.
 pub fn get_window_title(hwnd: HWND) -> String {
     let mut title_arr: [u16; 256] = [0; 256];
 
@@ -48,7 +47,7 @@ pub fn get_window_title(hwnd: HWND) -> String {
     }
 
     let title_binding = String::from_utf16_lossy(&title_arr);
-    return title_binding.split_once("\0").unwrap().0.to_string();
+    title_binding.split_once("\0").unwrap().0.to_string()
 }
 
 pub fn get_window_class(hwnd: HWND) -> String {
@@ -59,7 +58,7 @@ pub fn get_window_class(hwnd: HWND) -> String {
     }
 
     let class_binding = String::from_utf16_lossy(&class_arr);
-    return class_binding.split_once("\0").unwrap().0.to_string();
+    class_binding.split_once("\0").unwrap().0.to_string()
 }
 
 pub fn get_window_rule(hwnd: HWND) -> WindowRule {
@@ -258,7 +257,7 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
     Ok(())
 }
 
-pub fn convert_config_radius(
+fn convert_config_radius(
     config_width: i32,
     config_radius: f32,
     tracking_window: HWND,

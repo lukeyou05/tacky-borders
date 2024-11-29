@@ -5,8 +5,7 @@ use windows::Win32::System::Threading::ExitProcess;
 use windows::Win32::UI::Accessibility::UnhookWinEvent;
 
 use crate::border_config::Config;
-use crate::reload_borders;
-use crate::EVENT_HOOK;
+use crate::{reload_borders, EVENT_HOOK};
 
 pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
