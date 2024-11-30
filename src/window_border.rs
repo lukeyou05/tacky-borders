@@ -459,10 +459,6 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
-                if self.pause {
-                    return LRESULT(0);
-                }
-
                 // For apps like firefox, when you hover over a tab, a popup window spawns that
                 // changes the z-order and causes the border to sit under the tracking window. To
                 // remedy that, we just re-update the position/z-order when windows are reordered.
@@ -572,12 +568,8 @@ impl WindowBorder {
                             update = true;
                         }
                         AnimationType::ReverseSpiral => {
-                            // multiply anim_speed by 2.0 otherwise it's too slow lol
-                            animations::animate_reverse_spiral(
-                                self,
-                                &anim_elapsed,
-                                *anim_speed * 2.0,
-                            );
+                            // multiply anim_speed by -2.0 otherwise it's too slow lol
+                            animations::animate_spiral(self, &anim_elapsed, *anim_speed * -2.0);
                             update = true;
                         }
                         AnimationType::Fade => {}

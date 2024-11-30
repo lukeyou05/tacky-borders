@@ -70,34 +70,14 @@ fn default_fps() -> i32 {
 }
 
 pub fn animate_spiral(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_speed: f32) {
-    if border.animations.spiral_angle >= 360.0 {
-        border.animations.spiral_angle -= 360.0;
+    if border.animations.spiral_angle.abs() >= 360.0 {
+        border.animations.spiral_angle %= 360.0;
     }
     border.animations.spiral_angle += (anim_elapsed.as_secs_f32() * anim_speed).min(359.0);
 
     let center_x = (border.window_rect.right - border.window_rect.left) / 2;
     let center_y = (border.window_rect.bottom - border.window_rect.top) / 2;
 
-    border.brush_properties.transform = Matrix3x2::rotation(
-        border.animations.spiral_angle,
-        center_x as f32,
-        center_y as f32,
-    );
-}
-
-pub fn animate_reverse_spiral(
-    border: &mut WindowBorder,
-    anim_elapsed: &time::Duration,
-    anim_speed: f32,
-) {
-    border.animations.spiral_angle %= 360.0;
-    if border.animations.spiral_angle < 0.0 {
-        border.animations.spiral_angle += 360.0;
-    }
-    border.animations.spiral_angle -= (anim_elapsed.as_secs_f32() * anim_speed).min(359.0);
-
-    let center_x = (border.window_rect.right - border.window_rect.left) / 2;
-    let center_y = (border.window_rect.bottom - border.window_rect.top) / 2;
     border.brush_properties.transform = Matrix3x2::rotation(
         border.animations.spiral_angle,
         center_x as f32,

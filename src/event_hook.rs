@@ -61,9 +61,11 @@ pub extern "system" fn handle_win_event(
                 return;
             }
 
-            for val in BORDERS.lock().unwrap().values() {
+            for (key, val) in BORDERS.lock().unwrap().iter() {
                 let border_window: HWND = HWND(*val as _);
-                if is_window_visible(border_window) {
+                // Some apps like Flow Launcher can become focused even if they aren't visible yet,
+                // so I also need to check if 'key' is equal to 'parent' (the focused window)
+                if is_window_visible(border_window) || key == &(parent.0 as isize) {
                     unsafe {
                         let _ = PostMessageW(border_window, WM_APP_FOCUS, WPARAM(0), LPARAM(0));
                     }
