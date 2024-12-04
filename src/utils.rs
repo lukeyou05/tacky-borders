@@ -3,11 +3,15 @@ use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT,
     DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DWM_WINDOW_CORNER_PREFERENCE,
 };
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{
+    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+};
+use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowTextW,
-    IsWindowVisible, PostMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOWPLACEMENT, WM_APP, WM_NCDESTROY,
-    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    IsWindowVisible, PostMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOWPLACEMENT,
+    WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
+    WS_MAXIMIZE,
 };
 
 use regex::Regex;
@@ -18,17 +22,14 @@ use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
 use crate::window_border;
 use crate::{SendHWND, __ImageBase, BORDERS, INITIAL_WINDOWS};
 
-// I need these because Rust doesn't allow expressions for a match pattern
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
 pub const WM_APP_REORDER: u32 = WM_APP + 1;
-pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 2;
-pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
-pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
-pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
-pub const WM_APP_ANIMATE: u32 = WM_APP + 6;
-pub const WM_APP_FOCUS: u32 = WM_APP + 7;
-
-// TODO THE CODE IS STILL A MESS
+pub const WM_APP_FOCUS: u32 = WM_APP + 2;
+pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 3;
+pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 4;
+pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
+pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
+pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 
 pub fn has_filtered_style(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
@@ -43,7 +44,7 @@ pub fn get_window_title(hwnd: HWND) -> String {
     let mut title_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
-        error!("Could not retrieve window title!");
+        error!("Could not retrieve window title for HWND: {:?}", hwnd);
     }
 
     let title_binding = String::from_utf16_lossy(&title_arr);
@@ -54,13 +55,14 @@ pub fn get_window_class(hwnd: HWND) -> String {
     let mut class_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
-        error!("Could not retrieve window class!");
+        error!("Could not retrieve window class for HWND: {:?}", hwnd);
     }
 
     let class_binding = String::from_utf16_lossy(&class_arr);
     class_binding.split_once("\0").unwrap().0.to_string()
 }
 
+// Get the window rule from 'window_rules' in the config
 pub fn get_window_rule(hwnd: HWND) -> WindowRule {
     let title = get_window_title(hwnd);
     let class = get_window_class(hwnd);
@@ -68,7 +70,7 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
     let config = CONFIG.lock().unwrap();
 
     for rule in config.window_rules.iter() {
-        let name = match rule.kind {
+        let window_name = match rule.kind {
             Some(MatchKind::Title) => &title,
             Some(MatchKind::Class) => &class,
             None => {
@@ -77,16 +79,26 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
             }
         };
 
-        let Some(pattern) = &rule.pattern else {
-            error!("Expected `pattern` for window rule but None found!");
+        let Some(match_name) = &rule.name else {
+            error!("Expected `name` for window rule but None found!");
             continue;
         };
 
-        if match rule.strategy {
-            Some(MatchStrategy::Equals) | None => name.to_lowercase().eq(&pattern.to_lowercase()),
-            Some(MatchStrategy::Contains) => name.to_lowercase().contains(&pattern.to_lowercase()),
-            Some(MatchStrategy::Regex) => Regex::new(pattern).unwrap().captures(name).is_some(),
-        } {
+        // Check if the window rule matches the window
+        let has_match = match rule.strategy {
+            Some(MatchStrategy::Equals) | None => {
+                window_name.to_lowercase().eq(&match_name.to_lowercase())
+            }
+            Some(MatchStrategy::Contains) => window_name
+                .to_lowercase()
+                .contains(&match_name.to_lowercase()),
+            Some(MatchStrategy::Regex) => Regex::new(match_name)
+                .unwrap()
+                .captures(window_name)
+                .is_some(),
+        };
+
+        if has_match {
             return rule.clone();
         }
     }
@@ -129,8 +141,34 @@ pub fn is_active_window(hwnd: HWND) -> bool {
     unsafe { GetForegroundWindow() == hwnd }
 }
 
-// If the tracking window does not have a window edge or is maximized, then there should be no
-// border.
+pub fn post_message_w(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> windows::core::Result<()> {
+    unsafe { PostMessageW(hwnd, msg, wparam, lparam) }
+}
+
+pub fn send_notify_message_w(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> windows::core::Result<()> {
+    unsafe { SendNotifyMessageW(hwnd, msg, wparam, lparam) }
+}
+
+pub fn imm_disable_ime(param0: u32) -> BOOL {
+    unsafe { ImmDisableIME(param0) }
+}
+
+pub fn set_process_dpi_awareness_context(
+    value: DPI_AWARENESS_CONTEXT,
+) -> windows::core::Result<()> {
+    unsafe { SetProcessDpiAwarenessContext(value) }
+}
+
 pub fn has_native_border(hwnd: HWND) -> bool {
     unsafe {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
@@ -158,7 +196,6 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
         let window_sent = window;
 
         let window_rule = get_window_rule(window_sent.0);
-
         if window_rule.enabled == Some(false) {
             info!("border is disabled for {:?}!", window_sent.0);
             return;
@@ -183,9 +220,11 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
             .inactive_color
             .unwrap_or(config.global.inactive_color.clone());
 
+        // Convert ColorConfig structs to Color
         let active_color = config_active.convert_to_color(true);
         let inactive_color = config_inactive.convert_to_color(false);
 
+        // Adjust the border width and radius based on the monitor/window dpi
         let dpi = unsafe { GetDpiForWindow(window_sent.0) } as f32;
         let border_width = (config_width * dpi / 96.0) as i32;
         let border_radius = convert_config_radius(border_width, config_radius, window_sent.0, dpi);
@@ -231,7 +270,16 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
         }
 
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
-        let _ = border.create_border_window(hinstance);
+
+        match border.create_border_window(hinstance) {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Could not create border window! {:?}", err);
+                return;
+            }
+        };
+
+        // Insert the border and its tracking window into the hashmap to keep track of them
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
 
         // Drop these values (to save some RAM?) before calling init and entering a message loop
@@ -245,124 +293,118 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
         let _ = config_inactive;
         let _ = active_color;
         let _ = inactive_color;
+        let _ = dpi;
+        let _ = border_width;
+        let _ = border_radius;
         let _ = animations;
         let _ = window_isize;
+        let _ = initialize_delay;
+        let _ = unminimize_delay;
         let _ = hinstance;
 
         let _ = border.init(initialize_delay);
-
-        drop(border);
     });
 
     Ok(())
 }
 
 fn convert_config_radius(
-    config_width: i32,
+    border_width: i32,
     config_radius: f32,
     tracking_window: HWND,
     dpi: f32,
 ) -> f32 {
+    // TODO use an enum for config_radius instead (-1.0 means we should automatically get radius,
+    // so maybe use "Auto" for the enum)
+    match config_radius {
+        -1.0 => {
+            let window_radius = get_window_radius(tracking_window, dpi);
+            match window_radius {
+                0.0 => 0.0,
+                _ => window_radius + border_width as f32 / 2.0,
+            }
+        }
+        _ => config_radius * dpi / 96.0,
+    }
+}
+
+fn get_window_radius(tracking_window: HWND, dpi: f32) -> f32 {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
 
-    // -1.0 means to use default Windows corner preference. I might want to use an enum to allow
-    // for something like border_radius == "system" instead TODO
-    if config_radius == -1.0 {
-        let result = unsafe {
-            DwmGetWindowAttribute(
-                tracking_window,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                ptr::addr_of_mut!(corner_preference) as _,
-                size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
-            )
-        };
-        if result.is_err() {
-            error!("Could not retrieve window corner preference!");
-        }
-        match corner_preference {
-            DWMWCP_DEFAULT => {
-                return 8.0 * dpi / 96.0 + (config_width as f32) / 2.0;
-            }
-            DWMWCP_DONOTROUND => {
-                return 0.0;
-            }
-            DWMWCP_ROUND => {
-                return 8.0 * dpi / 96.0 + (config_width as f32) / 2.0;
-            }
-            DWMWCP_ROUNDSMALL => {
-                return 4.0 * dpi / 96.0 + (config_width as f32) / 2.0;
-            }
-            _ => {}
-        }
+    if unsafe {
+        DwmGetWindowAttribute(
+            tracking_window,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            ptr::addr_of_mut!(corner_preference) as _,
+            size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        )
+        .is_err()
+    } {
+        error!("Could not retrieve window corner preference!");
     }
 
-    config_radius * dpi / 96.0
+    match corner_preference {
+        DWMWCP_DEFAULT => 8.0 * dpi / 96.0,
+        DWMWCP_DONOTROUND => 0.0,
+        DWMWCP_ROUND => 8.0 * dpi / 96.0,
+        DWMWCP_ROUNDSMALL => 4.0 * dpi / 96.0,
+        _ => 8.0 * dpi / 96.0,
+    }
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) -> Result<(), ()> {
-    let window = SendHWND(tracking_window);
+    let mut borders_hashmap = BORDERS.lock().unwrap();
 
-    let _ = thread::spawn(move || {
-        let window_sent = window;
-        let mut borders_hashmap = BORDERS.lock().unwrap();
-        let window_isize = window_sent.0 .0 as isize;
-        let Some(border_isize) = borders_hashmap.get(&window_isize) else {
-            drop(borders_hashmap);
-            return;
-        };
-
-        let border_window: HWND = HWND(*border_isize as _);
-        unsafe {
-            let _ = PostMessageW(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
-        }
-        borders_hashmap.remove(&window_isize);
-
+    let window_isize = tracking_window.0 as isize;
+    let Some(border_isize) = borders_hashmap.get(&window_isize) else {
         drop(borders_hashmap);
-    });
+        return Ok(());
+    };
+
+    let border_window: HWND = HWND(*border_isize as _);
+    let _ = post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
+    borders_hashmap.remove(&window_isize);
+
+    drop(borders_hashmap);
 
     Ok(())
 }
 
 pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
-    let borders = BORDERS.lock().unwrap();
+    let borders_hashmap = BORDERS.lock().unwrap();
+
     let hwnd_isize = hwnd.0 as isize;
-    let Some(border_isize) = borders.get(&hwnd_isize) else {
-        drop(borders);
+    let Some(border_isize) = borders_hashmap.get(&hwnd_isize) else {
+        drop(borders_hashmap);
         return None;
     };
 
     let border_window: HWND = HWND(*border_isize as _);
-    drop(borders);
+    drop(borders_hashmap);
+
     Some(border_window)
 }
 
-// Return true if the border exists in the border hashmap. Otherwise, create a new border and
-// return false.
-pub fn show_border_for_window(hwnd: HWND) -> bool {
-    let border_window = get_border_from_window(hwnd);
-    if let Some(hwnd) = border_window {
-        unsafe {
-            let _ = PostMessageW(hwnd, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0));
-        }
-        true
-    } else {
-        if is_window_visible(hwnd) && !is_cloaked(hwnd) && !has_filtered_style(hwnd) {
-            let _ = create_border_for_window(hwnd);
-        }
-        false
+pub fn show_border_for_window(hwnd: HWND) {
+    // If the border already exists, simply post a 'SHOW' message to its message queue. Otherwise,
+    // create a new border.
+    if let Some(border) = get_border_from_window(hwnd) {
+        let _ = post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0));
+    } else if is_window_visible(hwnd) && !is_cloaked(hwnd) && !has_filtered_style(hwnd) {
+        let _ = create_border_for_window(hwnd);
     }
 }
 
 pub fn hide_border_for_window(hwnd: HWND) -> bool {
     let window = SendHWND(hwnd);
 
+    // Spawn a new thread to guard against re-entrancy in the event hook, though it honestly isn't
+    // that important for our purposes I think
     let _ = thread::spawn(move || {
         let window_sent = window;
-        let border_option = get_border_from_window(window_sent.0);
-        if let Some(border_window) = border_option {
-            unsafe {
-                let _ = PostMessageW(border_window, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0));
-            }
+
+        if let Some(border) = get_border_from_window(window_sent.0) {
+            let _ = post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0));
         }
     });
     true
@@ -380,7 +422,7 @@ impl std::fmt::Display for BezierError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BezierError::InvalidControlPoint => {
-                write!(f, "Control points must be in the range [0, 1]")
+                write!(f, "cubic-bezier control points must be in the range [0, 1]")
             }
         }
     }
@@ -418,6 +460,10 @@ pub fn cubic_bezier(
     y2: f32,
 ) -> Result<impl Fn(f32) -> f32, BezierError> {
     // Ensure control points are within bounds.
+    //
+    // I think any y-value for the control points should be fine. But, we can't have negative
+    // x-values, otherwise any given x value could have multiple y-values, making it mathematically
+    // a non-function and producing "undefined" behavior.
     if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
         return Err(BezierError::InvalidControlPoint);
     }

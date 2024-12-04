@@ -12,6 +12,8 @@ dirs = "5.0.1"
 regex = "1.11.1"
 simplelog = "0.12.2"
 log = "0.4.22"
+anyhow = "1.0.94"
+thiserror = "2.0.4"
 
 [dependencies.windows]
 version = "0.58.0"

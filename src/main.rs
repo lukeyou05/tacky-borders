@@ -16,14 +16,11 @@ use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, BOOL, HINSTANCE, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::System::SystemServices::IMAGE_DOS_HEADER;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
-use windows::Win32::UI::HiDpi::{
-    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-};
-use windows::Win32::UI::Input::Ime::ImmDisableIME;
+use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, PostMessageW, RegisterClassExW,
-    TranslateMessage, EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
+    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, RegisterClassExW, TranslateMessage,
+    EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    WM_NCDESTROY, WNDCLASSEXW,
 };
 
 mod anim_timer;
@@ -50,49 +47,27 @@ static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
 
 static INITIAL_WINDOWS: LazyLock<Mutex<Vec<isize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
-// This is supposedly unsafe af but it works soo + I never dereference anything
+// This is supposedly very unsafe but it works soo + I never dereference anything
 struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    // Note: this Config struct is different from the ones used for the Logger below
-    let log_path = border_config::Config::get_config_location().join("tacky-borders.log");
+    match create_logger() {
+        Ok(_) => {}
+        Err(err) => println!("Error: {}", err),
+    };
 
-    CombinedLogger::init(vec![
-        TermLogger::new(
-            LevelFilter::Warn,
-            Config::default(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        ),
-        TermLogger::new(
-            LevelFilter::Debug,
-            Config::default(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        ),
-        WriteLogger::new(
-            LevelFilter::Info,
-            Config::default(),
-            // TODO move the log somewhere else like to .config/tacky-borders
-            File::create(log_path).unwrap(),
-        ),
-    ])
-    .unwrap();
-
-    // Idk what exactly IME windows do... smth text input language smth... but I don't think we
-    // need them. Also, -1 is 0xFFFFFFFF, which we can use to disable IME windows for all threads
-    // in the current process.
-    if unsafe { !ImmDisableIME(std::mem::transmute::<i32, u32>(-1)).as_bool() } {
+    // xFFFFFFFF can be used to disable IME windows for all threads in the current process.
+    if !imm_disable_ime(0xFFFFFFFF).as_bool() {
         error!("Could not disable IME!");
     }
 
-    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() }
-    {
+    if set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() {
         error!("Failed to make process DPI aware");
     }
 
+    // This is responsible for the actual tray icon window, so it must be kept in scope
     let tray_icon_result = sys_tray_icon::create_tray_icon();
     if tray_icon_result.is_err() {
         error!("Error creating tray icon!");
@@ -113,21 +88,48 @@ fn main() {
     }
 }
 
+fn create_logger() -> anyhow::Result<()> {
+    let log_dir = border_config::Config::get_config_dir()?;
+    let log_path = log_dir.join("tacky-borders.log");
+
+    // TODO maybe look into the anyhow crate so I can return the error from init()
+    CombinedLogger::init(vec![
+        TermLogger::new(
+            LevelFilter::Warn,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        TermLogger::new(
+            LevelFilter::Debug,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(
+            LevelFilter::Info,
+            Config::default(),
+            File::create(log_path).unwrap(),
+        ),
+    ])?;
+
+    Ok(())
+}
+
 fn register_window_class() -> windows::core::Result<()> {
     unsafe {
-        let window_class = w!("tacky-border");
         let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
 
-        let wcex = WNDCLASSEXW {
+        let window_class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(window_border::WindowBorder::s_wnd_proc),
             hInstance: hinstance,
-            lpszClassName: window_class,
+            lpszClassName: w!("border"),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             ..Default::default()
         };
-        let result = RegisterClassExW(&wcex);
 
+        let result = RegisterClassExW(&window_class);
         if result == 0 {
             let last_error = GetLastError();
             error!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
@@ -161,15 +163,18 @@ fn enum_windows() -> windows::core::Result<()> {
 
 fn reload_borders() {
     let mut borders = BORDERS.lock().unwrap();
+
+    // Send destroy messages to all the border windows
     for value in borders.values() {
         let border_window = HWND(*value as _);
-        unsafe {
-            let _ = PostMessageW(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
-        }
+        let _ = post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
     }
+
+    // Clear the borders hashmap
     borders.clear();
     drop(borders);
 
+    // Clear the initial windows list
     INITIAL_WINDOWS.lock().unwrap().clear();
 
     let _ = enum_windows();
@@ -181,7 +186,9 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
             let _ = create_border_for_window(_hwnd);
         }
 
+        // Add currently open windows to the intial windows list so we can keep track of them
         INITIAL_WINDOWS.lock().unwrap().push(_hwnd.0 as isize);
     }
+
     TRUE
 }

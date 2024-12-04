@@ -16,6 +16,12 @@ pub enum ColorConfig {
     GradientConfig(GradientConfig),
 }
 
+impl Default for ColorConfig {
+    fn default() -> Self {
+        Self::SolidConfig("#000000".to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GradientConfig {
     pub colors: Vec<String>,
@@ -36,6 +42,7 @@ pub struct GradientCoordinates {
 }
 
 impl ColorConfig {
+    // Convert the ColorConfig struct to a Color struct
     pub fn convert_to_color(&self, is_active_color: bool) -> Color {
         match self {
             ColorConfig::SolidConfig(solid_config) => {
@@ -52,6 +59,7 @@ impl ColorConfig {
                 }
             }
             ColorConfig::GradientConfig(gradient_config) => {
+                // We use 'step' to calculate the position of each color in the gradient below
                 let step = 1.0 / (gradient_config.colors.len() - 1) as f32;
 
                 let gradient_stops = gradient_config
@@ -66,15 +74,14 @@ impl ColorConfig {
                     .collect();
 
                 let direction = match gradient_config.direction {
+                    // If we have an angle, we need to convert it into Coordinates
                     GradientDirection::Angle(ref angle) => {
-                        // If we have an angle, we need to convert it into Coordinates
-
                         let Some(degree) = angle
                             .strip_suffix("deg")
                             .and_then(|d| d.trim().parse::<f32>().ok())
                         else {
-                            error!("Invalid config for gradient direction... exiting");
-                            panic!("Invalid config for gradient direction");
+                            error!("Config contains an invalid gradient direction!");
+                            return Color::default();
                         };
 
                         // We multiply degree by -1 to account for the fact that Win32's coordinate
@@ -111,9 +118,9 @@ impl ColorConfig {
                         // mx = 1 - b
                         // x = (1 - b)/m
 
-                        // Please don't ask lol. Basically when we cross certain thresholds like 90
-                        // degrees, we need to flip the x values (0.0 and 1.0) that we use to the
-                        // calculate the start and end points below due to the slope changing
+                        // When we cross certain angle thresholds, like 90 degrees, we need to flip
+                        // the x values (0.0 and 1.0) that we use to the calculate the start and
+                        // end points below due to the slope changing
                         let (x_s, x_e) = match degree.abs() % 360.0 {
                             0.0..90.0 => (0.0, 1.0),
                             90.0..270.0 => (1.0, 0.0),
@@ -124,8 +131,12 @@ impl ColorConfig {
                             }
                         };
 
-                        // I beg you don't ask me about this either. Basically we're just checking
-                        // the x and y-intercepts and seeing which one fits in the first quadrant
+                        // Here, we are checking three cases to make sure the calculated point
+                        // lies within the first quadrant:
+                        //
+                        // Case 1: the y-coordinate at x_s is between 0 and 1
+                        // Case 2: the y-coordinate at x_s is greater than 1
+                        // Case 3: the y-coordinate at x_s is less than 0
                         let start = match line.plug_in_x(x_s) {
                             0.0..=1.0 => [x_s, line.plug_in_x(x_s)],
                             1.0.. => [(1.0 - line.b) / line.m, 1.0],
@@ -190,22 +201,25 @@ impl Color {
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
-    ) -> Option<ID2D1Brush> {
+    ) -> Result<ID2D1Brush, ()> {
         match self {
             Color::Solid(solid) => unsafe {
                 let Ok(brush) =
                     render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))
                 else {
-                    return None;
+                    return Err(());
                 };
 
                 brush.SetOpacity(solid.opacity);
 
-                Some(brush.into())
+                Ok(brush.into())
             },
             Color::Gradient(gradient) => unsafe {
                 let width = (window_rect.right - window_rect.left) as f32;
                 let height = (window_rect.bottom - window_rect.top) as f32;
+
+                // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
+                // convert it into coordinates in terms of pixels
                 let gradient_properties = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
                     startPoint: D2D_POINT_2F {
                         x: gradient.direction.start[0] * width,
@@ -222,8 +236,7 @@ impl Color {
                     D2D1_GAMMA_2_2,
                     D2D1_EXTEND_MODE_CLAMP,
                 ) else {
-                    // TODO instead of panicking, I should just return a default value
-                    panic!("could not create gradient_stop_collection!");
+                    return Err(());
                 };
 
                 let Ok(brush) = render_target.CreateLinearGradientBrush(
@@ -231,12 +244,12 @@ impl Color {
                     Some(brush_properties),
                     &gradient_stop_collection,
                 ) else {
-                    return None;
+                    return Err(());
                 };
 
                 brush.SetOpacity(gradient.opacity);
 
-                Some(brush.into())
+                Ok(brush.into())
             },
         }
     }
@@ -266,13 +279,15 @@ impl Default for Color {
 }
 
 fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
-    // Get the Windows accent color
     let mut pcr_colorization: u32 = 0;
     let mut pf_opaqueblend: BOOL = FALSE;
-    let result = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) };
-    if result.is_err() {
+
+    // DwmGetColorizationColor gets the accent color and places it into 'pcr_colorization'
+    if unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend).is_err() } {
         error!("Could not retrieve Windows accent color!");
     }
+
+    // Bit-shift the retrieved color to separate out the rgb components
     let accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
     let accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
     let accent_blue = (pcr_colorization & 0x000000FF) as f32 / 255.0;
@@ -296,8 +311,7 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 }
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
-    if hex.len() != 7 && hex.len() != 9 && hex.len() != 4 && hex.len() != 5 || !hex.starts_with('#')
-    {
+    if !matches!(hex.len(), 7 | 9 | 4 | 5) || !hex.starts_with('#') {
         error!("Invalid hex color format: {}", hex);
         return D2D1_COLOR_F {
             r: 1.0,

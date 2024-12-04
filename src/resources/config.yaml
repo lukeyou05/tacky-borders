@@ -75,8 +75,8 @@ global:
   #   Note: animation speed is not the duration of the animation.
   #   Note: spiral animations can use a lot of CPU and GPU.
   animations:
-    active: { Fade }
-    inactive: { Fade }
+    active: { ReverseSpiral, Fade }
+    inactive: { Spiral, Fade }
     fps: 60
 
 # Customize config options on a per-app basis.
@@ -91,9 +91,10 @@ window_rules:
 
   - match: "Title"
     name: "Flow.Launcher"
-    enabled: false
+    #enabled: false
 
   - match: "Title"
+    strategy: "Contains"
     name: "Zebar"
     enabled: false
 

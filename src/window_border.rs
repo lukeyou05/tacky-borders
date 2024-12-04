@@ -1,7 +1,6 @@
 // TODO Add result handling. There's so many let _ =
 use crate::anim_timer::AnimationTimer;
-use crate::animations;
-use crate::animations::*;
+use crate::animations::{self, *};
 use crate::colors::*;
 use crate::utils::*;
 use std::ptr;
@@ -32,16 +31,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
     SetWindowPos, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, GW_HWNDPREV,
-    HWND_TOP, LWA_ALPHA, LWA_COLORKEY, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN,
-    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_SHOWNA, WM_CREATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING,
-    WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    HWND_TOP, LWA_ALPHA, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
+    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNA,
+    WM_CREATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
+    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
     LazyLock::new(|| {
-        D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None)
-            .expect("creating RENDER_FACTORY failed")
+        match D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None) {
+            Ok(factory) => factory,
+            Err(err) => {
+                // Not sure how I can recover from this error so I'm just going to panic
+                error!("Critical Error: failed to create ID2D1Factory, {}", err);
+                panic!("Failed to create ID2D1Factory, {}", err);
+            }
+        }
     })
 };
 
@@ -73,13 +78,18 @@ pub struct WindowBorder {
 impl WindowBorder {
     pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> windows::core::Result<()> {
         unsafe {
-            let self_title = format!("{}{}", "tacky-", get_window_title(self.tracking_window));
+            let self_title = format!(
+                "{} | {} | {:?}",
+                "tacky-border",
+                get_window_title(self.tracking_window),
+                self.tracking_window
+            );
             let mut string: Vec<u16> = self_title.encode_utf16().collect();
             string.push(0);
 
             self.border_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
-                w!("tacky-border"),
+                w!("border"),
                 PCWSTR::from_raw(string.as_ptr()),
                 WS_POPUP | WS_DISABLED,
                 0,
@@ -101,7 +111,7 @@ impl WindowBorder {
         thread::sleep(time::Duration::from_millis(initialize_delay));
 
         unsafe {
-            // Make the window border transparent. Idk how this works. I took it from PowerToys.
+            // Make the window border transparent (stole the code from PowerToys).
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
             let hrgn = CreateRectRgn(pos, 0, pos + 1, 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
@@ -115,18 +125,19 @@ impl WindowBorder {
             }
             let _ = DwmEnableBlurBehindWindow(self.border_window, &bh);
 
-            if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 0, LWA_COLORKEY)
-                .is_err()
-            {
-                error!("Could not set layered window attributes!");
-            }
-            if SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
-                .is_err()
-            {
-                error!("Could not set layered window attributes!");
+            match SetLayeredWindowAttributes(
+                self.border_window,
+                COLORREF(0x00000000),
+                255,
+                LWA_ALPHA,
+            ) {
+                Ok(_) => {}
+                Err(err) => error!("Failed to set LWA_ALPHA: {}", err),
             }
 
-            let _ = self.create_render_targets();
+            if self.create_render_targets().is_err() {
+                PostQuitMessage(0);
+            };
 
             self.is_active_window = is_active_window(self.tracking_window);
 
@@ -192,17 +203,18 @@ impl WindowBorder {
         };
 
         unsafe {
-            let factory = &*RENDER_FACTORY;
-            let _ = self.render_target.set(
-                factory
-                    .CreateHwndRenderTarget(
-                        &render_target_properties,
-                        &hwnd_render_target_properties,
-                    )
-                    .expect("creating self.render_target failed"),
-            );
-            let render_target = self.render_target.get().unwrap();
-            render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            if let Ok(render_target) = RENDER_FACTORY
+                .CreateHwndRenderTarget(&render_target_properties, &hwnd_render_target_properties)
+            {
+                render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                if self.render_target.set(render_target).is_err() {
+                    error!("Could not set self.render_target!");
+                    return Err(());
+                };
+            } else {
+                error!("Could not create render target!");
+                return Err(());
+            }
         }
 
         Ok(())
@@ -218,13 +230,15 @@ impl WindowBorder {
             )
         };
         if result.is_err() {
-            warn!("Could not get window rect. This is normal for elevated/admin windows.");
+            warn!("Could not get window rect for HWND: {:?}. This is normal for elevated/admin windows.", self.tracking_window);
             unsafe {
                 self.destroy_anim_timer();
                 PostQuitMessage(0);
+                return Err(());
             }
         }
 
+        // Increase the size of the window rect to make space for the border
         self.window_rect.top -= self.border_width;
         self.window_rect.left -= self.border_width;
         self.window_rect.right += self.border_width;
@@ -258,9 +272,10 @@ impl WindowBorder {
                 u_flags,
             );
             if result.is_err() {
-                warn!("Could not set window position! This is normal for elevated/admin windows.");
+                warn!("Could not set window position for HWND: {:?}. This is normal for elevated/admin windows.", self.tracking_window);
                 self.destroy_anim_timer();
                 PostQuitMessage(0);
+                return Err(());
             }
         }
         Ok(())
@@ -293,9 +308,10 @@ impl WindowBorder {
     fn render(&mut self) -> Result<(), ()> {
         self.last_render_time = Some(time::Instant::now());
 
-        // Get the render target
+        // Get the render target (this can result in an error at the start because render() can be
+        // called before self.render_target is set... for now we just ignore it)
         let Some(render_target) = self.render_target.get() else {
-            return Ok(());
+            return Err(());
         };
 
         let pixel_size = D2D_SIZE_U {
@@ -313,7 +329,10 @@ impl WindowBorder {
         };
 
         unsafe {
-            let _ = render_target.Resize(&pixel_size);
+            if render_target.Resize(&pixel_size).is_err() {
+                error!("Could not resize render target");
+                return Err(());
+            };
 
             // TODO wtf is this mess..
             let active_opacity = self.active_color.get_opacity();
@@ -333,27 +352,30 @@ impl WindowBorder {
             render_target.Clear(None);
 
             if bottom_opacity > 0.0 {
-                let Some(brush) = bottom_color.create_brush(
+                let Ok(bottom_brush) = bottom_color.create_brush(
                     render_target,
                     &self.window_rect,
                     &self.brush_properties,
                 ) else {
-                    return Ok(());
+                    return Err(());
                 };
-                self.draw_rectangle(render_target, &brush);
+                self.draw_rectangle(render_target, &bottom_brush);
             }
             if top_opacity > 0.0 {
-                let Some(brush) = top_color.create_brush(
+                let Ok(top_brush) = top_color.create_brush(
                     render_target,
                     &self.window_rect,
                     &self.brush_properties,
                 ) else {
-                    return Ok(());
+                    return Err(());
                 };
-                self.draw_rectangle(render_target, &brush);
+                self.draw_rectangle(render_target, &top_brush);
             }
 
-            let _ = render_target.EndDraw(None, None);
+            if render_target.EndDraw(None, None).is_err() {
+                error!("Could not end the Direct2D draw call!");
+                return Err(());
+            };
         }
 
         Ok(())
@@ -394,23 +416,23 @@ impl WindowBorder {
         }
     }
 
-    // When CreateWindowExW is called, we can optionally pass a value to its LPARAM field which will
-    // get sent to the window process on creation. In our code, we've passed a pointer to the
-    // WindowBorder structure during the window creation process, and here we are getting that pointer
-    // and attaching it to the window using SetWindowLongPtrW.
     pub unsafe extern "system" fn s_wnd_proc(
         window: HWND,
         message: u32,
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        // Retrieve the pointer to this WindowBorder struct using GWLP_USERDATA
         let mut border_pointer: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
 
+        // If a pointer has not yet been assigned to GWLP_USERDATA, assign it here using the LPARAM
+        // from CreateWindowExW
         if border_pointer.is_null() && message == WM_CREATE {
             let create_struct: *mut CREATESTRUCTW = lparam.0 as *mut _;
             border_pointer = (*create_struct).lpCreateParams as *mut _;
             SetWindowLongPtrW(window, GWLP_USERDATA, border_pointer as _);
         }
+
         match !border_pointer.is_null() {
             true => (*border_pointer).wnd_proc(window, message, wparam, lparam),
             false => DefWindowProcW(window, message, wparam, lparam),
@@ -491,7 +513,6 @@ impl WindowBorder {
                 }
 
                 if has_native_border(self.tracking_window) {
-                    //let _ = self.update_color(Some(0));
                     let _ = self.update_position(Some(SWP_SHOWWINDOW));
                     let _ = self.render();
                 }
