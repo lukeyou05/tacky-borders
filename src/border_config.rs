@@ -1,19 +1,17 @@
 use crate::animations::Animations;
 use crate::colors::ColorConfig;
+use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
-use thiserror::Error;
-
-use anyhow::Context;
 
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
     Mutex::new(match Config::create_config() {
         Ok(config) => config,
-        Err(err) => {
-            error!("Error: {}", err);
+        Err(e) => {
+            error!("Failed to read config.yaml: {e}");
             Config::default()
         }
     })
@@ -92,21 +90,16 @@ impl Config {
         Ok(config)
     }
 
-    pub fn get_config_dir() -> Result<PathBuf, ConfigError> {
+    pub fn get_config_dir() -> anyhow::Result<PathBuf> {
         let Some(home_dir) = home_dir() else {
-            return Err(ConfigError::HomeDir);
+            return Err(anyhow!("Could not find home directory!"));
         };
 
         let config_dir = home_dir.join(".config").join("tacky-borders");
 
         // If the config directory doesn't exist, try to create it
-        if !config_dir.exists()
-            && DirBuilder::new()
-                .recursive(true)
-                .create(&config_dir)
-                .is_err()
-        {
-            return Err(ConfigError::ConfigDir);
+        if !config_dir.exists() {
+            DirBuilder::new().recursive(true).create(&config_dir)?;
         };
 
         Ok(config_dir)
@@ -115,19 +108,11 @@ impl Config {
     pub fn reload_config() {
         let new_config = match Self::create_config() {
             Ok(config) => config,
-            Err(err) => {
-                error!("Error: {}", err);
+            Err(e) => {
+                error!("Could not reload config: {}", e);
                 Config::default()
             }
         };
         *CONFIG.lock().unwrap() = new_config;
     }
-}
-
-#[derive(Error, Debug)]
-pub enum ConfigError {
-    #[error("Could not find home directory")]
-    HomeDir,
-    #[error("Could not create config directory")]
-    ConfigDir,
 }

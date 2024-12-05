@@ -128,8 +128,8 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
     // Basically EaseInOutQuad
     let ease_in_out_quad = match cubic_bezier(0.42, 0.0, 0.58, 1.0) {
         Ok(func) => func,
-        Err(err) => {
-            error!("Error: {}", err);
+        Err(e) => {
+            error!("{e}");
             border.event_anim = ANIM_NONE;
             return;
         }

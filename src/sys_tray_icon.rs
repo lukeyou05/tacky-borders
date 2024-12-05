@@ -1,3 +1,4 @@
+use anyhow::Context;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::System::Threading::ExitProcess;
@@ -6,22 +7,18 @@ use windows::Win32::UI::Accessibility::UnhookWinEvent;
 use crate::border_config::Config;
 use crate::{reload_borders, EVENT_HOOK};
 
-pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
+pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
-        Err(_) => {
-            error!("Could not retrieve the icon from tacky-borders.exe for the tray menu!");
+        Err(e) => {
+            error!(
+                "Non-critical: could not retrieve icon from tacky-borders.exe for tray menu: {e}"
+            );
 
-            // If we could not retrieve an icon from the exe, then create an empty icon
+            // If we could not retrieve an icon from the exe, then try to create an empty icon. If
+            // even that fails, just return an Error using '?'.
             let rgba: Vec<u8> = vec![0, 0, 0, 0];
-            let Ok(empty_icon) = Icon::from_rgba(rgba, 1, 1) else {
-                // If we could not even create an empty icon, just return an Error
-                return Err(tray_icon::Error::OsError(std::io::Error::other(
-                    "Could not create tray icon for tray menu",
-                )));
-            };
-
-            empty_icon
+            Icon::from_rgba(rgba, 1, 1).context("Non-critical: could not create empty tray icon")?
         }
     };
 
@@ -29,17 +26,11 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
     let tooltip = format!("{}{}", "tacky-borders v", env!("CARGO_PKG_VERSION"));
 
     let tray_menu = Menu::new();
-    if tray_menu
-        .append_items(&[
-            &MenuItem::with_id("0", "Show Config", true, None),
-            &MenuItem::with_id("1", "Reload", true, None),
-            &MenuItem::with_id("2", "Close", true, None),
-        ])
-        .is_err()
-    {
-        // TODO add better error handling here
-        error!("Could not create tray menu items!");
-    };
+    tray_menu.append_items(&[
+        &MenuItem::with_id("0", "Show Config", true, None),
+        &MenuItem::with_id("1", "Reload", true, None),
+        &MenuItem::with_id("2", "Close", true, None),
+    ])?;
 
     let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
@@ -57,7 +48,7 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
                     // it's pretty obvious to the user if they can't open the directory
                     let _ = open::that(dir);
                 }
-                Err(err) => error!("Error: {}", err),
+                Err(err) => error!("{}", err),
             }
         }
         // Reload
@@ -77,5 +68,5 @@ pub fn create_tray_icon() -> Result<TrayIcon, tray_icon::Error> {
         _ => {}
     }));
 
-    tray_icon
+    tray_icon.map_err(anyhow::Error::new)
 }

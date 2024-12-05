@@ -1,6 +1,6 @@
 [package]
 name = "tacky-borders"
-version = "1.0.0-preview"
+version = "1.0.0-preview2"
 edition = "2021"
 
 [dependencies]
@@ -13,7 +13,6 @@ regex = "1.11.1"
 simplelog = "0.12.2"
 log = "0.4.22"
 anyhow = "1.0.94"
-thiserror = "2.0.4"
 
 [dependencies.windows]
 version = "0.58.0"

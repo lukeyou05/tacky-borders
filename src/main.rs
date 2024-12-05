@@ -53,9 +53,8 @@ unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    match create_logger() {
-        Ok(_) => {}
-        Err(err) => println!("Error: {}", err),
+    if let Err(e) = create_logger() {
+        println!("Error: {}", e);
     };
 
     // xFFFFFFFF can be used to disable IME windows for all threads in the current process.
@@ -69,8 +68,10 @@ fn main() {
 
     // This is responsible for the actual tray icon window, so it must be kept in scope
     let tray_icon_result = sys_tray_icon::create_tray_icon();
-    if tray_icon_result.is_err() {
-        error!("Error creating tray icon!");
+    if let Err(e) = tray_icon_result {
+        // TODO for some reason if I use {:#} or {:?}, it repeatedly prints the error. Could be
+        // something to do with how it implements .source()?
+        error!("Error creating tray icon; {e:#?}");
     }
 
     EVENT_HOOK.replace(set_event_hook());
@@ -92,7 +93,6 @@ fn create_logger() -> anyhow::Result<()> {
     let log_dir = border_config::Config::get_config_dir()?;
     let log_path = log_dir.join("tacky-borders.log");
 
-    // TODO maybe look into the anyhow crate so I can return the error from init()
     CombinedLogger::init(vec![
         TermLogger::new(
             LevelFilter::Warn,
@@ -132,7 +132,7 @@ fn register_window_class() -> windows::core::Result<()> {
         let result = RegisterClassExW(&window_class);
         if result == 0 {
             let last_error = GetLastError();
-            error!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
+            error!("Could not register window class; {:?}", last_error);
         }
     }
 

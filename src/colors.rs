@@ -201,14 +201,11 @@ impl Color {
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
-    ) -> Result<ID2D1Brush, ()> {
+    ) -> windows::core::Result<ID2D1Brush> {
         match self {
             Color::Solid(solid) => unsafe {
-                let Ok(brush) =
-                    render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))
-                else {
-                    return Err(());
-                };
+                let brush =
+                    render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
                 brush.SetOpacity(solid.opacity);
 
@@ -231,21 +228,17 @@ impl Color {
                     },
                 };
 
-                let Ok(gradient_stop_collection) = render_target.CreateGradientStopCollection(
+                let gradient_stop_collection = render_target.CreateGradientStopCollection(
                     &gradient.gradient_stops,
                     D2D1_GAMMA_2_2,
                     D2D1_EXTEND_MODE_CLAMP,
-                ) else {
-                    return Err(());
-                };
+                )?;
 
-                let Ok(brush) = render_target.CreateLinearGradientBrush(
+                let brush = render_target.CreateLinearGradientBrush(
                     &gradient_properties,
                     Some(brush_properties),
                     &gradient_stop_collection,
-                ) else {
-                    return Err(());
-                };
+                )?;
 
                 brush.SetOpacity(gradient.opacity);
 
@@ -370,6 +363,7 @@ fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
 
     D2D1_COLOR_F { r, g, b, a }
 }
+
 fn get_color_from_rgba(rgba: &str) -> D2D1_COLOR_F {
     let rgba = rgba
         .trim_start_matches("rgb(")

@@ -271,12 +271,9 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
 
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
 
-        match border.create_border_window(hinstance) {
-            Ok(_) => {}
-            Err(err) => {
-                error!("Could not create border window! {:?}", err);
-                return;
-            }
+        if let Err(e) = border.create_border_window(hinstance) {
+            error!("Could not create border window! {:?}", e);
+            return;
         };
 
         // Insert the border and its tracking window into the hashmap to keep track of them
@@ -462,8 +459,9 @@ pub fn cubic_bezier(
     // Ensure control points are within bounds.
     //
     // I think any y-value for the control points should be fine. But, we can't have negative
-    // x-values, otherwise any given x value could have multiple y-values, making it mathematically
-    // a non-function and producing "undefined" behavior.
+    // x-values for the control points, otherwise the cubic bezier function could have multiple
+    // outputs for any given input 'x' (different from the control points' x-values), meaning we
+    // would have a mathematical non-function.
     if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
         return Err(BezierError::InvalidControlPoint);
     }
