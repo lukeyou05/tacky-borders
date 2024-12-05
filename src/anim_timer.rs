@@ -25,8 +25,9 @@ impl AnimationTimer {
             let interval = Duration::from_millis(interval_ms);
 
             while !*stop_flag_clone.lock().unwrap() {
-                if post_message_w(window_sent.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0)).is_err() {
-                    error!("The animation timer failed to send the animate message");
+                if let Err(e) = post_message_w(window_sent.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0))
+                {
+                    error!("could not send animation timer message: {e}");
                     break;
                 }
                 thread::sleep(interval);

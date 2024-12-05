@@ -11,7 +11,7 @@ pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
     Mutex::new(match Config::create_config() {
         Ok(config) => config,
         Err(e) => {
-            error!("Failed to read config.yaml: {e}");
+            error!("could not read config.yaml: {e}");
             Config::default()
         }
     })
@@ -76,15 +76,15 @@ impl Config {
         let config_path = config_dir.join("config.yaml");
 
         // If the config.yaml does not exist, try to create it
-        if !fs::exists(&config_path).context("Could not check if config path exists")? {
+        if !fs::exists(&config_path).context("could not check if config path exists")? {
             let default_contents = DEFAULT_CONFIG.as_bytes();
             fs::write(&config_path, default_contents)
-                .context("Could not create default config.yaml")?;
+                .context("could not create default config.yaml")?;
 
-            info!("Generating default config in {}", config_dir.display());
+            info!("generating default config in {}", config_dir.display());
         }
 
-        let contents = fs::read_to_string(&config_path).context("Could not read config.yaml")?;
+        let contents = fs::read_to_string(&config_path).context("could not read config.yaml")?;
 
         let config = serde_yaml::from_str(&contents)?;
         Ok(config)
@@ -92,14 +92,17 @@ impl Config {
 
     pub fn get_config_dir() -> anyhow::Result<PathBuf> {
         let Some(home_dir) = home_dir() else {
-            return Err(anyhow!("Could not find home directory!"));
+            return Err(anyhow!("could not find home directory!"));
         };
 
         let config_dir = home_dir.join(".config").join("tacky-borders");
 
         // If the config directory doesn't exist, try to create it
         if !config_dir.exists() {
-            DirBuilder::new().recursive(true).create(&config_dir)?;
+            DirBuilder::new()
+                .recursive(true)
+                .create(&config_dir)
+                .context("could not create config directory")?;
         };
 
         Ok(config_dir)
@@ -109,7 +112,7 @@ impl Config {
         let new_config = match Self::create_config() {
             Ok(config) => config,
             Err(e) => {
-                error!("Could not reload config: {}", e);
+                error!("could not reload config: {e}");
                 Config::default()
             }
         };

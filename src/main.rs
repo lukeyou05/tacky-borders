@@ -48,23 +48,23 @@ static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
 
 static INITIAL_WINDOWS: LazyLock<Mutex<Vec<isize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
-// This is supposedly very unsafe but it works soo + I never dereference anything
+// This is used to send HWNDs across threads even though HWND doesn't implement Send and Sync.
 struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
     if let Err(e) = create_logger() {
-        println!("Error: {}", e);
+        println!("[ERROR] {}", e);
     };
 
     // xFFFFFFFF can be used to disable IME windows for all threads in the current process.
     if !imm_disable_ime(0xFFFFFFFF).as_bool() {
-        error!("Could not disable IME!");
+        error!("could not disable ime!");
     }
 
-    if set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() {
-        error!("Failed to make process DPI aware");
+    if let Err(e) = set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) {
+        error!("could not make process dpi aware: {e}");
     }
 
     // This is responsible for the actual tray icon window, so it must be kept in scope
@@ -72,7 +72,7 @@ fn main() {
     if let Err(e) = tray_icon_result {
         // TODO for some reason if I use {:#} or {:?}, it repeatedly prints the error. Could be
         // something to do with how it implements .source()?
-        error!("Error creating tray icon; {e:#?}");
+        error!("could not create tray icon: {e:#?}");
     }
 
     EVENT_HOOK.replace(set_event_hook());
@@ -80,13 +80,13 @@ fn main() {
     log_if_err!(enum_windows());
 
     unsafe {
-        debug!("Entering message loop!");
+        debug!("entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        error!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
+        error!("exited messsage loop in main.rs; this should not happen");
     }
 }
 
@@ -133,7 +133,7 @@ fn register_window_class() -> windows::core::Result<()> {
         let result = RegisterClassExW(&window_class);
         if result == 0 {
             let last_error = GetLastError();
-            error!("Could not register window class; {:?}", last_error);
+            error!("could not register window class: {last_error:?}");
         }
     }
 
@@ -158,7 +158,7 @@ fn enum_windows() -> windows::core::Result<()> {
     unsafe {
         EnumWindows(Some(enum_windows_callback), LPARAM::default())?;
     }
-    debug!("Windows have been enumerated!");
+    debug!("windows have been enumerated!");
     Ok(())
 }
 

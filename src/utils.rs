@@ -22,7 +22,7 @@ use std::ptr;
 use std::thread;
 
 use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
-use crate::window_border;
+use crate::window_border::WindowBorder;
 use crate::{SendHWND, __ImageBase, BORDERS, INITIAL_WINDOWS};
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
@@ -42,7 +42,7 @@ macro_rules! log_if_err {
             // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
             // the one in main.rs for tray_icon_result). It could have something to do with how they
             // implement .source()
-            error!("{:#}", e);
+            error!("{e:#}");
         }
     };
 }
@@ -61,7 +61,7 @@ pub fn get_window_title(hwnd: HWND) -> String {
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
         let last_error = unsafe { GetLastError() };
-        error!("Could not retrieve window title for {hwnd:?}: {last_error:?}");
+        error!("could not retrieve window title for {hwnd:?}: {last_error:?}");
     }
 
     let title_binding = String::from_utf16_lossy(&title_arr);
@@ -73,7 +73,7 @@ pub fn get_window_class(hwnd: HWND) -> String {
 
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
         let last_error = unsafe { GetLastError() };
-        error!("Could not retrieve window class for {hwnd:?}: {last_error:?}");
+        error!("could not retrieve window class for {hwnd:?}: {last_error:?}");
     }
 
     let class_binding = String::from_utf16_lossy(&class_arr);
@@ -92,13 +92,13 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
             Some(MatchKind::Title) => &title,
             Some(MatchKind::Class) => &class,
             None => {
-                error!("Expected 'match' for window rule but None found!");
+                error!("expected 'match' for window rule but none found!");
                 continue;
             }
         };
 
         let Some(match_name) = &rule.name else {
-            error!("Expected `name` for window rule but None found!");
+            error!("expected `name` for window rule but none found!");
             continue;
         };
 
@@ -140,16 +140,15 @@ pub fn are_rects_same_size(rect1: &RECT, rect2: &RECT) -> bool {
 
 pub fn is_cloaked(hwnd: HWND) -> bool {
     let mut is_cloaked = FALSE;
-    let result = unsafe {
+    if let Err(e) = unsafe {
         DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED,
             ptr::addr_of_mut!(is_cloaked) as _,
             size_of::<BOOL>() as u32,
         )
-    };
-    if result.is_err() {
-        error!("Could not check if window is cloaked");
+    } {
+        error!("could not check if window is cloaked: {e}");
         return true;
     }
     is_cloaked.as_bool()
@@ -199,18 +198,19 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 pub fn get_show_cmd(hwnd: HWND) -> u32 {
     let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
     if let Err(e) = unsafe { GetWindowPlacement(hwnd, &mut wp) } {
-        error!("Could not retrieve window placement; {e}");
+        error!("could not retrieve window placement: {e}");
         return 0;
     }
     wp.showCmd
 }
 
 pub fn create_border_for_window(tracking_window: HWND) {
-    debug!("Creating border for: {:?}", tracking_window);
+    debug!("creating border for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
         let window_sent = window;
+        let window_isize = window_sent.0 .0 as isize;
 
         let window_rule = get_window_rule(window_sent.0);
         if window_rule.enabled == Some(false) {
@@ -218,109 +218,104 @@ pub fn create_border_for_window(tracking_window: HWND) {
             return;
         }
 
-        let config = CONFIG.lock().unwrap();
+        let mut border = create_border_struct(window_sent.0, &window_rule);
 
-        // TODO holy this is ugly
-        let config_width = window_rule
-            .border_width
-            .unwrap_or(config.global.border_width);
-        let config_offset = window_rule
-            .border_offset
-            .unwrap_or(config.global.border_offset);
-        let config_radius = window_rule
-            .border_radius
-            .unwrap_or(config.global.border_radius);
-        let config_active = window_rule
-            .active_color
-            .unwrap_or(config.global.active_color.clone());
-        let config_inactive = window_rule
-            .inactive_color
-            .unwrap_or(config.global.inactive_color.clone());
-
-        // Convert ColorConfig structs to Color
-        let active_color = config_active.convert_to_color(true);
-        let inactive_color = config_inactive.convert_to_color(false);
-
-        // Adjust the border width and radius based on the monitor/window dpi
-        let dpi = unsafe { GetDpiForWindow(window_sent.0) } as f32;
-        let border_width = (config_width * dpi / 96.0) as i32;
-        let border_radius = convert_config_radius(border_width, config_radius, window_sent.0, dpi);
-
-        let animations = window_rule
-            .animations
-            .unwrap_or(config.global.animations.clone().unwrap_or_default());
-
-        let window_isize = window_sent.0 .0 as isize;
-
-        let initialize_delay = if INITIAL_WINDOWS.lock().unwrap().contains(&window_isize) {
-            0
-        } else {
-            window_rule
-                .initialize_delay
-                .unwrap_or(config.global.initialize_delay.unwrap_or(250))
-        };
-        let unminimize_delay = window_rule
-            .unminimize_delay
-            .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
-
-        let mut border = window_border::WindowBorder {
-            tracking_window: window_sent.0,
-            border_width,
-            border_offset: config_offset,
-            border_radius,
-            active_color,
-            inactive_color,
-            animations,
-            unminimize_delay,
-            ..Default::default()
-        };
-
-        drop(config);
-
+        // Note: 'key' for the hashmap is the tracking window, 'value' is the border window
         let mut borders_hashmap = BORDERS.lock().unwrap();
 
-        // Check to see if the key already exists in the hashmap. I don't think this should ever
-        // return true, but it's just in case.
+        // Check to see if there is already a border for the given tracking window
         if borders_hashmap.contains_key(&window_isize) {
-            drop(borders_hashmap);
             return;
         }
 
+        // Otherwise, continue creating the border window
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
-
         if let Err(e) = border.create_border_window(hinstance) {
-            error!("Could not create border window! {:?}", e);
+            error!("could not create border window: {e:?}");
             return;
         };
 
-        // Insert the border and its tracking window into the hashmap to keep track of them
         borders_hashmap.insert(window_isize, border.border_window.0 as isize);
 
-        // Drop these values (to save some RAM?) before calling init and entering a message loop
         drop(borders_hashmap);
+
+        // Drop these values (to save some RAM?) before calling init and entering a message loop
         let _ = window_sent;
-        let _ = window_rule;
-        let _ = config_width;
-        let _ = config_offset;
-        let _ = config_radius;
-        let _ = config_active;
-        let _ = config_inactive;
-        let _ = active_color;
-        let _ = inactive_color;
-        let _ = dpi;
-        let _ = border_width;
-        let _ = border_radius;
-        let _ = animations;
         let _ = window_isize;
-        let _ = initialize_delay;
-        let _ = unminimize_delay;
+        let _ = window_rule;
         let _ = hinstance;
 
         // Note: init() contains a loop, so this should never return unless it's an Error
-        if let Err(e) = border.init(initialize_delay) {
-            error!("{}", e);
+        if let Err(e) = border.init() {
+            error!("{e}");
         }
     });
+}
+
+fn create_border_struct(tracking_window: HWND, window_rule: &WindowRule) -> WindowBorder {
+    let config = CONFIG.lock().unwrap();
+
+    // TODO holy this is ugly
+    let config_width = window_rule
+        .border_width
+        .unwrap_or(config.global.border_width);
+    let config_offset = window_rule
+        .border_offset
+        .unwrap_or(config.global.border_offset);
+    let config_radius = window_rule
+        .border_radius
+        .unwrap_or(config.global.border_radius);
+    let config_active = window_rule
+        .active_color
+        .clone()
+        .unwrap_or(config.global.active_color.clone());
+    let config_inactive = window_rule
+        .inactive_color
+        .clone()
+        .unwrap_or(config.global.inactive_color.clone());
+
+    // Convert ColorConfig structs to Color
+    let active_color = config_active.convert_to_color(true);
+    let inactive_color = config_inactive.convert_to_color(false);
+
+    // Adjust the border width and radius based on the monitor/window dpi
+    let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
+    let border_width = (config_width * dpi / 96.0) as i32;
+    let border_radius = convert_config_radius(border_width, config_radius, tracking_window, dpi);
+
+    let animations = window_rule
+        .animations
+        .clone()
+        .unwrap_or(config.global.animations.clone().unwrap_or_default());
+
+    // If the tracking window is part of the initial windows list (meaning it was already open when
+    // tacky-borders was launched), then there should be no initialize delay.
+    let initialize_delay = match INITIAL_WINDOWS
+        .lock()
+        .unwrap()
+        .contains(&(tracking_window.0 as isize))
+    {
+        true => 0,
+        false => window_rule
+            .initialize_delay
+            .unwrap_or(config.global.initialize_delay.unwrap_or(250)),
+    };
+    let unminimize_delay = window_rule
+        .unminimize_delay
+        .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
+
+    WindowBorder {
+        tracking_window,
+        border_width,
+        border_offset: config_offset,
+        border_radius,
+        active_color,
+        inactive_color,
+        animations,
+        initialize_delay,
+        unminimize_delay,
+        ..Default::default()
+    }
 }
 
 fn convert_config_radius(
@@ -354,7 +349,7 @@ fn get_window_radius(tracking_window: HWND, dpi: f32) -> f32 {
             size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
         )
     } {
-        error!("Could not retrieve window corner preference; {e}");
+        error!("could not retrieve window corner preference: {e}");
     }
 
     match corner_preference {

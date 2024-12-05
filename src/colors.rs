@@ -80,7 +80,7 @@ impl ColorConfig {
                             .strip_suffix("deg")
                             .and_then(|d| d.trim().parse::<f32>().ok())
                         else {
-                            error!("Config contains an invalid gradient direction!");
+                            error!("config contains an invalid gradient direction!");
                             return Color::default();
                         };
 
@@ -126,7 +126,7 @@ impl ColorConfig {
                             90.0..270.0 => (1.0, 0.0),
                             270.0..360.0 => (0.0, 1.0),
                             _ => {
-                                debug!("Reached a gradient angle that is not covered by the match statement in colors.rs");
+                                debug!("reached a gradient angle that is not covered by the match statement in colors.rs");
                                 (0.0, 1.0)
                             }
                         };
@@ -277,7 +277,7 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 
     // DwmGetColorizationColor gets the accent color and places it into 'pcr_colorization'
     if let Err(e) = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) } {
-        error!("Could not retrieve Windows accent color: {e}");
+        error!("could not retrieve windows accent color: {e}");
     }
 
     // Bit-shift the retrieved color to separate out the rgb components
@@ -305,7 +305,7 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     if !matches!(hex.len(), 7 | 9 | 4 | 5) || !hex.starts_with('#') {
-        error!("Invalid hex color format: {}", hex);
+        error!("invalid hex color format: {hex}");
         return D2D1_COLOR_F {
             r: 1.0,
             g: 1.0,
@@ -343,7 +343,7 @@ fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
         match u8::from_str_radix(s, 16) {
             Ok(val) => val as f32 / 255.0,
             Err(_) => {
-                error!("Invalid component '{}' in hex: {}", s, expanded_hex);
+                error!("invalid component '{s}' in hex: {expanded_hex}");
                 0.0
             }
         }

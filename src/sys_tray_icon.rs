@@ -11,12 +11,12 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
         Err(e) => {
-            error!("Could not retrieve icon from tacky-borders.exe for tray menu: {e}");
+            error!("could not retrieve icon from tacky-borders.exe for tray menu: {e}");
 
             // If we could not retrieve an icon from the exe, then try to create an empty icon. If
             // even that fails, just return an Error using '?'.
             let rgba: Vec<u8> = vec![0, 0, 0, 0];
-            Icon::from_rgba(rgba, 1, 1).context("Could not create empty tray icon")?
+            Icon::from_rgba(rgba, 1, 1).context("could not create empty tray icon")?
         }
     };
 
@@ -46,7 +46,7 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
                     // it's pretty obvious to the user if they can't open the directory
                     let _ = open::that(dir);
                 }
-                Err(err) => error!("{}", err),
+                Err(e) => error!("{e}"),
             }
         }
         // Reload
@@ -57,10 +57,10 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
         // Close
         "2" => unsafe {
             if UnhookWinEvent(EVENT_HOOK.get()).as_bool() {
-                debug!("Exiting tacky-borders!");
+                debug!("exiting tacky-borders!");
                 ExitProcess(0);
             } else {
-                error!("Could not unhook win event hook");
+                error!("could not unhook win event hook");
             }
         },
         _ => {}

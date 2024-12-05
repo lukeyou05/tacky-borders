@@ -45,8 +45,8 @@ static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
             Ok(factory) => factory,
             Err(e) => {
                 // Not sure how I can recover from this error so I'm just going to panic
-                error!("Failed to create ID2D1Factory: {e}");
-                panic!("Failed to create ID2D1Factory: {e}");
+                error!("could not create ID2D1Factory: {e}");
+                panic!("could not create ID2D1Factory: {e}");
             }
         }
     })
@@ -70,7 +70,8 @@ pub struct WindowBorder {
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
     pub anim_timer: Option<AnimationTimer>,
-    // Delay border visbility when tracking window is in unminimize animation
+    // Delay border visbility when tracking window is in animation
+    pub initialize_delay: u64,
     pub unminimize_delay: u64,
     // This is to pause the border from doing anything when it doesn't need to
     pub pause: bool,
@@ -108,9 +109,9 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn init(&mut self, initialize_delay: u64) -> anyhow::Result<()> {
+    pub fn init(&mut self) -> anyhow::Result<()> {
         // Delay the border while the tracking window is in its creation animation
-        thread::sleep(time::Duration::from_millis(initialize_delay));
+        thread::sleep(time::Duration::from_millis(self.initialize_delay));
 
         unsafe {
             // Make the window transparent (stole the code from PowerToys; dunno how it works).
@@ -127,13 +128,13 @@ impl WindowBorder {
             }
             // These functions below are pretty important, so if they fail, just return an Error
             DwmEnableBlurBehindWindow(self.border_window, &bh)
-                .context("Failed to make window transparent")?;
+                .context("could not make window transparent")?;
 
             SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
-                .context("Failed to set LWA_ALPHA")?;
+                .context("could not set LWA_ALPHA")?;
 
             self.create_render_targets()
-                .context("Failed to create render targets")?;
+                .context("could not create render target in init()")?;
 
             self.is_active_window = is_active_window(self.tracking_window);
 
@@ -142,7 +143,7 @@ impl WindowBorder {
                 false => self.animations.inactive.clone(),
             };
 
-            log_if_err!(self.update_color(Some(initialize_delay)));
+            log_if_err!(self.update_color(Some(self.initialize_delay)));
 
             log_if_err!(self.update_window_rect());
 
@@ -165,7 +166,7 @@ impl WindowBorder {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            debug!("Exiting border thread for {:?}!", self.tracking_window);
+            debug!("exiting border thread for {:?}!", self.tracking_window);
         }
 
         Ok(())
@@ -226,8 +227,7 @@ impl WindowBorder {
             ))
         } {
             self.destroy_anim_timer();
-            self.remove_from_borders_hashmap();
-            unsafe { PostQuitMessage(0) };
+            self.exit_border_thread();
 
             return Err(e);
         }
@@ -266,12 +266,11 @@ impl WindowBorder {
                 u_flags,
             )
             .context(format!(
-                "Could not set window position for {:?}",
+                "could not set window position for {:?}",
                 self.tracking_window
             )) {
                 self.destroy_anim_timer();
-                self.remove_from_borders_hashmap();
-                PostQuitMessage(0);
+                self.exit_border_thread();
 
                 return Err(e);
             }
@@ -331,7 +330,7 @@ impl WindowBorder {
         unsafe {
             render_target
                 .Resize(&pixel_size)
-                .context("Could not resize render_target")?;
+                .context("could not resize render_target")?;
 
             // TODO wtf is this mess..
             let active_opacity = self.active_color.get_opacity();
@@ -353,14 +352,14 @@ impl WindowBorder {
             if bottom_opacity > 0.0 {
                 let bottom_brush = bottom_color
                     .create_brush(render_target, &self.window_rect, &self.brush_properties)
-                    .context("Could not create ID2D1Brush")?;
+                    .context("could not create ID2D1Brush")?;
 
                 self.draw_rectangle(render_target, &bottom_brush);
             }
             if top_opacity > 0.0 {
                 let top_brush = top_color
                     .create_brush(render_target, &self.window_rect, &self.brush_properties)
-                    .context("Could not create ID2D1Brush")?;
+                    .context("could not create ID2D1Brush")?;
 
                 self.draw_rectangle(render_target, &top_brush);
             }
@@ -371,21 +370,19 @@ impl WindowBorder {
                     // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
                     // This error can be caused by things like waking up from sleep, updating GPU
                     // drivers, changing screen resolution, etc.
-                    warn!("Recoverable: render_target has been lost; attempting to recreate");
+                    warn!("render_target has been lost; attempting to recreate");
 
                     match self.create_render_targets() {
-                        Ok(_) => info!("Successfully recreated render_target; resuming thread"),
+                        Ok(_) => info!("successfully recreated render_target; resuming thread"),
                         Err(e_2) => {
-                            error!("Critical: could not recreate render_target due to: {e_2}");
-                            self.remove_from_borders_hashmap();
-                            PostQuitMessage(0);
+                            error!("could not recreate render_target; exiting thread: {e_2}");
+                            self.exit_border_thread();
                         }
                     }
                 }
                 Err(other) => {
-                    error!("Critical: unrecoverable error with EndDraw(): {other}");
-                    self.remove_from_borders_hashmap();
-                    PostQuitMessage(0);
+                    error!("render_target.EndDraw() failed; exiting thread: {other}");
+                    self.exit_border_thread();
                 }
             }
         }
@@ -428,11 +425,12 @@ impl WindowBorder {
         }
     }
 
-    fn remove_from_borders_hashmap(&mut self) {
+    fn exit_border_thread(&mut self) {
         BORDERS
             .lock()
             .unwrap()
             .remove(&(self.tracking_window.0 as isize));
+        unsafe { PostQuitMessage(0) };
     }
 
     pub unsafe extern "system" fn s_wnd_proc(
@@ -639,10 +637,8 @@ impl WindowBorder {
             }
             WM_NCDESTROY => {
                 self.destroy_anim_timer();
-
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-                self.remove_from_borders_hashmap();
-                PostQuitMessage(0);
+                self.exit_border_thread();
             }
             // Ignore these window position messages
             WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}
