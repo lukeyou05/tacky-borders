@@ -23,28 +23,24 @@ fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimationType, f32>, D::
 where
     D: Deserializer<'de>,
 {
-    let Some(map): Option<HashMap<AnimationType, Value>> = Option::deserialize(deserializer)?
-    else {
-        return Ok(HashMap::default());
-    };
+    // If deserialize returns an error, it's possible that an invalid AnimationType was listed
+    let hashmap = HashMap::<AnimationType, Value>::deserialize(deserializer)?;
 
-    let mut result = HashMap::new();
-    for (key, value) in map {
-        // Default speed is 100 if the value is missing or null
+    let mut deserialized = HashMap::new();
+    for (key, value) in hashmap {
         let speed = match value {
             Value::Number(n) => n.as_f64().map(|f| f as f32),
             Value::Null => None, // If the value is null, we will assign default speeds later
             _ => None,           // Handle invalid formats
         };
 
-        // Apply the default speed for each animation type if it's null or missing
         let default_speed = 100.0;
 
         // If the speed is None (either null or missing), assign the default speed
-        result.insert(key, speed.unwrap_or(default_speed));
+        deserialized.insert(key, speed.unwrap_or(default_speed));
     }
 
-    Ok(result)
+    Ok(deserialized)
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Default)]
@@ -60,7 +56,7 @@ pub struct Animations {
     #[serde(skip)]
     pub fade_progress: f32,
     #[serde(skip)]
-    pub fade_to_visible: bool,
+    pub fade_only_one_color: bool,
     #[serde(skip)]
     pub spiral_angle: f32,
 }
@@ -70,11 +66,13 @@ fn default_fps() -> i32 {
 }
 
 pub fn animate_spiral(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_speed: f32) {
+    border.animations.spiral_angle += anim_elapsed.as_secs_f32() * anim_speed;
+
     if border.animations.spiral_angle.abs() >= 360.0 {
         border.animations.spiral_angle %= 360.0;
     }
-    border.animations.spiral_angle += (anim_elapsed.as_secs_f32() * anim_speed).min(359.0);
 
+    // Calculate the center point of the window
     let center_x = (border.window_rect.right - border.window_rect.left) / 2;
     let center_y = (border.window_rect.bottom - border.window_rect.top) / 2;
 
@@ -87,15 +85,18 @@ pub fn animate_spiral(border: &mut WindowBorder, anim_elapsed: &time::Duration, 
 
 pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_speed: f32) {
     // If both are 0, that means the window has been opened for the first time or has been
-    // unminimized. If that is the case, we should only fade one of the colors.
+    // unminimized. If that is the case, only one of the colors should be visible while fading.
     if border.active_color.get_opacity() == 0.0 && border.inactive_color.get_opacity() == 0.0 {
+        // Set fade_progress here so we start from 0 opacity for the visible color
         border.animations.fade_progress = match border.is_active_window {
             true => 0.0,
             false => 1.0,
         };
-        border.animations.fade_to_visible = true;
+
+        border.animations.fade_only_one_color = true;
     }
 
+    // Determine which direction we should move fade_progress
     let direction = match border.is_active_window {
         true => 1.0,
         false => -1.0,
@@ -112,7 +113,7 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         border.inactive_color.set_opacity(1.0 - final_opacity);
 
         border.animations.fade_progress = final_opacity;
-        border.animations.fade_to_visible = false;
+        border.animations.fade_only_one_color = false;
         border.event_anim = ANIM_NONE;
         return;
     }
@@ -120,13 +121,18 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
     // TODO perhaps add config options for this
     //
     // Basically EaseInOutQuad
-    let Ok(ease_in_out_quad) = cubic_bezier(0.42, 0.0, 0.58, 1.0) else {
-        return;
+    let ease_in_out_quad = match cubic_bezier(0.42, 0.0, 0.58, 1.0) {
+        Ok(func) => func,
+        Err(e) => {
+            error!("{e}");
+            border.event_anim = ANIM_NONE;
+            return;
+        }
     };
 
     let y_coord = ease_in_out_quad(border.animations.fade_progress);
 
-    let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_to_visible {
+    let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_only_one_color {
         true => match border.is_active_window {
             true => (y_coord, 0.0),
             false => (0.0, 1.0 - y_coord),

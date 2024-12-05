@@ -7,6 +7,7 @@
 extern crate log;
 extern crate simplelog;
 
+use anyhow::Context;
 use simplelog::*;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -16,14 +17,11 @@ use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, BOOL, HINSTANCE, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::System::SystemServices::IMAGE_DOS_HEADER;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
-use windows::Win32::UI::HiDpi::{
-    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-};
-use windows::Win32::UI::Input::Ime::ImmDisableIME;
+use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, PostMessageW, RegisterClassExW,
-    TranslateMessage, EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
+    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, RegisterClassExW, TranslateMessage,
+    EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    WM_NCDESTROY, WNDCLASSEXW,
 };
 
 mod anim_timer;
@@ -50,14 +48,51 @@ static BORDERS: LazyLock<Mutex<HashMap<isize, isize>>> =
 
 static INITIAL_WINDOWS: LazyLock<Mutex<Vec<isize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
-// This is supposedly unsafe af but it works soo + I never dereference anything
+// This is used to send HWNDs across threads even though HWND doesn't implement Send and Sync.
 struct SendHWND(HWND);
 unsafe impl Send for SendHWND {}
 unsafe impl Sync for SendHWND {}
 
 fn main() {
-    // Note: this Config struct is different from the ones used for the Logger below
-    let log_path = border_config::Config::get_config_location().join("tacky-borders.log");
+    if let Err(e) = create_logger() {
+        println!("[ERROR] {}", e);
+    };
+
+    // xFFFFFFFF can be used to disable IME windows for all threads in the current process.
+    if !imm_disable_ime(0xFFFFFFFF).as_bool() {
+        error!("could not disable ime!");
+    }
+
+    if let Err(e) = set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) {
+        error!("could not make process dpi aware: {e}");
+    }
+
+    // This is responsible for the actual tray icon window, so it must be kept in scope
+    let tray_icon_result = sys_tray_icon::create_tray_icon();
+    if let Err(e) = tray_icon_result {
+        // TODO for some reason if I use {:#} or {:?}, it repeatedly prints the error. Could be
+        // something to do with how it implements .source()?
+        error!("could not create tray icon: {e}");
+    }
+
+    EVENT_HOOK.replace(set_event_hook());
+    log_if_err!(register_window_class());
+    log_if_err!(enum_windows());
+
+    unsafe {
+        debug!("entering message loop!");
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        error!("exited messsage loop in main.rs; this should not happen");
+    }
+}
+
+fn create_logger() -> anyhow::Result<()> {
+    let log_dir = border_config::Config::get_config_dir()?;
+    let log_path = log_dir.join("tacky-borders.log");
 
     CombinedLogger::init(vec![
         TermLogger::new(
@@ -75,62 +110,30 @@ fn main() {
         WriteLogger::new(
             LevelFilter::Info,
             Config::default(),
-            // TODO move the log somewhere else like to .config/tacky-borders
             File::create(log_path).unwrap(),
         ),
-    ])
-    .unwrap();
+    ])?;
 
-    // Idk what exactly IME windows do... smth text input language smth... but I don't think we
-    // need them. Also, -1 is 0xFFFFFFFF, which we can use to disable IME windows for all threads
-    // in the current process.
-    if unsafe { !ImmDisableIME(std::mem::transmute::<i32, u32>(-1)).as_bool() } {
-        error!("Could not disable IME!");
-    }
-
-    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() }
-    {
-        error!("Failed to make process DPI aware");
-    }
-
-    let tray_icon_result = sys_tray_icon::create_tray_icon();
-    if tray_icon_result.is_err() {
-        error!("Error creating tray icon!");
-    }
-
-    EVENT_HOOK.replace(set_event_hook());
-    let _ = register_window_class();
-    let _ = enum_windows();
-
-    unsafe {
-        debug!("Entering message loop!");
-        let mut message = MSG::default();
-        while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-        error!("MESSSAGE LOOP IN MAIN.RS EXITED. THIS SHOULD NOT HAPPEN");
-    }
+    Ok(())
 }
 
 fn register_window_class() -> windows::core::Result<()> {
     unsafe {
-        let window_class = w!("tacky-border");
         let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
 
-        let wcex = WNDCLASSEXW {
+        let window_class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(window_border::WindowBorder::s_wnd_proc),
             hInstance: hinstance,
-            lpszClassName: window_class,
+            lpszClassName: w!("border"),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             ..Default::default()
         };
-        let result = RegisterClassExW(&wcex);
 
+        let result = RegisterClassExW(&window_class);
         if result == 0 {
             let last_error = GetLastError();
-            error!("ERROR: RegisterClassExW(&wcex): {:?}", last_error);
+            error!("could not register window class: {last_error:?}");
         }
     }
 
@@ -155,33 +158,41 @@ fn enum_windows() -> windows::core::Result<()> {
     unsafe {
         EnumWindows(Some(enum_windows_callback), LPARAM::default())?;
     }
-    debug!("Windows have been enumerated!");
+    debug!("windows have been enumerated!");
     Ok(())
 }
 
 fn reload_borders() {
     let mut borders = BORDERS.lock().unwrap();
+
+    // Send destroy messages to all the border windows
     for value in borders.values() {
         let border_window = HWND(*value as _);
-        unsafe {
-            let _ = PostMessageW(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
-        }
+        log_if_err!(
+            post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+                .context("reload_borders")
+        );
     }
+
+    // Clear the borders hashmap
     borders.clear();
     drop(borders);
 
+    // Clear the initial windows list
     INITIAL_WINDOWS.lock().unwrap().clear();
 
-    let _ = enum_windows();
+    log_if_err!(enum_windows());
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
     if !has_filtered_style(_hwnd) {
         if is_window_visible(_hwnd) && !is_cloaked(_hwnd) {
-            let _ = create_border_for_window(_hwnd);
+            create_border_for_window(_hwnd);
         }
 
+        // Add currently open windows to the intial windows list so we can keep track of them
         INITIAL_WINDOWS.lock().unwrap().push(_hwnd.0 as isize);
     }
+
     TRUE
 }
