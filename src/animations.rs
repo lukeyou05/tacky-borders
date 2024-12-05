@@ -23,13 +23,8 @@ fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimationType, f32>, D::
 where
     D: Deserializer<'de>,
 {
-    let result = HashMap::<AnimationType, Value>::deserialize(deserializer);
-
     // If deserialize returns an error, it's possible that an invalid AnimationType was listed
-    let hashmap = match result {
-        Ok(val) => val,
-        Err(err) => return Err(err),
-    };
+    let hashmap = HashMap::<AnimationType, Value>::deserialize(deserializer)?;
 
     let mut deserialized = HashMap::new();
     for (key, value) in hashmap {
