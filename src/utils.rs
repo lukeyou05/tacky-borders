@@ -42,7 +42,7 @@ macro_rules! log_if_err {
             // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
             // the one in main.rs for tray_icon_result). It could have something to do with how they
             // implement .source()
-            error!("{e}");
+            error!("{e:#}");
         }
     };
 }
