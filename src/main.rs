@@ -7,6 +7,7 @@
 extern crate log;
 extern crate simplelog;
 
+use anyhow::Context;
 use simplelog::*;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -75,8 +76,8 @@ fn main() {
     }
 
     EVENT_HOOK.replace(set_event_hook());
-    let _ = register_window_class();
-    let _ = enum_windows();
+    log_if_err!(register_window_class());
+    log_if_err!(enum_windows());
 
     unsafe {
         debug!("Entering message loop!");
@@ -167,7 +168,10 @@ fn reload_borders() {
     // Send destroy messages to all the border windows
     for value in borders.values() {
         let border_window = HWND(*value as _);
-        let _ = post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
+        log_if_err!(
+            post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+                .context("reload_borders")
+        );
     }
 
     // Clear the borders hashmap
@@ -177,13 +181,13 @@ fn reload_borders() {
     // Clear the initial windows list
     INITIAL_WINDOWS.lock().unwrap().clear();
 
-    let _ = enum_windows();
+    log_if_err!(enum_windows());
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
     if !has_filtered_style(_hwnd) {
         if is_window_visible(_hwnd) && !is_cloaked(_hwnd) {
-            let _ = create_border_for_window(_hwnd);
+            create_border_for_window(_hwnd);
         }
 
         // Add currently open windows to the intial windows list so we can keep track of them

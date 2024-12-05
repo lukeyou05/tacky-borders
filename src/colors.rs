@@ -276,8 +276,8 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
     let mut pf_opaqueblend: BOOL = FALSE;
 
     // DwmGetColorizationColor gets the accent color and places it into 'pcr_colorization'
-    if unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend).is_err() } {
-        error!("Could not retrieve Windows accent color!");
+    if let Err(e) = unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) } {
+        error!("Could not retrieve Windows accent color: {e}");
     }
 
     // Bit-shift the retrieved color to separate out the rgb components

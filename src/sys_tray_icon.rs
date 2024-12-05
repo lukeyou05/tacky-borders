@@ -11,14 +11,12 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
         Err(e) => {
-            error!(
-                "Non-critical: could not retrieve icon from tacky-borders.exe for tray menu: {e}"
-            );
+            error!("Could not retrieve icon from tacky-borders.exe for tray menu: {e}");
 
             // If we could not retrieve an icon from the exe, then try to create an empty icon. If
             // even that fails, just return an Error using '?'.
             let rgba: Vec<u8> = vec![0, 0, 0, 0];
-            Icon::from_rgba(rgba, 1, 1).context("Non-critical: could not create empty tray icon")?
+            Icon::from_rgba(rgba, 1, 1).context("Could not create empty tray icon")?
         }
     };
 

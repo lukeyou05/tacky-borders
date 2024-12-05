@@ -1,8 +1,9 @@
-// TODO Add result handling. There's so many let _ =
 use crate::anim_timer::AnimationTimer;
 use crate::animations::{self, *};
 use crate::colors::*;
+use crate::log_if_err;
 use crate::utils::*;
+use crate::BORDERS;
 use anyhow::{anyhow, Context};
 use std::ptr;
 use std::sync::LazyLock;
@@ -37,18 +38,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_CREATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
     WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
-
-#[macro_export]
-macro_rules! log_if_err {
-    ($err:expr) => {
-        if let Err(e) = $err {
-            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
-            // the one in main.rs for tray_icon_result). It could have something to do with how they
-            // implement .source()
-            error!("{e:#}");
-        }
-    };
-}
 
 static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
     LazyLock::new(|| {
@@ -119,12 +108,12 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn init(&mut self, initialize_delay: u64) -> Result<(), ()> {
+    pub fn init(&mut self, initialize_delay: u64) -> anyhow::Result<()> {
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(initialize_delay));
 
         unsafe {
-            // Make the window border transparent (stole the code from PowerToys).
+            // Make the window transparent (stole the code from PowerToys; dunno how it works).
             let pos: i32 = -GetSystemMetrics(SM_CXVIRTUALSCREEN) - 8;
             let hrgn = CreateRectRgn(pos, 0, pos + 1, 1);
             let mut bh: DWM_BLURBEHIND = Default::default();
@@ -136,18 +125,15 @@ impl WindowBorder {
                     fTransitionOnMaximized: FALSE,
                 };
             }
-            let _ = DwmEnableBlurBehindWindow(self.border_window, &bh);
+            // These functions below are pretty important, so if they fail, just return an Error
+            DwmEnableBlurBehindWindow(self.border_window, &bh)
+                .context("Failed to make window transparent")?;
 
-            if let Err(e) =
-                SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
-            {
-                error!("Failed to set LWA_ALPHA; {e}");
-            }
+            SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
+                .context("Failed to set LWA_ALPHA")?;
 
-            if let Err(e) = self.create_render_targets() {
-                error!("{e}");
-                PostQuitMessage(0);
-            };
+            self.create_render_targets()
+                .context("Failed to create render targets")?;
 
             self.is_active_window = is_active_window(self.tracking_window);
 
@@ -156,20 +142,20 @@ impl WindowBorder {
                 false => self.animations.inactive.clone(),
             };
 
-            let _ = self.update_color(Some(initialize_delay));
+            log_if_err!(self.update_color(Some(initialize_delay)));
 
-            let _ = self.update_window_rect();
+            log_if_err!(self.update_window_rect());
 
             if has_native_border(self.tracking_window) {
-                let _ = self.update_position(Some(SWP_SHOWWINDOW));
-                let _ = self.render();
+                log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
+                log_if_err!(self.render());
 
                 // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
                 // This is very hacky and needs to be looked into. It may be related to the issue
                 // detailed in the wnd_proc. TODO
                 thread::sleep(time::Duration::from_millis(5));
-                let _ = self.update_position(Some(SWP_SHOWWINDOW));
-                let _ = self.render();
+                log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
+                log_if_err!(self.render());
             }
 
             self.set_anim_timer();
@@ -240,7 +226,9 @@ impl WindowBorder {
             ))
         } {
             self.destroy_anim_timer();
+            self.remove_from_borders_hashmap();
             unsafe { PostQuitMessage(0) };
+
             return Err(e);
         }
 
@@ -282,7 +270,9 @@ impl WindowBorder {
                 self.tracking_window
             )) {
                 self.destroy_anim_timer();
+                self.remove_from_borders_hashmap();
                 PostQuitMessage(0);
+
                 return Err(e);
             }
         }
@@ -387,12 +377,14 @@ impl WindowBorder {
                         Ok(_) => info!("Successfully recreated render_target; resuming thread"),
                         Err(e_2) => {
                             error!("Critical: could not recreate render_target due to: {e_2}");
+                            self.remove_from_borders_hashmap();
                             PostQuitMessage(0);
                         }
                     }
                 }
                 Err(other) => {
                     error!("Critical: unrecoverable error with EndDraw(): {other}");
+                    self.remove_from_borders_hashmap();
                     PostQuitMessage(0);
                 }
             }
@@ -436,6 +428,13 @@ impl WindowBorder {
         }
     }
 
+    fn remove_from_borders_hashmap(&mut self) {
+        BORDERS
+            .lock()
+            .unwrap()
+            .remove(&(self.tracking_window.0 as isize));
+    }
+
     pub unsafe extern "system" fn s_wnd_proc(
         window: HWND,
         message: u32,
@@ -477,7 +476,7 @@ impl WindowBorder {
                 // EVENT_SYSTEM_MOVESIZESTART and MOVESIZEEND but the relevant code doesn't seem to
                 // eat up much CPU anyways
                 if !has_native_border(self.tracking_window) {
-                    let _ = self.update_position(Some(SWP_HIDEWINDOW));
+                    log_if_err!(self.update_position(Some(SWP_HIDEWINDOW)));
                     return LRESULT(0);
                 }
 
@@ -642,6 +641,7 @@ impl WindowBorder {
                 self.destroy_anim_timer();
 
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+                self.remove_from_borders_hashmap();
                 PostQuitMessage(0);
             }
             // Ignore these window position messages

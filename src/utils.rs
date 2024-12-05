@@ -1,4 +1,6 @@
-use windows::Win32::Foundation::{BOOL, FALSE, HINSTANCE, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{
+    GetLastError, BOOL, FALSE, HINSTANCE, HWND, LPARAM, RECT, WPARAM,
+};
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT,
     DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DWM_WINDOW_CORNER_PREFERENCE,
@@ -14,6 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_MAXIMIZE,
 };
 
+use anyhow::Context;
 use regex::Regex;
 use std::ptr;
 use std::thread;
@@ -31,6 +34,19 @@ pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 
+// Note: don't use this macro with fatal errors since there's no real logic to handle them
+#[macro_export]
+macro_rules! log_if_err {
+    ($err:expr) => {
+        if let Err(e) = $err {
+            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
+            // the one in main.rs for tray_icon_result). It could have something to do with how they
+            // implement .source()
+            error!("{:#}", e);
+        }
+    };
+}
+
 pub fn has_filtered_style(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
     let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
@@ -44,7 +60,8 @@ pub fn get_window_title(hwnd: HWND) -> String {
     let mut title_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
-        error!("Could not retrieve window title for HWND: {:?}", hwnd);
+        let last_error = unsafe { GetLastError() };
+        error!("Could not retrieve window title for {hwnd:?}: {last_error:?}");
     }
 
     let title_binding = String::from_utf16_lossy(&title_arr);
@@ -55,7 +72,8 @@ pub fn get_window_class(hwnd: HWND) -> String {
     let mut class_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
-        error!("Could not retrieve window class for HWND: {:?}", hwnd);
+        let last_error = unsafe { GetLastError() };
+        error!("Could not retrieve window class for {hwnd:?}: {last_error:?}");
     }
 
     let class_binding = String::from_utf16_lossy(&class_arr);
@@ -180,15 +198,14 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 
 pub fn get_show_cmd(hwnd: HWND) -> u32 {
     let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
-    let result = unsafe { GetWindowPlacement(hwnd, &mut wp) };
-    if result.is_err() {
-        error!("Could not retrieve window placement!");
+    if let Err(e) = unsafe { GetWindowPlacement(hwnd, &mut wp) } {
+        error!("Could not retrieve window placement; {e}");
         return 0;
     }
     wp.showCmd
 }
 
-pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
+pub fn create_border_for_window(tracking_window: HWND) {
     debug!("Creating border for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
@@ -299,10 +316,11 @@ pub fn create_border_for_window(tracking_window: HWND) -> Result<(), ()> {
         let _ = unminimize_delay;
         let _ = hinstance;
 
-        let _ = border.init(initialize_delay);
+        // Note: init() contains a loop, so this should never return unless it's an Error
+        if let Err(e) = border.init(initialize_delay) {
+            error!("{}", e);
+        }
     });
-
-    Ok(())
 }
 
 fn convert_config_radius(
@@ -328,16 +346,15 @@ fn convert_config_radius(
 fn get_window_radius(tracking_window: HWND, dpi: f32) -> f32 {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
 
-    if unsafe {
+    if let Err(e) = unsafe {
         DwmGetWindowAttribute(
             tracking_window,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             ptr::addr_of_mut!(corner_preference) as _,
             size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
         )
-        .is_err()
     } {
-        error!("Could not retrieve window corner preference!");
+        error!("Could not retrieve window corner preference; {e}");
     }
 
     match corner_preference {
@@ -349,22 +366,17 @@ fn get_window_radius(tracking_window: HWND, dpi: f32) -> f32 {
     }
 }
 
-pub fn destroy_border_for_window(tracking_window: HWND) -> Result<(), ()> {
-    let mut borders_hashmap = BORDERS.lock().unwrap();
-
+pub fn destroy_border_for_window(tracking_window: HWND) {
     let window_isize = tracking_window.0 as isize;
-    let Some(border_isize) = borders_hashmap.get(&window_isize) else {
-        drop(borders_hashmap);
-        return Ok(());
+    let Some(&border_isize) = BORDERS.lock().unwrap().get(&window_isize) else {
+        return;
     };
 
-    let border_window: HWND = HWND(*border_isize as _);
-    let _ = post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0));
-    borders_hashmap.remove(&window_isize);
-
-    drop(borders_hashmap);
-
-    Ok(())
+    let border_window: HWND = HWND(border_isize as _);
+    log_if_err!(
+        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+            .context("destroy_border_for_window")
+    );
 }
 
 pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
@@ -386,9 +398,12 @@ pub fn show_border_for_window(hwnd: HWND) {
     // If the border already exists, simply post a 'SHOW' message to its message queue. Otherwise,
     // create a new border.
     if let Some(border) = get_border_from_window(hwnd) {
-        let _ = post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0));
+        log_if_err!(
+            post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
+                .context("show_border_for_window")
+        );
     } else if is_window_visible(hwnd) && !is_cloaked(hwnd) && !has_filtered_style(hwnd) {
-        let _ = create_border_for_window(hwnd);
+        create_border_for_window(hwnd);
     }
 }
 
@@ -401,7 +416,10 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
         let window_sent = window;
 
         if let Some(border) = get_border_from_window(window_sent.0) {
-            let _ = post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0));
+            log_if_err!(
+                post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
+                    .context("hide_border_for_window")
+            );
         }
     });
     true

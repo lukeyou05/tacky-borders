@@ -1,3 +1,4 @@
+use anyhow::Context;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -7,8 +8,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     OBJID_WINDOW,
 };
 
-use crate::utils::*;
 use crate::BORDERS;
+use crate::{log_if_err, utils::*};
 
 pub extern "system" fn handle_win_event(
     _h_win_event_hook: HWINEVENTHOOK,
@@ -30,7 +31,13 @@ pub extern "system" fn handle_win_event(
             }
 
             if let Some(border) = get_border_from_window(_hwnd) {
-                let _ = send_notify_message_w(border, WM_APP_LOCATIONCHANGE, WPARAM(0), LPARAM(0));
+                log_if_err!(send_notify_message_w(
+                    border,
+                    WM_APP_LOCATIONCHANGE,
+                    WPARAM(0),
+                    LPARAM(0)
+                )
+                .context("EVENT_OBJECT_LOCATIONCHANGE"));
             }
         }
         EVENT_OBJECT_REORDER => {
@@ -44,7 +51,13 @@ pub extern "system" fn handle_win_event(
             for value in borders.values() {
                 let border_window: HWND = HWND(*value as _);
                 if is_window_visible(border_window) {
-                    let _ = post_message_w(border_window, WM_APP_REORDER, WPARAM(0), LPARAM(0));
+                    log_if_err!(post_message_w(
+                        border_window,
+                        WM_APP_REORDER,
+                        WPARAM(0),
+                        LPARAM(0)
+                    )
+                    .context("EVENT_OBJECT_REORDER"));
                 }
             }
 
@@ -64,7 +77,10 @@ pub extern "system" fn handle_win_event(
                 // Some apps like Flow Launcher can become focused even if they aren't visible yet,
                 // so I also need to check if 'key' is equal to 'parent' (the focused window)
                 if is_window_visible(border_window) || key == &(parent.0 as isize) {
-                    let _ = post_message_w(border_window, WM_APP_FOCUS, WPARAM(0), LPARAM(0));
+                    log_if_err!(
+                        post_message_w(border_window, WM_APP_FOCUS, WPARAM(0), LPARAM(0))
+                            .context("EVENT_OBJECT_FOCUS")
+                    );
                 }
             }
         }
@@ -80,19 +96,25 @@ pub extern "system" fn handle_win_event(
         }
         EVENT_SYSTEM_MINIMIZESTART => {
             if let Some(border) = get_border_from_window(_hwnd) {
-                let _ = post_message_w(border, WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0));
+                log_if_err!(
+                    post_message_w(border, WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0))
+                        .context("EVENT_SYSTEM_MINIMIZESTART")
+                );
             }
         }
         EVENT_SYSTEM_MINIMIZEEND => {
             if let Some(border) = get_border_from_window(_hwnd) {
-                let _ = post_message_w(border, WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0));
+                log_if_err!(
+                    post_message_w(border, WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
+                        .context("EVENT_SYSTEM_MINIMIZEEND")
+                );
             }
         }
         EVENT_OBJECT_DESTROY => {
             if (_id_object == OBJID_WINDOW.0 || _id_object == OBJID_CLIENT.0)
                 && !has_filtered_style(_hwnd)
             {
-                let _ = destroy_border_for_window(_hwnd);
+                destroy_border_for_window(_hwnd);
             }
         }
         _ => {}
