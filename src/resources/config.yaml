@@ -101,6 +101,9 @@ window_rules:
     name: "keyviz"
     enabled: false
 
+  - match: "Title"
+    name: "Picture-in-Picture"
+    enabled: false
   # EXAMPLE CONFIGURATION:
   # - match: "Class"               # Currently supports "Class" or "Title"
   #   name: "MozillaWindowClass"   # Name of the class or title
