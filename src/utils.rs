@@ -16,7 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_MAXIMIZE,
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use regex::Regex;
 use std::ptr;
 use std::thread;
@@ -42,7 +42,7 @@ macro_rules! log_if_err {
             // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
             // the one in main.rs for tray_icon_result). It could have something to do with how they
             // implement .source()
-            error!("{e:#}");
+            error!("{e}");
         }
     };
 }
@@ -218,7 +218,13 @@ pub fn create_border_for_window(tracking_window: HWND) {
             return;
         }
 
-        let mut border = create_border_struct(window_sent.0, &window_rule);
+        let mut border = match create_border_struct(window_sent.0, &window_rule) {
+            Ok(val) => val,
+            Err(e) => {
+                error!("{e}");
+                return;
+            }
+        };
 
         // Note: 'key' for the hashmap is the tracking window, 'value' is the border window
         let mut borders_hashmap = BORDERS.lock().unwrap();
@@ -231,7 +237,7 @@ pub fn create_border_for_window(tracking_window: HWND) {
         // Otherwise, continue creating the border window
         let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
         if let Err(e) = border.create_border_window(hinstance) {
-            error!("could not create border window: {e:?}");
+            error!("could not create border window: {e}");
             return;
         };
 
@@ -252,7 +258,10 @@ pub fn create_border_for_window(tracking_window: HWND) {
     });
 }
 
-fn create_border_struct(tracking_window: HWND, window_rule: &WindowRule) -> WindowBorder {
+fn create_border_struct(
+    tracking_window: HWND,
+    window_rule: &WindowRule,
+) -> anyhow::Result<WindowBorder> {
     let config = CONFIG.lock().unwrap();
 
     // TODO holy this is ugly
@@ -280,6 +289,10 @@ fn create_border_struct(tracking_window: HWND, window_rule: &WindowRule) -> Wind
 
     // Adjust the border width and radius based on the monitor/window dpi
     let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
+    if dpi == 0.0 {
+        return Err(anyhow!("received invalid dpi of 0.0 from GetDpiForWindow"));
+    }
+
     let border_width = (config_width * dpi / 96.0) as i32;
     let border_radius = convert_config_radius(border_width, config_radius, tracking_window, dpi);
 
@@ -304,7 +317,7 @@ fn create_border_struct(tracking_window: HWND, window_rule: &WindowRule) -> Wind
         .unminimize_delay
         .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
 
-    WindowBorder {
+    Ok(WindowBorder {
         tracking_window,
         border_width,
         border_offset: config_offset,
@@ -315,7 +328,7 @@ fn create_border_struct(tracking_window: HWND, window_rule: &WindowRule) -> Wind
         initialize_delay,
         unminimize_delay,
         ..Default::default()
-    }
+    })
 }
 
 fn convert_config_radius(
