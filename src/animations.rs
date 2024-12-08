@@ -1,5 +1,4 @@
 use serde::{Deserialize, Deserializer};
-use serde_yaml::Value;
 use std::collections::HashMap;
 use std::time;
 
@@ -11,6 +10,62 @@ use crate::window_border::WindowBorder;
 pub const ANIM_NONE: i32 = 0;
 pub const ANIM_FADE: i32 = 1;
 
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+pub struct Animations {
+    #[serde(default, deserialize_with = "animation")]
+    pub active: HashMap<AnimType, AnimParams>,
+    #[serde(default, deserialize_with = "animation")]
+    pub inactive: HashMap<AnimType, AnimParams>,
+    #[serde(skip)]
+    pub current: HashMap<AnimType, AnimParams>,
+    #[serde(default = "default_fps")]
+    pub fps: i32,
+    #[serde(skip)]
+    pub fade_progress: f32,
+    #[serde(skip)]
+    pub fade_to_visible: bool,
+    #[serde(skip)]
+    pub spiral_angle: f32,
+}
+
+fn default_fps() -> i32 {
+    60
+}
+
+// Custom deserializer for HashMap<AnimationType, Option<AnimValues>>
+fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimType, AnimParams>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let deserialized = HashMap::<AnimType, serde_yaml::Value>::deserialize(deserializer)?;
+    let mut hashmap = HashMap::new();
+
+    for (anim_type, value) in deserialized {
+        let duration = match value.get("duration") {
+            Some(val) => serde_yaml::from_value(val.clone())
+                .map_err(|e| serde::de::Error::custom(format!("{e}")))?,
+            None => match anim_type {
+                AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
+                AnimType::Fade => 200.0,
+            },
+        };
+        let easing = match value.get("easing") {
+            Some(val) => serde_yaml::from_value(val.clone())
+                .map_err(|e| serde::de::Error::custom(format!("{e}")))?,
+            None => AnimEasing::default(),
+        };
+
+        let anim_params = AnimParams {
+            duration,
+            easing: easing.to_points(),
+        };
+
+        hashmap.insert(anim_type, anim_params);
+    }
+
+    Ok(hashmap)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 pub enum AnimType {
     Spiral,
@@ -19,7 +74,7 @@ pub enum AnimType {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct AnimValues {
+pub struct AnimParams {
     pub duration: f32,
     // 'easing' is specified in the config.yaml as one of the values from the AnimEasing enum, but
     // we immediately convert it to points here to avoid unnecessarily processing it later
@@ -118,62 +173,6 @@ impl AnimEasing {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
-pub struct Animations {
-    #[serde(default, deserialize_with = "animation")]
-    pub active: HashMap<AnimType, AnimValues>,
-    #[serde(default, deserialize_with = "animation")]
-    pub inactive: HashMap<AnimType, AnimValues>,
-    #[serde(skip)]
-    pub current: HashMap<AnimType, AnimValues>,
-    #[serde(default = "default_fps")]
-    pub fps: i32,
-    #[serde(skip)]
-    pub fade_progress: f32,
-    #[serde(skip)]
-    pub fade_only_one_color: bool,
-    #[serde(skip)]
-    pub spiral_angle: f32,
-}
-
-fn default_fps() -> i32 {
-    60
-}
-
-// Custom deserializer for HashMap<AnimationType, Option<AnimValues>>
-fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimType, AnimValues>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let deserialized = HashMap::<AnimType, Value>::deserialize(deserializer)?;
-    let mut hashmap = HashMap::new();
-
-    for (anim_type, value) in deserialized {
-        let duration = match value.get("duration") {
-            Some(val) => serde_yaml::from_value(val.clone())
-                .map_err(|e| serde::de::Error::custom(format!("{e}")))?,
-            None => match anim_type {
-                AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
-                AnimType::Fade => 200.0,
-            },
-        };
-        let easing = match value.get("easing") {
-            Some(val) => serde_yaml::from_value(val.clone())
-                .map_err(|e| serde::de::Error::custom(format!("{e}")))?,
-            None => AnimEasing::default(),
-        };
-
-        let anim_values = AnimValues {
-            duration,
-            easing: easing.to_points(),
-        };
-
-        hashmap.insert(anim_type, anim_values);
-    }
-
-    Ok(hashmap)
-}
-
 pub fn animate_spiral(
     border: &mut WindowBorder,
     anim_elapsed: &time::Duration,
@@ -211,7 +210,7 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
             false => 1.0,
         };
 
-        border.animations.fade_only_one_color = true;
+        border.animations.fade_to_visible = true;
     }
 
     // Determine which direction we should move fade_progress
@@ -231,22 +230,19 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         border.inactive_color.set_opacity(1.0 - final_opacity);
 
         border.animations.fade_progress = final_opacity;
-        border.animations.fade_only_one_color = false;
+        border.animations.fade_to_visible = false;
         border.event_anim = ANIM_NONE;
         return;
     }
 
-    let ease_control_points = match border.animations.current.get(&AnimType::Fade) {
-        Some(anim_values) => anim_values.easing,
+    let bezier_control_points = match border.animations.current.get(&AnimType::Fade) {
+        Some(anim_params) => anim_params.easing,
         // This 'None' arm should rarely, if ever be reached because this 'animate_fade' function
         // generally won't be called unless AnimType::Fade exists in the current animations hashmap
         None => AnimEasing::default().to_points(),
     };
 
-    // TODO perhaps add config options for this
-    //
-    // Basically EaseInOutQuad
-    let ease_in_out_quad = match cubic_bezier(&ease_control_points) {
+    let easing_function = match cubic_bezier(&bezier_control_points) {
         Ok(func) => func,
         Err(e) => {
             error!("{e}");
@@ -255,9 +251,9 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         }
     };
 
-    let y_coord = ease_in_out_quad(border.animations.fade_progress);
+    let y_coord = easing_function(border.animations.fade_progress);
 
-    let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_only_one_color {
+    let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_to_visible {
         true => match border.is_active_window {
             true => (y_coord, 0.0),
             false => (0.0, 1.0 - y_coord),

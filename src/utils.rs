@@ -34,7 +34,6 @@ pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 
-// Note: don't use this macro with fatal errors since there's no real logic to handle them
 #[macro_export]
 macro_rules! log_if_err {
     ($err:expr) => {

@@ -593,14 +593,14 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_values) in self.animations.current.clone().iter() {
+                for (anim_type, anim_params) in self.animations.current.clone().iter() {
                     match anim_type {
                         AnimType::Spiral => {
-                            animations::animate_spiral(self, &anim_elapsed, anim_values.duration);
+                            animations::animate_spiral(self, &anim_elapsed, anim_params.duration);
                             update = true;
                         }
                         AnimType::ReverseSpiral => {
-                            animations::animate_spiral(self, &anim_elapsed, -anim_values.duration);
+                            animations::animate_spiral(self, &anim_elapsed, -anim_params.duration);
                             update = true;
                         }
                         AnimType::Fade => {}
@@ -609,7 +609,7 @@ impl WindowBorder {
 
                 if self.event_anim == ANIM_FADE {
                     let anim_duration = match self.animations.current.get(&AnimType::Fade) {
-                        Some(anim_values) => anim_values.duration,
+                        Some(anim_params) => anim_params.duration,
                         None => 200.0,
                     };
 

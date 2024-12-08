@@ -90,16 +90,20 @@ window_rules:
     enabled: false
 
   - match: "Title"
-    name: "Flow.Launcher"
-    #enabled: false
-
-  - match: "Title"
     strategy: "Contains"
     name: "Zebar"
     enabled: false
 
   - match: "Title"
+    name: "komorebi-bar"
+    enabled: false
+
+  - match: "Title"
     name: "keyviz"
+    enabled: false
+
+  - match: "Title"
+    name: "Picture-in-Picture"
     enabled: false
 
   # EXAMPLE CONFIGURATION:
