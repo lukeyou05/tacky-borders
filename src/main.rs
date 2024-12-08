@@ -72,7 +72,7 @@ fn main() {
     if let Err(e) = tray_icon_result {
         // TODO for some reason if I use {:#} or {:?}, it repeatedly prints the error. Could be
         // something to do with how it implements .source()?
-        error!("could not create tray icon: {e}");
+        error!("could not create tray icon: {e:#?}");
     }
 
     EVENT_HOOK.replace(set_event_hook());
