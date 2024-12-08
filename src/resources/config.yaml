@@ -75,8 +75,8 @@ global:
   #   Note: animation speed is not the duration of the animation.
   #   Note: spiral animations can use a lot of CPU and GPU.
   animations:
-    active: { ReverseSpiral, Fade }
-    inactive: { Spiral, Fade }
+    active: { ReverseSpiral, Fade: { easing: EaseInOutQuad } }
+    inactive: { Spiral, Fade: { easing: EaseInOutQuad } }
     fps: 60
 
 # Customize config options on a per-app basis.
@@ -102,9 +102,6 @@ window_rules:
     name: "keyviz"
     enabled: false
 
-  - match: "Title"
-    name: "Picture-in-Picture"
-    enabled: false
   # EXAMPLE CONFIGURATION:
   # - match: "Class"               # Currently supports "Class" or "Title"
   #   name: "MozillaWindowClass"   # Name of the class or title

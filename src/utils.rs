@@ -253,7 +253,7 @@ pub fn create_border_for_window(tracking_window: HWND) {
 
         // Note: init() contains a loop, so this should never return unless it's an Error
         if let Err(e) = border.init() {
-            error!("{e}");
+            error!("{e:#}");
         }
     });
 }
@@ -293,7 +293,7 @@ fn create_border_struct(
         return Err(anyhow!("received invalid dpi of 0.0 from GetDpiForWindow"));
     }
 
-    let border_width = (config_width * dpi / 96.0) as i32;
+    let border_width = (config_width * dpi / 96.0).round() as i32;
     let border_radius = convert_config_radius(border_width, config_radius, tracking_window, dpi);
 
     let animations = window_rule
@@ -476,12 +476,12 @@ fn de_casteljau(t: f32, p_i: f32, p1: f32, p2: f32, p_f: f32) -> f32 {
 }
 
 // Generates a cubic Bézier curve function from control points.
-pub fn cubic_bezier(
-    x1: f32,
-    y1: f32,
-    x2: f32,
-    y2: f32,
-) -> Result<impl Fn(f32) -> f32, BezierError> {
+pub fn cubic_bezier(control_points: &[f32; 4]) -> Result<impl Fn(f32) -> f32, BezierError> {
+    let x1 = control_points[0];
+    let y1 = control_points[1];
+    let x2 = control_points[2];
+    let y2 = control_points[3];
+
     // Ensure control points are within bounds.
     //
     // I think any y-value for the control points should be fine. But, we can't have negative

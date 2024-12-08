@@ -11,20 +11,20 @@ pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
     Mutex::new(match Config::create_config() {
         Ok(config) => config,
         Err(e) => {
-            error!("could not read config.yaml: {e}");
+            error!("could not read config.yaml: {e:#}");
             Config::default()
         }
     })
 });
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     pub global: Global,
     pub window_rules: Vec<WindowRule>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Global {
     pub border_width: f32,
     pub border_offset: i32,
@@ -38,7 +38,7 @@ pub struct Global {
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct WindowRule {
     #[serde(rename = "match")]
     pub kind: Option<MatchKind>,
@@ -112,7 +112,7 @@ impl Config {
         let new_config = match Self::create_config() {
             Ok(config) => config,
             Err(e) => {
-                error!("could not reload config: {e}");
+                error!("could not reload config: {e:#}");
                 Config::default()
             }
         };
