@@ -1,5 +1,6 @@
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time;
 
 use windows::Foundation::Numerics::Matrix3x2;
@@ -10,7 +11,7 @@ use crate::window_border::WindowBorder;
 pub const ANIM_NONE: i32 = 0;
 pub const ANIM_FADE: i32 = 1;
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct Animations {
     #[serde(default, deserialize_with = "animation")]
     pub active: HashMap<AnimType, AnimParams>,
@@ -24,6 +25,8 @@ pub struct Animations {
     pub fade_progress: f32,
     #[serde(skip)]
     pub fade_to_visible: bool,
+    #[serde(skip)]
+    pub spiral_progress: f32,
     #[serde(skip)]
     pub spiral_angle: f32,
 }
@@ -55,9 +58,12 @@ where
             None => AnimEasing::default(),
         };
 
+        let easing_fn = cubic_bezier(&easing.to_points())
+            .map_err(|e| serde::de::Error::custom(format!("{e}")))?;
+
         let anim_params = AnimParams {
             duration,
-            easing: easing.to_points(),
+            easing: Arc::new(easing_fn),
         };
 
         hashmap.insert(anim_type, anim_params);
@@ -73,12 +79,21 @@ pub enum AnimType {
     Fade,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone)]
 pub struct AnimParams {
     pub duration: f32,
-    // 'easing' is specified in the config.yaml as one of the values from the AnimEasing enum, but
-    // we immediately convert it to points here to avoid unnecessarily processing it later
-    pub easing: [f32; 4],
+    pub easing: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
+}
+
+// We must manually implement Debug for AnimParams because dyn Fn(f32) -> f32 doesn't implement it
+impl std::fmt::Debug for AnimParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnimParams")
+            .field("duration", &self.duration)
+            // TODO idk what to put here for "easing"
+            .field("easing", &Arc::as_ptr(&self.easing))
+            .finish()
+    }
 }
 
 // Thanks to 0xJWLabs for the AnimEasing enum along with its methods
@@ -176,18 +191,24 @@ impl AnimEasing {
 pub fn animate_spiral(
     border: &mut WindowBorder,
     anim_elapsed: &time::Duration,
-    anim_duration: f32,
+    anim_params: &AnimParams,
+    reverse: bool,
 ) {
-    // We do 1000.0 / anim_duration because anim_duration is in miliseconds, and anim_elapsed is in
-    // seconds, so if we multiply those three numbers together, the units work out or smth idk
-    //
-    // TODO i could pre-calculate 360.0 * 1000.0 / anim_duration so we don't have to keep
-    // performing that calculation everytime this function is run, but it isn't that big of a deal
-    border.animations.spiral_angle += 360.0 * anim_elapsed.as_secs_f32() * 1000.0 / anim_duration;
+    let direction = match reverse {
+        true => -1.0,
+        false => 1.0,
+    };
 
-    if border.animations.spiral_angle.abs() >= 360.0 {
-        border.animations.spiral_angle %= 360.0;
+    let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
+    border.animations.spiral_progress += delta_x;
+
+    if !(0.0..=1.0).contains(&border.animations.spiral_progress) {
+        border.animations.spiral_progress = border.animations.spiral_progress.rem_euclid(1.0);
     }
+
+    let y_coord = anim_params.easing.as_ref()(border.animations.spiral_progress);
+
+    border.animations.spiral_angle = 360.0 * y_coord;
 
     // Calculate the center point of the window
     let center_x = (border.window_rect.right - border.window_rect.left) / 2;
@@ -200,7 +221,11 @@ pub fn animate_spiral(
     );
 }
 
-pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, anim_duration: f32) {
+pub fn animate_fade(
+    border: &mut WindowBorder,
+    anim_elapsed: &time::Duration,
+    anim_params: &AnimParams,
+) {
     // If both are 0, that means the window has been opened for the first time or has been
     // unminimized. If that is the case, only one of the colors should be visible while fading.
     if border.active_color.get_opacity() == 0.0 && border.inactive_color.get_opacity() == 0.0 {
@@ -219,7 +244,7 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         false => -1.0,
     };
 
-    let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_duration * direction;
+    let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
     border.animations.fade_progress += delta_x;
 
     // Check if the fade animation is finished
@@ -235,23 +260,7 @@ pub fn animate_fade(border: &mut WindowBorder, anim_elapsed: &time::Duration, an
         return;
     }
 
-    let bezier_control_points = match border.animations.current.get(&AnimType::Fade) {
-        Some(anim_params) => anim_params.easing,
-        // This 'None' arm should rarely, if ever be reached because this 'animate_fade' function
-        // generally won't be called unless AnimType::Fade exists in the current animations hashmap
-        None => AnimEasing::default().to_points(),
-    };
-
-    let easing_function = match cubic_bezier(&bezier_control_points) {
-        Ok(func) => func,
-        Err(e) => {
-            error!("{e}");
-            border.event_anim = ANIM_NONE;
-            return;
-        }
-    };
-
-    let y_coord = easing_function(border.animations.fade_progress);
+    let y_coord = anim_params.easing.as_ref()(border.animations.fade_progress);
 
     let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_to_visible {
         true => match border.is_active_window {

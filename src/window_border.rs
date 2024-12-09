@@ -596,30 +596,25 @@ impl WindowBorder {
                 for (anim_type, anim_params) in self.animations.current.clone().iter() {
                     match anim_type {
                         AnimType::Spiral => {
-                            animations::animate_spiral(self, &anim_elapsed, anim_params.duration);
+                            animations::animate_spiral(self, &anim_elapsed, anim_params, false);
                             update = true;
                         }
                         AnimType::ReverseSpiral => {
-                            animations::animate_spiral(self, &anim_elapsed, -anim_params.duration);
+                            animations::animate_spiral(self, &anim_elapsed, anim_params, true);
                             update = true;
                         }
-                        AnimType::Fade => {}
+                        AnimType::Fade => {
+                            if self.event_anim == ANIM_FADE {
+                                animations::animate_fade(self, &anim_elapsed, anim_params);
+                                update = true;
+                            }
+                        }
                     }
                 }
 
-                if self.event_anim == ANIM_FADE {
-                    let anim_duration = match self.animations.current.get(&AnimType::Fade) {
-                        Some(anim_params) => anim_params.duration,
-                        None => 200.0,
-                    };
-
-                    animations::animate_fade(self, &anim_elapsed, anim_duration);
-                    update = true;
-                }
-
-                let interval = 1.0 / self.animations.fps as f32;
-                let diff = render_elapsed.as_secs_f32() - interval;
-                if update && (diff.abs() <= 0.001 || diff >= 0.0) {
+                let render_interval = 1.0 / self.animations.fps as f32;
+                let time_diff = render_elapsed.as_secs_f32() - render_interval;
+                if update && (time_diff.abs() <= 0.001 || time_diff >= 0.0) {
                     log_if_err!(self.render());
                 }
             }
