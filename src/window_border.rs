@@ -61,7 +61,6 @@ pub struct WindowBorder {
     pub border_width: i32,
     pub border_offset: i32,
     pub border_radius: f32,
-    pub brush_properties: D2D1_BRUSH_PROPERTIES,
     pub render_target: Option<ID2D1HwndRenderTarget>,
     pub rounded_rect: D2D1_ROUNDED_RECT,
     pub active_color: Color,
@@ -188,7 +187,7 @@ impl WindowBorder {
             pixelSize: Default::default(),
             presentOptions: D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS | D2D1_PRESENT_OPTIONS_IMMEDIATELY,
         };
-        self.brush_properties = D2D1_BRUSH_PROPERTIES {
+        let brush_properties = D2D1_BRUSH_PROPERTIES {
             opacity: 1.0,
             transform: Matrix3x2::identity(),
         };
@@ -206,6 +205,17 @@ impl WindowBorder {
             )?;
 
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+            log_if_err!(self.active_color.create_brush(
+                &render_target,
+                &self.window_rect,
+                &brush_properties,
+            ));
+            log_if_err!(self.inactive_color.create_brush(
+                &render_target,
+                &self.window_rect,
+                &brush_properties,
+            ));
 
             self.render_target = Some(render_target);
         }
@@ -226,7 +236,6 @@ impl WindowBorder {
                 self.tracking_window
             ))
         } {
-            self.destroy_anim_timer();
             self.exit_border_thread();
 
             return Err(e);
@@ -269,7 +278,6 @@ impl WindowBorder {
                 "could not set window position for {:?}",
                 self.tracking_window
             )) {
-                self.destroy_anim_timer();
                 self.exit_border_thread();
 
                 return Err(e);
@@ -341,19 +349,25 @@ impl WindowBorder {
             render_target.BeginDraw();
             render_target.Clear(None);
 
-            if bottom_color.get_opacity() > 0.0 {
-                let bottom_brush = bottom_color
-                    .create_brush(render_target, &self.window_rect, &self.brush_properties)
-                    .context("could not create ID2D1Brush")?;
+            if bottom_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = bottom_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
 
-                self.draw_rectangle(render_target, &bottom_brush);
+                match bottom_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
+                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                }
             }
-            if top_color.get_opacity() > 0.0 {
-                let top_brush = top_color
-                    .create_brush(render_target, &self.window_rect, &self.brush_properties)
-                    .context("could not create ID2D1Brush")?;
+            if top_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = top_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
 
-                self.draw_rectangle(render_target, &top_brush);
+                match top_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
+                    None => debug!("ID2D1Brush for top_color has not been created yet"),
+                }
             }
 
             match render_target.EndDraw(None, None) {
@@ -418,6 +432,8 @@ impl WindowBorder {
     }
 
     fn exit_border_thread(&mut self) {
+        self.pause = true;
+        self.destroy_anim_timer();
         BORDERS
             .lock()
             .unwrap()
@@ -622,7 +638,7 @@ impl WindowBorder {
                 let _ = ValidateRect(window, None);
             }
             WM_NCDESTROY => {
-                self.destroy_anim_timer();
+                // TODO not actually sure if we need to set GWLP_USERDATA to 0 here
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
                 self.exit_border_thread();
             }

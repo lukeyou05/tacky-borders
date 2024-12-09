@@ -3,12 +3,18 @@ global:
   # border_width: the width of the border in pixels
   border_width: 3
 
-  # border_offset: how many pixels to adjust the size/position of the border by relative to the window
+  # border_offset: how offset the border is from the edges of the window in pixels
   border_offset: -1
 
-  # border-radius: the radius of the corners.
-  # Leave it at -1 to let tacky-borders handle the radius, or set your own custom value.
-  border_radius: -1
+  # border-radius: the radius of the border's corners.
+  # Supported types:
+  #   Auto
+  #   Square
+  #   Round
+  #   RoundSmall
+  #
+  #   Or just put in any number you wish to use as the radius
+  border_radius: Auto
 
   # active_color: the color of the active window's border
   # inactive_color: the color of the inactive window's border

@@ -1,11 +1,13 @@
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
+use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{BOOL, FALSE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D_POINT_2F};
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1HwndRenderTarget, D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP,
-    D2D1_GAMMA_2_2, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
+    ID2D1Brush, ID2D1HwndRenderTarget, ID2D1LinearGradientBrush, ID2D1SolidColorBrush,
+    D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
 };
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 
@@ -49,12 +51,12 @@ impl ColorConfig {
                 if solid_config == "accent" {
                     Color::Solid(Solid {
                         color: get_accent_color(is_active_color),
-                        opacity: 0.0,
+                        brush: None,
                     })
                 } else {
                     Color::Solid(Solid {
                         color: get_color_from_hex(solid_config.as_str()),
-                        opacity: 0.0,
+                        brush: None,
                     })
                 }
             }
@@ -157,7 +159,7 @@ impl ColorConfig {
                 Color::Gradient(Gradient {
                     gradient_stops,
                     direction,
-                    opacity: 0.0,
+                    brush: None,
                 })
             }
         }
@@ -184,32 +186,58 @@ pub enum Color {
 
 #[derive(Debug, Clone)]
 pub struct Solid {
-    pub color: D2D1_COLOR_F,
-    pub opacity: f32,
+    color: D2D1_COLOR_F,
+    brush: Option<ID2D1SolidColorBrush>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Gradient {
-    pub gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
-    pub direction: GradientCoordinates,
-    pub opacity: f32,
+    gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
+    direction: GradientCoordinates,
+    brush: Option<ID2D1LinearGradientBrush>,
+}
+
+impl Gradient {
+    pub fn update_start_end_points(&self, window_rect: &RECT) {
+        let width = (window_rect.right - window_rect.left) as f32;
+        let height = (window_rect.bottom - window_rect.top) as f32;
+
+        // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
+        // convert it into coordinates in terms of pixels
+        let start_point = D2D_POINT_2F {
+            x: self.direction.start[0] * width,
+            y: self.direction.start[1] * height,
+        };
+        let end_point = D2D_POINT_2F {
+            x: self.direction.end[0] * width,
+            y: self.direction.end[1] * height,
+        };
+
+        if let Some(ref id2d1_brush) = self.brush {
+            unsafe {
+                id2d1_brush.SetStartPoint(start_point);
+                id2d1_brush.SetEndPoint(end_point)
+            };
+        }
+    }
 }
 
 impl Color {
     pub fn create_brush(
-        &self,
+        &mut self,
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
-    ) -> windows::core::Result<ID2D1Brush> {
+    ) -> anyhow::Result<()> {
         match self {
             Color::Solid(solid) => unsafe {
-                let brush =
+                let id2d1_brush =
                     render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
-                brush.SetOpacity(solid.opacity);
+                id2d1_brush.SetOpacity(0.0);
+                solid.brush = Some(id2d1_brush);
 
-                Ok(brush.into())
+                Ok(())
             },
             Color::Gradient(gradient) => unsafe {
                 let width = (window_rect.right - window_rect.left) as f32;
@@ -234,30 +262,74 @@ impl Color {
                     D2D1_EXTEND_MODE_CLAMP,
                 )?;
 
-                let brush = render_target.CreateLinearGradientBrush(
+                let id2d1_brush = render_target.CreateLinearGradientBrush(
                     &gradient_properties,
                     Some(brush_properties),
                     &gradient_stop_collection,
                 )?;
 
-                brush.SetOpacity(gradient.opacity);
+                id2d1_brush.SetOpacity(0.0);
+                gradient.brush = Some(id2d1_brush);
 
-                Ok(brush.into())
+                Ok(())
             },
         }
     }
 
-    pub fn set_opacity(&mut self, opacity: f32) {
+    pub fn get_brush(&self) -> Option<&ID2D1Brush> {
         match self {
-            Color::Gradient(gradient) => gradient.opacity = opacity,
-            Color::Solid(solid) => solid.opacity = opacity,
+            Color::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| id2d1_brush.into()),
+            Color::Gradient(gradient) => gradient
+                .brush
+                .as_ref()
+                .map(|id2d1_brush| id2d1_brush.into()),
         }
     }
 
-    pub fn get_opacity(&self) -> f32 {
+    pub fn set_opacity(&self, opacity: f32) {
         match self {
-            Color::Gradient(gradient) => gradient.opacity,
-            Color::Solid(solid) => solid.opacity,
+            Color::Gradient(gradient) => {
+                if let Some(ref id2d1_brush) = gradient.brush {
+                    unsafe { id2d1_brush.SetOpacity(opacity) }
+                }
+            }
+            Color::Solid(solid) => {
+                if let Some(ref id2d1_brush) = solid.brush {
+                    unsafe { id2d1_brush.SetOpacity(opacity) }
+                }
+            }
+        }
+    }
+
+    pub fn get_opacity(&self) -> Option<f32> {
+        match self {
+            Color::Solid(solid) => solid
+                .brush
+                .as_ref()
+                .map(|id2d1_brush| unsafe { id2d1_brush.GetOpacity() }),
+            Color::Gradient(gradient) => gradient
+                .brush
+                .as_ref()
+                .map(|id2d1_brush| unsafe { id2d1_brush.GetOpacity() }),
+        }
+    }
+
+    pub fn set_transform(&self, transform: &Matrix3x2) {
+        match self {
+            Color::Solid(solid) => {
+                if let Some(ref id2d1_brush) = solid.brush {
+                    unsafe {
+                        id2d1_brush.SetTransform(transform);
+                    }
+                }
+            }
+            Color::Gradient(gradient) => {
+                if let Some(ref id2d1_brush) = gradient.brush {
+                    unsafe {
+                        id2d1_brush.SetTransform(transform);
+                    }
+                }
+            }
         }
     }
 }
@@ -266,7 +338,7 @@ impl Default for Color {
     fn default() -> Self {
         Color::Solid(Solid {
             color: D2D1_COLOR_F::default(),
-            opacity: 0.0,
+            brush: None,
         })
     }
 }

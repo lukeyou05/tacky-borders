@@ -212,11 +212,14 @@ pub fn animate_spiral(
     let center_x = (border.window_rect.right - border.window_rect.left) / 2;
     let center_y = (border.window_rect.bottom - border.window_rect.top) / 2;
 
-    border.brush_properties.transform = Matrix3x2::rotation(
+    let transform = Matrix3x2::rotation(
         border.animations.spiral_angle,
         center_x as f32,
         center_y as f32,
     );
+
+    border.active_color.set_transform(&transform);
+    border.inactive_color.set_transform(&transform);
 }
 
 pub fn animate_fade(
@@ -226,7 +229,9 @@ pub fn animate_fade(
 ) {
     // If both are 0, that means the window has been opened for the first time or has been
     // unminimized. If that is the case, only one of the colors should be visible while fading.
-    if border.active_color.get_opacity() == 0.0 && border.inactive_color.get_opacity() == 0.0 {
+    if border.active_color.get_opacity() == Some(0.0)
+        && border.inactive_color.get_opacity() == Some(0.0)
+    {
         // Set fade_progress here so we start from 0 opacity for the visible color
         border.animations.fade_progress = match border.is_active_window {
             true => 0.0,

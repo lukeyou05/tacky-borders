@@ -28,7 +28,7 @@ pub struct Config {
 pub struct Global {
     pub border_width: f32,
     pub border_offset: i32,
-    pub border_radius: f32,
+    pub border_radius: RadiusConfig,
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
     pub animations: Option<Animations>,
@@ -38,7 +38,18 @@ pub struct Global {
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
+pub enum RadiusConfig {
+    #[default]
+    Auto,
+    Square,
+    Round,
+    RoundSmall,
+    #[serde(untagged)]
+    Custom(f32),
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct WindowRule {
     #[serde(rename = "match")]
     pub kind: Option<MatchKind>,
@@ -46,7 +57,7 @@ pub struct WindowRule {
     pub strategy: Option<MatchStrategy>,
     pub border_width: Option<f32>,
     pub border_offset: Option<i32>,
-    pub border_radius: Option<f32>,
+    pub border_radius: Option<RadiusConfig>,
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
     pub enabled: Option<bool>,

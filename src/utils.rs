@@ -21,7 +21,7 @@ use regex::Regex;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
+use crate::border_config::{MatchKind, MatchStrategy, RadiusConfig, WindowRule, CONFIG};
 use crate::window_border::WindowBorder;
 use crate::{SendHWND, __ImageBase, BORDERS, INITIAL_WINDOWS};
 
@@ -263,7 +263,7 @@ fn create_border_struct(
 ) -> anyhow::Result<WindowBorder> {
     let config = CONFIG.lock().unwrap();
 
-    // TODO holy this is ugly
+    // TODO do away with the cloning and make this code prettier somehow
     let config_width = window_rule
         .border_width
         .unwrap_or(config.global.border_width);
@@ -272,8 +272,9 @@ fn create_border_struct(
         .unwrap_or(config.global.border_offset);
     let config_radius = window_rule
         .border_radius
-        .unwrap_or(config.global.border_radius);
-    let config_active = window_rule
+        .clone()
+        .unwrap_or(config.global.border_radius.clone());
+    let config_active = &window_rule
         .active_color
         .clone()
         .unwrap_or(config.global.active_color.clone());
@@ -286,14 +287,13 @@ fn create_border_struct(
     let active_color = config_active.convert_to_color(true);
     let inactive_color = config_inactive.convert_to_color(false);
 
-    // Adjust the border width and radius based on the monitor/window dpi
+    // Adjust the border width and radius based on the window/monitor dpi
     let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
     if dpi == 0.0 {
         return Err(anyhow!("received invalid dpi of 0.0 from GetDpiForWindow"));
     }
-
     let border_width = (config_width * dpi / 96.0).round() as i32;
-    let border_radius = convert_config_radius(border_width, config_radius, tracking_window, dpi);
+    let border_radius = convert_config_radius(&config_radius, border_width, dpi, tracking_window);
 
     let animations = window_rule
         .animations
@@ -331,26 +331,36 @@ fn create_border_struct(
 }
 
 fn convert_config_radius(
+    config_radius: &RadiusConfig,
     border_width: i32,
-    config_radius: f32,
-    tracking_window: HWND,
     dpi: f32,
+    tracking_window: HWND,
 ) -> f32 {
-    // TODO use an enum for config_radius instead (-1.0 means we should automatically get radius,
-    // so maybe use "Auto" for the enum)
     match config_radius {
-        -1.0 => {
-            let window_radius = get_window_radius(tracking_window, dpi);
-            match window_radius {
-                0.0 => 0.0,
-                _ => window_radius + border_width as f32 / 2.0,
+        // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
+        RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
+            let corner_preference = get_window_corner_preference(tracking_window);
+            match corner_preference {
+                // TODO check if the user is running Windows 11 or 10
+                DWMWCP_DEFAULT => get_adjusted_radius(8.0, dpi, border_width),
+                DWMWCP_DONOTROUND => 0.0,
+                DWMWCP_ROUND => get_adjusted_radius(8.0, dpi, border_width),
+                DWMWCP_ROUNDSMALL => get_adjusted_radius(4.0, dpi, border_width),
+                _ => 0.0,
             }
         }
-        _ => config_radius * dpi / 96.0,
+        RadiusConfig::Square => 0.0,
+        RadiusConfig::Round => get_adjusted_radius(8.0, dpi, border_width),
+        RadiusConfig::RoundSmall => get_adjusted_radius(4.0, dpi, border_width),
+        RadiusConfig::Custom(radius) => radius * dpi / 96.0,
     }
 }
 
-fn get_window_radius(tracking_window: HWND, dpi: f32) -> f32 {
+fn get_adjusted_radius(radius: f32, dpi: f32, border_width: i32) -> f32 {
+    radius * dpi / 96.0 + (border_width as f32 / 2.0)
+}
+
+fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_PREFERENCE {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
 
     if let Err(e) = unsafe {
@@ -364,13 +374,7 @@ fn get_window_radius(tracking_window: HWND, dpi: f32) -> f32 {
         error!("could not retrieve window corner preference: {e}");
     }
 
-    match corner_preference {
-        DWMWCP_DEFAULT => 8.0 * dpi / 96.0,
-        DWMWCP_DONOTROUND => 0.0,
-        DWMWCP_ROUND => 8.0 * dpi / 96.0,
-        DWMWCP_ROUNDSMALL => 4.0 * dpi / 96.0,
-        _ => 8.0 * dpi / 96.0,
-    }
+    corner_preference
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) {
