@@ -45,25 +45,23 @@ where
 
     for (anim_type, value) in deserialized {
         let duration = match value.get("duration") {
-            Some(val) => serde_yaml::from_value(val.clone())
-                .map_err(|e| serde::de::Error::custom(format!("{e}")))?,
+            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
             None => match anim_type {
                 AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
                 AnimType::Fade => 200.0,
             },
         };
-        let easing = match value.get("easing") {
-            Some(val) => serde_yaml::from_value(val.clone())
-                .map_err(|e| serde::de::Error::custom(format!("{e}")))?,
+        let easing_type = match value.get("easing") {
+            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
             None => AnimEasing::default(),
         };
 
-        let easing_fn = cubic_bezier(&easing.to_points())
-            .map_err(|e| serde::de::Error::custom(format!("{e}")))?;
+        let easing_function =
+            cubic_bezier(&easing_type.to_points()).map_err(serde::de::Error::custom)?;
 
         let anim_params = AnimParams {
             duration,
-            easing: Arc::new(easing_fn),
+            easing_fn: Arc::new(easing_function),
         };
 
         hashmap.insert(anim_type, anim_params);
@@ -82,16 +80,16 @@ pub enum AnimType {
 #[derive(Clone)]
 pub struct AnimParams {
     pub duration: f32,
-    pub easing: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
+    pub easing_fn: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
 }
 
-// We must manually implement Debug for AnimParams because dyn Fn(f32) -> f32 doesn't implement it
+// We must manually implement Debug for AnimParams because Fn(f32) -> f32 doesn't implement it
 impl std::fmt::Debug for AnimParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnimParams")
             .field("duration", &self.duration)
             // TODO idk what to put here for "easing"
-            .field("easing", &Arc::as_ptr(&self.easing))
+            .field("easing_fn", &Arc::as_ptr(&self.easing_fn))
             .finish()
     }
 }
@@ -206,7 +204,7 @@ pub fn animate_spiral(
         border.animations.spiral_progress = border.animations.spiral_progress.rem_euclid(1.0);
     }
 
-    let y_coord = anim_params.easing.as_ref()(border.animations.spiral_progress);
+    let y_coord = anim_params.easing_fn.as_ref()(border.animations.spiral_progress);
 
     border.animations.spiral_angle = 360.0 * y_coord;
 
@@ -260,7 +258,7 @@ pub fn animate_fade(
         return;
     }
 
-    let y_coord = anim_params.easing.as_ref()(border.animations.fade_progress);
+    let y_coord = anim_params.easing_fn.as_ref()(border.animations.fade_progress);
 
     let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_to_visible {
         true => match border.is_active_window {

@@ -3,7 +3,7 @@ global:
   # border_width: the width of the border in pixels
   border_width: 3
 
-  # border_offset: how many pixels to shrink or expand the border by
+  # border_offset: how many pixels to adjust the size/position of the border by relative to the window
   border_offset: -1
 
   # border-radius: the radius of the corners.
@@ -69,11 +69,13 @@ global:
   #     ReverseSpiral,
   #     Fade,
   #
-  #   Animation speeds can be adjusted by appending a number to active or inactive like follows:
-  #     active: { Spiral: 100, Fade: 100 }
+  #   The animation types can be adjusted by specifying their name like follows:
+  #     active: { Spiral, Fade }
   #
-  #   Note: animation speed is not the duration of the animation.
-  #   Note: spiral animations can use a lot of CPU and GPU.
+  #   The animation parameters can be adjusted by appending them to the animation type like follows:
+  #     active: { Spiral: { duration: 1800, easing: Linear }, Fade: { duration: 300, easing: EaseInOutQuad } }
+  #
+  #   Note: spiral animations can be taxing on the CPU and GPU on low-end systems.
   animations:
     active: { ReverseSpiral, Fade: { easing: EaseInOutQuad } }
     inactive: { Spiral, Fade: { easing: EaseInOutQuad } }
