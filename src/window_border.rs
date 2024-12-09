@@ -21,7 +21,8 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget,
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BRUSH_PROPERTIES, D2D1_FACTORY_TYPE_MULTI_THREADED,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
-    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_ROUNDED_RECT,
+    D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -32,11 +33,11 @@ use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, GW_HWNDPREV,
+    SetWindowPos, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, GW_HWNDPREV,
     HWND_TOP, LWA_ALPHA, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
-    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNA,
-    WM_CREATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
-    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, WM_CREATE,
+    WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
@@ -80,25 +81,24 @@ pub struct WindowBorder {
 
 impl WindowBorder {
     pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> windows::core::Result<()> {
-        let self_title = format!(
-            "{} | {} | {:?}",
-            "tacky-border",
+        let title: Vec<u16> = format!(
+            "tacky-border | {} | {:?}\0",
             get_window_title(self.tracking_window),
             self.tracking_window
-        );
-        let mut string: Vec<u16> = self_title.encode_utf16().collect();
-        string.push(0);
+        )
+        .encode_utf16()
+        .collect();
 
         unsafe {
             self.border_window = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 w!("border"),
-                PCWSTR::from_raw(string.as_ptr()),
+                PCWSTR(title.as_ptr()),
                 WS_POPUP | WS_DISABLED,
-                0,
-                0,
-                0,
-                0,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
                 None,
                 None,
                 hinstance,
@@ -136,6 +136,7 @@ impl WindowBorder {
             self.create_render_targets()
                 .context("could not create render target in init()")?;
 
+            // This is used a lot, so I think it's better to store it into its own variable
             self.is_active_window = is_active_window(self.tracking_window);
 
             self.animations.current = match self.is_active_window {
@@ -144,16 +145,15 @@ impl WindowBorder {
             };
 
             log_if_err!(self.update_color(Some(self.initialize_delay)));
-
             log_if_err!(self.update_window_rect());
 
             if has_native_border(self.tracking_window) {
                 log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
                 log_if_err!(self.render());
 
-                // Sometimes, it doesn't show the window at first, so we wait 5ms and update it.
-                // This is very hacky and needs to be looked into. It may be related to the issue
-                // detailed in the wnd_proc. TODO
+                // TODO sometimes, the border doesn't show up on the first try. So, we just wait
+                // 5ms and call render() again. This seems to be an issue with the visibility of
+                // the window itself.
                 thread::sleep(time::Duration::from_millis(5));
                 log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
                 log_if_err!(self.render());
@@ -186,7 +186,7 @@ impl WindowBorder {
         let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
             hwnd: self.border_window,
             pixelSize: Default::default(),
-            presentOptions: D2D1_PRESENT_OPTIONS_IMMEDIATELY,
+            presentOptions: D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS | D2D1_PRESENT_OPTIONS_IMMEDIATELY,
         };
         self.brush_properties = D2D1_BRUSH_PROPERTIES {
             opacity: 1.0,
@@ -222,7 +222,7 @@ impl WindowBorder {
                 size_of::<RECT>() as u32,
             )
             .context(format!(
-                "Could not get window rect for {:?}",
+                "could not get window rect for {:?}",
                 self.tracking_window
             ))
         } {
@@ -280,7 +280,7 @@ impl WindowBorder {
 
     // TODO this is kinda scuffed to work with fade animations
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
-        match self.animations.current.contains_key(&AnimationType::Fade) && check_delay != Some(0) {
+        match self.animations.current.contains_key(&AnimType::Fade) && check_delay != Some(0) {
             true => {
                 self.event_anim = ANIM_FADE;
             }
@@ -332,15 +332,7 @@ impl WindowBorder {
                 .Resize(&pixel_size)
                 .context("could not resize render_target")?;
 
-            // TODO wtf is this mess..
-            let active_opacity = self.active_color.get_opacity();
-            let inactive_opacity = self.inactive_color.get_opacity();
-
-            let (bottom_opacity, top_opacity) = match self.is_active_window {
-                true => (inactive_opacity, active_opacity),
-                false => (active_opacity, inactive_opacity),
-            };
-
+            // Determine which color/rectangle should be drawn on top
             let (bottom_color, top_color) = match self.is_active_window {
                 true => (&self.inactive_color, &self.active_color),
                 false => (&self.active_color, &self.inactive_color),
@@ -349,14 +341,14 @@ impl WindowBorder {
             render_target.BeginDraw();
             render_target.Clear(None);
 
-            if bottom_opacity > 0.0 {
+            if bottom_color.get_opacity() > 0.0 {
                 let bottom_brush = bottom_color
                     .create_brush(render_target, &self.window_rect, &self.brush_properties)
                     .context("could not create ID2D1Brush")?;
 
                 self.draw_rectangle(render_target, &bottom_brush);
             }
-            if top_opacity > 0.0 {
+            if top_color.get_opacity() > 0.0 {
                 let top_brush = top_color
                     .create_brush(render_target, &self.window_rect, &self.brush_properties)
                     .context("could not create ID2D1Brush")?;
@@ -470,30 +462,33 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                // TODO I could probably move some of this message's code into a new message for
-                // EVENT_SYSTEM_MOVESIZESTART and MOVESIZEEND but the relevant code doesn't seem to
-                // eat up much CPU anyways
+                // If the tracking window does not have a native border visible, hide this border
+                // window, and return early to avoid unnecessary processing below
                 if !has_native_border(self.tracking_window) {
                     log_if_err!(self.update_position(Some(SWP_HIDEWINDOW)));
                     return LRESULT(0);
                 }
 
-                if !is_window_visible(self.border_window) {
-                    let _ = ShowWindow(self.border_window, SW_SHOWNA);
-                }
-
                 let old_rect = self.window_rect;
                 log_if_err!(self.update_window_rect());
-                log_if_err!(self.update_position(None));
+
+                let update_pos_flags = match is_window_visible(self.border_window) {
+                    true => None,
+                    false => Some(SWP_SHOWWINDOW),
+                };
+                log_if_err!(self.update_position(update_pos_flags));
 
                 // TODO When a window is minimized, all four points of the rect go way below 0. For
                 // some reason, after unminimizing/restoring, render() will sometimes render at
                 // this minimized size. For now, I just do self.window_rect = old_rect to fix that.
-                if !is_rect_visible(&self.window_rect) {
-                    self.window_rect = old_rect;
-                } else if !are_rects_same_size(&self.window_rect, &old_rect) {
-                    // Only re-render the border when its size changes
-                    log_if_err!(self.render());
+                match is_rect_visible(&self.window_rect) {
+                    true => {
+                        if !are_rects_same_size(&self.window_rect, &old_rect) {
+                            // Only re-render the border when its size changes
+                            log_if_err!(self.render())
+                        }
+                    }
+                    false => self.window_rect = old_rect,
                 }
             }
             // EVENT_OBJECT_REORDER
@@ -598,37 +593,28 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_speed) in self.animations.current.clone().iter() {
+                for (anim_type, anim_params) in self.animations.current.clone().iter() {
                     match anim_type {
-                        AnimationType::Spiral => {
-                            // multiply anim_speed by 2.0 otherwise it's too slow lol
-                            animations::animate_spiral(self, &anim_elapsed, *anim_speed * 2.0);
+                        AnimType::Spiral => {
+                            animations::animate_spiral(self, &anim_elapsed, anim_params, false);
                             update = true;
                         }
-                        AnimationType::ReverseSpiral => {
-                            // multiply anim_speed by -2.0 otherwise it's too slow lol
-                            animations::animate_spiral(self, &anim_elapsed, *anim_speed * -2.0);
+                        AnimType::ReverseSpiral => {
+                            animations::animate_spiral(self, &anim_elapsed, anim_params, true);
                             update = true;
                         }
-                        AnimationType::Fade => {}
+                        AnimType::Fade => {
+                            if self.event_anim == ANIM_FADE {
+                                animations::animate_fade(self, &anim_elapsed, anim_params);
+                                update = true;
+                            }
+                        }
                     }
                 }
 
-                if self.event_anim == ANIM_FADE {
-                    let anim_speed = self
-                        .animations
-                        .current
-                        .get(&AnimationType::Fade)
-                        .unwrap_or(&200.0);
-
-                    // divide anim_speed by 20 just cuz otherwise it's too fast lol
-                    animations::animate_fade(self, &anim_elapsed, *anim_speed / 20.0);
-                    update = true;
-                }
-
-                let interval = 1.0 / self.animations.fps as f32;
-                let diff = render_elapsed.as_secs_f32() - interval;
-                if update && (diff.abs() <= 0.001 || diff >= 0.0) {
+                let render_interval = 1.0 / self.animations.fps as f32;
+                let time_diff = render_elapsed.as_secs_f32() - render_interval;
+                if update && (time_diff.abs() <= 0.001 || time_diff >= 0.0) {
                     log_if_err!(self.render());
                 }
             }
