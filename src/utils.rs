@@ -34,16 +34,29 @@ pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 
-#[macro_export]
-macro_rules! log_if_err {
-    ($err:expr) => {
-        if let Err(e) = $err {
+pub trait LogIfErr {
+    fn log_if_err(&self);
+}
+
+impl LogIfErr for anyhow::Result<()> {
+    fn log_if_err(&self) {
+        if let Err(e) = self {
             // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
             // the one in main.rs for tray_icon_result). It could have something to do with how they
             // implement .source()
             error!("{e:#}");
         }
-    };
+    }
+}
+impl LogIfErr for windows::core::Result<()> {
+    fn log_if_err(&self) {
+        if let Err(e) = self {
+            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
+            // the one in main.rs for tray_icon_result). It could have something to do with how they
+            // implement .source()
+            error!("{e:#}");
+        }
+    }
 }
 
 pub fn has_filtered_style(hwnd: HWND) -> bool {
@@ -384,10 +397,10 @@ pub fn destroy_border_for_window(tracking_window: HWND) {
     };
 
     let border_window: HWND = HWND(border_isize as _);
-    log_if_err!(
-        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
-            .context("destroy_border_for_window")
-    );
+
+    post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+        .context("destroy_border_for_window")
+        .log_if_err();
 }
 
 pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
@@ -409,10 +422,9 @@ pub fn show_border_for_window(hwnd: HWND) {
     // If the border already exists, simply post a 'SHOW' message to its message queue. Otherwise,
     // create a new border.
     if let Some(border) = get_border_from_window(hwnd) {
-        log_if_err!(
-            post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
-                .context("show_border_for_window")
-        );
+        post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
+            .context("show_border_for_window")
+            .log_if_err();
     } else if is_window_visible(hwnd) && !is_cloaked(hwnd) && !has_filtered_style(hwnd) {
         create_border_for_window(hwnd);
     }
@@ -427,10 +439,9 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
         let window_sent = window;
 
         if let Some(border) = get_border_from_window(window_sent.0) {
-            log_if_err!(
-                post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
-                    .context("hide_border_for_window")
-            );
+            post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
+                .context("hide_border_for_window")
+                .log_if_err();
         }
     });
     true

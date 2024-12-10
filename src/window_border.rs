@@ -1,7 +1,6 @@
 use crate::anim_timer::AnimationTimer;
 use crate::animations::{self, *};
 use crate::colors::*;
-use crate::log_if_err;
 use crate::utils::*;
 use crate::BORDERS;
 use anyhow::{anyhow, Context};
@@ -143,19 +142,19 @@ impl WindowBorder {
                 false => self.animations.inactive.clone(),
             };
 
-            log_if_err!(self.update_color(Some(self.initialize_delay)));
-            log_if_err!(self.update_window_rect());
+            self.update_color(Some(self.initialize_delay)).log_if_err();
+            self.update_window_rect().log_if_err();
 
             if has_native_border(self.tracking_window) {
-                log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
-                log_if_err!(self.render());
+                self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
+                self.render().log_if_err();
 
                 // TODO sometimes, the border doesn't show up on the first try. So, we just wait
                 // 5ms and call render() again. This seems to be an issue with the visibility of
                 // the window itself.
                 thread::sleep(time::Duration::from_millis(5));
-                log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
-                log_if_err!(self.render());
+                self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
+                self.render().log_if_err();
             }
 
             self.set_anim_timer();
@@ -206,16 +205,12 @@ impl WindowBorder {
 
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-            log_if_err!(self.active_color.create_brush(
-                &render_target,
-                &self.window_rect,
-                &brush_properties,
-            ));
-            log_if_err!(self.inactive_color.create_brush(
-                &render_target,
-                &self.window_rect,
-                &brush_properties,
-            ));
+            self.active_color
+                .create_brush(&render_target, &self.window_rect, &brush_properties)
+                .log_if_err();
+            self.inactive_color
+                .create_brush(&render_target, &self.window_rect, &brush_properties)
+                .log_if_err();
 
             self.render_target = Some(render_target);
         }
@@ -481,18 +476,18 @@ impl WindowBorder {
                 // If the tracking window does not have a native border visible, hide this border
                 // window, and return early to avoid unnecessary processing below
                 if !has_native_border(self.tracking_window) {
-                    log_if_err!(self.update_position(Some(SWP_HIDEWINDOW)));
+                    self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
                     return LRESULT(0);
                 }
 
                 let old_rect = self.window_rect;
-                log_if_err!(self.update_window_rect());
+                self.update_window_rect().log_if_err();
 
                 let update_pos_flags = match is_window_visible(self.border_window) {
                     true => None,
                     false => Some(SWP_SHOWWINDOW),
                 };
-                log_if_err!(self.update_position(update_pos_flags));
+                self.update_position(update_pos_flags).log_if_err();
 
                 // TODO When a window is minimized, all four points of the rect go way below 0. For
                 // some reason, after unminimizing/restoring, render() will sometimes render at
@@ -501,7 +496,7 @@ impl WindowBorder {
                     true => {
                         if !are_rects_same_size(&self.window_rect, &old_rect) {
                             // Only re-render the border when its size changes
-                            log_if_err!(self.render())
+                            self.render().log_if_err();
                         }
                     }
                     false => self.window_rect = old_rect,
@@ -512,7 +507,7 @@ impl WindowBorder {
                 // For apps like firefox, when you hover over a tab, a popup window spawns that
                 // changes the z-order and causes the border to sit under the tracking window. To
                 // remedy that, we just re-update the position/z-order when windows are reordered.
-                log_if_err!(self.update_position(None));
+                self.update_position(None).log_if_err();
             }
             // EVENT_OBJECT_FOCUS
             WM_APP_FOCUS => {
@@ -524,9 +519,9 @@ impl WindowBorder {
                     false => self.animations.inactive.clone(),
                 };
 
-                log_if_err!(self.update_color(None));
-                log_if_err!(self.update_position(None));
-                log_if_err!(self.render());
+                self.update_color(None).log_if_err();
+                self.update_position(None).log_if_err();
+                self.render().log_if_err();
             }
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
             WM_APP_SHOWUNCLOAKED => {
@@ -534,15 +529,16 @@ impl WindowBorder {
                 // switch back, then we will receive this message even though the window is not yet
                 // visible. And, the window rect will be all weird. So, we apply the following fix.
                 let old_rect = self.window_rect;
-                log_if_err!(self.update_window_rect());
+                self.update_window_rect().log_if_err();
+
                 if !is_rect_visible(&self.window_rect) {
                     self.window_rect = old_rect;
                     return LRESULT(0);
                 }
 
                 if has_native_border(self.tracking_window) {
-                    log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
-                    log_if_err!(self.render());
+                    self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
+                    self.render().log_if_err();
                 }
 
                 self.set_anim_timer();
@@ -551,7 +547,7 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
-                log_if_err!(self.update_position(Some(SWP_HIDEWINDOW)));
+                self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
 
                 self.destroy_anim_timer();
 
@@ -559,7 +555,7 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_MINIMIZESTART
             WM_APP_MINIMIZESTART => {
-                log_if_err!(self.update_position(Some(SWP_HIDEWINDOW)));
+                self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
 
                 // TODO this is scuffed to work with fade animations
                 self.active_color.set_opacity(0.0);
@@ -581,10 +577,10 @@ impl WindowBorder {
                 self.last_anim_time = Some(time::Instant::now());
 
                 if has_native_border(self.tracking_window) {
-                    log_if_err!(self.update_color(Some(self.unminimize_delay)));
-                    log_if_err!(self.update_window_rect());
-                    log_if_err!(self.update_position(Some(SWP_SHOWWINDOW)));
-                    log_if_err!(self.render());
+                    self.update_color(Some(self.unminimize_delay)).log_if_err();
+                    self.update_window_rect().log_if_err();
+                    self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
+                    self.render().log_if_err();
                 }
 
                 self.set_anim_timer();
@@ -631,7 +627,7 @@ impl WindowBorder {
                 let render_interval = 1.0 / self.animations.fps as f32;
                 let time_diff = render_elapsed.as_secs_f32() - render_interval;
                 if update && (time_diff.abs() <= 0.001 || time_diff >= 0.0) {
-                    log_if_err!(self.render());
+                    self.render().log_if_err();
                 }
             }
             WM_PAINT => {

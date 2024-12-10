@@ -76,8 +76,8 @@ fn main() {
     }
 
     EVENT_HOOK.replace(set_event_hook());
-    log_if_err!(register_window_class());
-    log_if_err!(enum_windows());
+    register_window_class().log_if_err();
+    enum_windows().log_if_err();
 
     unsafe {
         debug!("entering message loop!");
@@ -168,10 +168,9 @@ fn reload_borders() {
     // Send destroy messages to all the border windows
     for value in borders.values() {
         let border_window = HWND(*value as _);
-        log_if_err!(
-            post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
-                .context("reload_borders")
-        );
+        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+            .context("reload_borders")
+            .log_if_err();
     }
 
     // Clear the borders hashmap
@@ -181,7 +180,7 @@ fn reload_borders() {
     // Clear the initial windows list
     INITIAL_WINDOWS.lock().unwrap().clear();
 
-    log_if_err!(enum_windows());
+    enum_windows().log_if_err();
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {

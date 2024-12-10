@@ -228,7 +228,7 @@ impl Color {
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
-    ) -> anyhow::Result<()> {
+    ) -> windows::core::Result<()> {
         match self {
             Color::Solid(solid) => unsafe {
                 let id2d1_brush =
