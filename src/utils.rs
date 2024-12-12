@@ -264,9 +264,7 @@ pub fn create_border_for_window(tracking_window: HWND) {
         let _ = hinstance;
 
         // Note: init() contains a loop, so this should never return unless it's an Error
-        if let Err(e) = border.init() {
-            error!("{e:#}");
-        }
+        border.init().log_if_err();
     });
 }
 
@@ -376,16 +374,16 @@ fn get_adjusted_radius(radius: f32, dpi: f32, border_width: i32) -> f32 {
 fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_PREFERENCE {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
 
-    if let Err(e) = unsafe {
+    unsafe {
         DwmGetWindowAttribute(
             tracking_window,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             ptr::addr_of_mut!(corner_preference) as _,
             size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
         )
-    } {
-        error!("could not retrieve window corner preference: {e}");
     }
+    .context("could not retrieve window corner preference")
+    .log_if_err();
 
     corner_preference
 }

@@ -1,8 +1,10 @@
+use anyhow::Context;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 
+use crate::utils::LogIfErr;
 use crate::utils::WM_APP_ANIMATE;
 use crate::{post_message_w, SendHWND};
 
@@ -25,11 +27,9 @@ impl AnimationTimer {
             let interval = Duration::from_millis(interval_ms);
 
             while !*stop_flag_clone.lock().unwrap() {
-                if let Err(e) = post_message_w(window_sent.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0))
-                {
-                    error!("could not send animation timer message: {e}");
-                    break;
-                }
+                post_message_w(window_sent.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0))
+                    .context("could not send animation timer message")
+                    .log_if_err();
                 thread::sleep(interval);
             }
         });

@@ -5,13 +5,12 @@
 
 #[macro_use]
 extern crate log;
-extern crate simplelog;
+extern crate sp_log;
 
-use anyhow::Context;
-use simplelog::*;
+use anyhow::{anyhow, Context};
+use sp_log::*;
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::fs::File;
 use std::sync::{LazyLock, Mutex};
 use windows::core::w;
 use windows::Win32::Foundation::{GetLastError, BOOL, HINSTANCE, HWND, LPARAM, TRUE, WPARAM};
@@ -63,9 +62,9 @@ fn main() {
         error!("could not disable ime!");
     }
 
-    if let Err(e) = set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) {
-        error!("could not make process dpi aware: {e}");
-    }
+    set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+        .context("could not make process dpi aware")
+        .log_if_err();
 
     // This is responsible for the actual tray icon window, so it must be kept in scope
     let tray_icon_result = sys_tray_icon::create_tray_icon();
@@ -91,8 +90,10 @@ fn main() {
 }
 
 fn create_logger() -> anyhow::Result<()> {
-    let log_dir = border_config::Config::get_config_dir()?;
-    let log_path = log_dir.join("tacky-borders.log");
+    let log_path = border_config::Config::get_config_dir()?.join("tacky-borders.log");
+    let Some(path_str) = log_path.to_str() else {
+        return Err(anyhow!("could not convert log_path to str"));
+    };
 
     CombinedLogger::init(vec![
         TermLogger::new(
@@ -107,10 +108,12 @@ fn create_logger() -> anyhow::Result<()> {
             TerminalMode::Mixed,
             ColorChoice::Auto,
         ),
-        WriteLogger::new(
+        FileLogger::new(
             LevelFilter::Info,
             Config::default(),
-            File::create(log_path).unwrap(),
+            path_str,
+            // 1 MB
+            Some(1024 * 1024),
         ),
     ])?;
 
