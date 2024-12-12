@@ -27,7 +27,7 @@ use crate::{SendHWND, __ImageBase, BORDERS, INITIAL_WINDOWS};
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
 pub const WM_APP_REORDER: u32 = WM_APP + 1;
-pub const WM_APP_FOCUS: u32 = WM_APP + 2;
+pub const WM_APP_FOREGROUND: u32 = WM_APP + 2;
 pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 3;
 pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;

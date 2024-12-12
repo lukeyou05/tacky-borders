@@ -2,10 +2,9 @@ use anyhow::Context;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_HIDE,
-    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, GA_ROOT, OBJID_CLIENT, OBJID_CURSOR,
-    OBJID_WINDOW,
+    EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE,
+    EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
+    EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CLIENT, OBJID_CURSOR, OBJID_WINDOW,
 };
 
 use crate::utils::*;
@@ -43,7 +42,7 @@ pub extern "system" fn handle_win_event(
 
             let borders = BORDERS.lock().unwrap();
 
-            // Send reoder messages to all the border windows
+            // Send reorder messages to all the border windows
             for value in borders.values() {
                 let border_window: HWND = HWND(*value as _);
                 if is_window_visible(border_window) {
@@ -55,21 +54,14 @@ pub extern "system" fn handle_win_event(
 
             drop(borders);
         }
-        EVENT_OBJECT_FOCUS => {
-            // This event can send a child window for its hwnd, so we have to find its parent
-            let parent = unsafe { GetAncestor(_hwnd, GA_ROOT) };
-
-            if has_filtered_style(parent) {
-                return;
-            }
-
-            // Send focus messages to all the border windows
+        EVENT_SYSTEM_FOREGROUND => {
+            // Send foreground messages to all the border windows
             for (key, val) in BORDERS.lock().unwrap().iter() {
                 let border_window: HWND = HWND(*val as _);
                 // Some apps like Flow Launcher can become focused even if they aren't visible yet,
-                // so I also need to check if 'key' is equal to 'parent' (the focused window)
-                if is_window_visible(border_window) || key == &(parent.0 as isize) {
-                    post_message_w(border_window, WM_APP_FOCUS, WPARAM(0), LPARAM(0))
+                // so I also need to check if 'key' is equal to '_hwnd' (the foreground window)
+                if is_window_visible(border_window) || key == &(_hwnd.0 as isize) {
+                    post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                         .context("EVENT_OBJECT_FOCUS")
                         .log_if_err();
                 }

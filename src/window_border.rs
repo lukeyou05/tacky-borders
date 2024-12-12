@@ -510,7 +510,7 @@ impl WindowBorder {
                 self.update_position(None).log_if_err();
             }
             // EVENT_OBJECT_FOCUS
-            WM_APP_FOCUS => {
+            WM_APP_FOREGROUND => {
                 self.is_active_window = is_active_window(self.tracking_window);
 
                 // Update the current animations list
