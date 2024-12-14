@@ -5,6 +5,7 @@ use std::time;
 
 use windows::Foundation::Numerics::Matrix3x2;
 
+use crate::anim_timer::AnimationTimer;
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
@@ -18,7 +19,9 @@ pub struct Animations {
     #[serde(default, deserialize_with = "animation")]
     pub inactive: HashMap<AnimType, AnimParams>,
     #[serde(skip)]
-    pub current: HashMap<AnimType, AnimParams>,
+    pub event: i32,
+    #[serde(skip)]
+    pub timer: Option<AnimationTimer>,
     #[serde(default = "default_fps")]
     pub fps: i32,
     #[serde(skip)]
@@ -259,7 +262,7 @@ pub fn animate_fade(
 
         border.animations.fade_progress = final_opacity;
         border.animations.fade_to_visible = false;
-        border.event_anim = ANIM_NONE;
+        border.animations.event = ANIM_NONE;
         return;
     }
 
@@ -275,4 +278,36 @@ pub fn animate_fade(
 
     border.active_color.set_opacity(new_active_opacity);
     border.inactive_color.set_opacity(new_inactive_opacity);
+}
+
+pub fn get_current_anims(border: &mut WindowBorder) -> &HashMap<AnimType, AnimParams> {
+    match border.is_active_window {
+        true => &border.animations.active,
+        false => &border.animations.inactive,
+    }
+}
+
+pub fn set_timer(border: &mut WindowBorder) {
+    if (!border.animations.active.is_empty() || !border.animations.inactive.is_empty())
+        && border.animations.timer.is_none()
+    {
+        let timer_duration = (1000.0 / border.animations.fps as f32) as u64;
+        border.animations.timer = Some(AnimationTimer::start(border.border_window, timer_duration));
+
+        border.last_anim_time = Some(time::Instant::now());
+    }
+}
+
+pub fn destroy_timer(border: &mut WindowBorder) {
+    if let Some(anim_timer) = border.animations.timer.as_mut() {
+        anim_timer.stop();
+        border.animations.timer = None;
+    }
+}
+
+pub fn update_fade_progress(border: &mut WindowBorder) {
+    border.animations.fade_progress = match border.is_active_window {
+        true => 1.0,
+        false => 0.0,
+    };
 }

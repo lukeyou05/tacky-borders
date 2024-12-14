@@ -438,36 +438,3 @@ fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
 
     D2D1_COLOR_F { r, g, b, a }
 }
-
-fn get_color_from_rgba(rgba: &str) -> D2D1_COLOR_F {
-    let rgba = rgba
-        .trim_start_matches("rgb(")
-        .trim_start_matches("rgba(")
-        .trim_end_matches(')');
-    let components: Vec<&str> = rgba.split(',').map(|s| s.trim()).collect();
-    // Check for correct number of components
-    if components.len() == 3 || components.len() == 4 {
-        // Parse red, green, and blue values
-        let red: f32 = components[0].parse::<u32>().unwrap_or(0) as f32 / 255.0;
-        let green: f32 = components[1].parse::<u32>().unwrap_or(0) as f32 / 255.0;
-        let blue: f32 = components[2].parse::<u32>().unwrap_or(0) as f32 / 255.0;
-        let alpha: f32 = if components.len() == 4 {
-            components[3].parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        return D2D1_COLOR_F {
-            r: red,
-            g: green,
-            b: blue,
-            a: alpha, // Default alpha value for rgb()
-        };
-    }
-    // Return a default color if parsing fails
-    D2D1_COLOR_F {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    }
-}

@@ -10,10 +10,9 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowPlacement, GetWindowTextW,
-    IsWindowVisible, PostMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOWPLACEMENT,
-    WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
-    WS_MAXIMIZE,
+    GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible,
+    PostMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -207,15 +206,6 @@ pub fn has_native_border(hwnd: HWND) -> bool {
     }
 }
 
-pub fn get_show_cmd(hwnd: HWND) -> u32 {
-    let mut wp: WINDOWPLACEMENT = WINDOWPLACEMENT::default();
-    if let Err(e) = unsafe { GetWindowPlacement(hwnd, &mut wp) } {
-        error!("could not retrieve window placement: {e}");
-        return 0;
-    }
-    wp.showCmd
-}
-
 pub fn create_border_for_window(tracking_window: HWND) {
     debug!("creating border for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
@@ -350,8 +340,7 @@ fn convert_config_radius(
     match config_radius {
         // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
         RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
-            let corner_preference = get_window_corner_preference(tracking_window);
-            match corner_preference {
+            match get_window_corner_preference(tracking_window) {
                 // TODO check if the user is running Windows 11 or 10
                 DWMWCP_DEFAULT => get_adjusted_radius(8.0, dpi, border_width),
                 DWMWCP_DONOTROUND => 0.0,

@@ -1,4 +1,3 @@
-use crate::anim_timer::AnimationTimer;
 use crate::animations::{self, *};
 use crate::colors::*;
 use crate::utils::*;
@@ -56,6 +55,7 @@ static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
 pub struct WindowBorder {
     pub border_window: HWND,
     pub tracking_window: HWND,
+    pub is_active_window: bool,
     pub window_rect: RECT,
     pub border_width: i32,
     pub border_offset: i32,
@@ -65,16 +65,11 @@ pub struct WindowBorder {
     pub active_color: Color,
     pub inactive_color: Color,
     pub animations: Animations,
-    pub event_anim: i32,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
-    pub anim_timer: Option<AnimationTimer>,
-    // Delay border visbility when tracking window is in animation
     pub initialize_delay: u64,
     pub unminimize_delay: u64,
-    // This is to pause the border from doing anything when it doesn't need to
     pub pause: bool,
-    pub is_active_window: bool,
 }
 
 impl WindowBorder {
@@ -131,16 +126,12 @@ impl WindowBorder {
             SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
                 .context("could not set LWA_ALPHA")?;
 
-            self.create_render_targets()
-                .context("could not create render target in init()")?;
+            self.create_render_resources()
+                .context("could not create render resources in init()")?;
 
-            // This is used a lot, so I think it's better to store it into its own variable
+            // This is used a lot, so I think it's better to store it into its own variable instead
+            // of constantly making the same Windows API calls
             self.is_active_window = is_active_window(self.tracking_window);
-
-            self.animations.current = match self.is_active_window {
-                true => self.animations.active.clone(),
-                false => self.animations.inactive.clone(),
-            };
 
             self.update_color(Some(self.initialize_delay)).log_if_err();
             self.update_window_rect().log_if_err();
@@ -157,7 +148,7 @@ impl WindowBorder {
                 self.render().log_if_err();
             }
 
-            self.set_anim_timer();
+            animations::set_timer(self);
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
@@ -170,7 +161,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn create_render_targets(&mut self) -> anyhow::Result<()> {
+    fn create_render_resources(&mut self) -> anyhow::Result<()> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -232,7 +223,6 @@ impl WindowBorder {
             ))
         } {
             self.exit_border_thread();
-
             return Err(e);
         }
 
@@ -245,21 +235,22 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn update_position(&mut self, c_flags: Option<SET_WINDOW_POS_FLAGS>) -> anyhow::Result<()> {
+    fn update_position(&mut self, other_flags: Option<SET_WINDOW_POS_FLAGS>) -> anyhow::Result<()> {
         unsafe {
-            // Place the window border above the tracking window
+            // Get the hwnd above the tracking hwnd so we can place the border window in between
             let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
-            let mut u_flags =
-                SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOREDRAW | c_flags.unwrap_or_default();
+
+            let mut swp_flags = SWP_NOSENDCHANGING
+                | SWP_NOACTIVATE
+                | SWP_NOREDRAW
+                | other_flags.unwrap_or_default();
 
             // If hwnd_above_tracking is the window border itself, we have what we want and there's
             // no need to change the z-order (plus it results in an error if we try it).
             if hwnd_above_tracking == Ok(self.border_window) {
-                u_flags |= SWP_NOZORDER;
+                swp_flags |= SWP_NOZORDER;
             }
 
-            // If hwnd_above_tracking returns an error, it's likely that tracking_window is already
-            // the highest in z-order, so we use HWND_TOP to place the window border above.
             if let Err(e) = SetWindowPos(
                 self.border_window,
                 hwnd_above_tracking.unwrap_or(HWND_TOP),
@@ -267,49 +258,44 @@ impl WindowBorder {
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
                 self.window_rect.bottom - self.window_rect.top,
-                u_flags,
+                swp_flags,
             )
             .context(format!(
                 "could not set window position for {:?}",
                 self.tracking_window
             )) {
                 self.exit_border_thread();
-
                 return Err(e);
             }
         }
         Ok(())
     }
 
-    // TODO this is kinda scuffed to work with fade animations
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
-        match self.animations.current.contains_key(&AnimType::Fade) && check_delay != Some(0) {
-            true => {
-                self.event_anim = ANIM_FADE;
+        match animations::get_current_anims(self).contains_key(&AnimType::Fade) {
+            false => self.update_brush_opacities(),
+            true if check_delay == Some(0) => {
+                self.update_brush_opacities();
+                animations::update_fade_progress(self)
             }
-            false => {
-                // TODO needing this here is kinda jank but it works for now
-                self.animations.fade_progress = match self.is_active_window {
-                    true => 1.0,
-                    false => 0.0,
-                };
-                let (top_color, bottom_color) = match self.is_active_window {
-                    true => (&mut self.active_color, &mut self.inactive_color),
-                    false => (&mut self.inactive_color, &mut self.active_color),
-                };
-                top_color.set_opacity(1.0);
-                bottom_color.set_opacity(0.0);
-            }
+            true => self.animations.event = ANIM_FADE,
         }
 
         Ok(())
     }
 
+    fn update_brush_opacities(&mut self) {
+        let (top_color, bottom_color) = match self.is_active_window {
+            true => (&mut self.active_color, &mut self.inactive_color),
+            false => (&mut self.inactive_color, &mut self.active_color),
+        };
+        top_color.set_opacity(1.0);
+        bottom_color.set_opacity(0.0);
+    }
+
     fn render(&mut self) -> anyhow::Result<()> {
         self.last_render_time = Some(time::Instant::now());
 
-        // Get the render target (this can result in an error at the start because render() can be
-        // called before self.render_target is set... for now we just ignore it)
         let Some(ref render_target) = self.render_target else {
             return Err(anyhow!("render_target has not been set yet"));
         };
@@ -319,15 +305,16 @@ impl WindowBorder {
             height: (self.window_rect.bottom - self.window_rect.top) as u32,
         };
 
-        // Convert and store the border's width and offset as f32
-        let width = self.border_width as f32;
-        let offset = self.border_offset as f32;
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
 
         self.rounded_rect.rect = D2D_RECT_F {
-            left: width / 2.0 - offset,
-            top: width / 2.0 - offset,
-            right: (self.window_rect.right - self.window_rect.left) as f32 - width / 2.0 + offset,
-            bottom: (self.window_rect.bottom - self.window_rect.top) as f32 - width / 2.0 + offset,
+            left: border_width / 2.0 - border_offset,
+            top: border_width / 2.0 - border_offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32 - border_width / 2.0
+                + border_offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32 - border_width / 2.0
+                + border_offset,
         };
 
         unsafe {
@@ -373,7 +360,7 @@ impl WindowBorder {
                     // drivers, changing screen resolution, etc.
                     warn!("render_target has been lost; attempting to recreate");
 
-                    match self.create_render_targets() {
+                    match self.create_render_resources() {
                         Ok(_) => info!("successfully recreated render_target; resuming thread"),
                         Err(e_2) => {
                             error!("could not recreate render_target; exiting thread: {e_2}");
@@ -410,25 +397,9 @@ impl WindowBorder {
         }
     }
 
-    fn set_anim_timer(&mut self) {
-        if (!self.animations.active.is_empty() || !self.animations.inactive.is_empty())
-            && self.anim_timer.is_none()
-        {
-            let timer_duration = (1000.0 / self.animations.fps as f32) as u64;
-            self.anim_timer = Some(AnimationTimer::start(self.border_window, timer_duration));
-        }
-    }
-
-    fn destroy_anim_timer(&mut self) {
-        if let Some(anim_timer) = self.anim_timer.as_mut() {
-            anim_timer.stop();
-            self.anim_timer = None;
-        }
-    }
-
     fn exit_border_thread(&mut self) {
         self.pause = true;
-        self.destroy_anim_timer();
+        animations::destroy_timer(self);
         BORDERS
             .lock()
             .unwrap()
@@ -504,20 +475,13 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
-                // For apps like firefox, when you hover over a tab, a popup window spawns that
-                // changes the z-order and causes the border to sit under the tracking window. To
-                // remedy that, we just re-update the position/z-order when windows are reordered.
+                // If something changes the z-order of windows, it may put the border window behind
+                // the tracking window, so we update the border's position here when that happens
                 self.update_position(None).log_if_err();
             }
             // EVENT_OBJECT_FOCUS
             WM_APP_FOREGROUND => {
                 self.is_active_window = is_active_window(self.tracking_window);
-
-                // Update the current animations list
-                self.animations.current = match self.is_active_window {
-                    true => self.animations.active.clone(),
-                    false => self.animations.inactive.clone(),
-                };
 
                 self.update_color(None).log_if_err();
                 self.update_position(None).log_if_err();
@@ -541,40 +505,29 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.set_anim_timer();
-
+                animations::set_timer(self);
                 self.pause = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
-
-                self.destroy_anim_timer();
-
+                animations::destroy_timer(self);
                 self.pause = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
             WM_APP_MINIMIZESTART => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
 
-                // TODO this is scuffed to work with fade animations
                 self.active_color.set_opacity(0.0);
                 self.inactive_color.set_opacity(0.0);
 
-                self.destroy_anim_timer();
-
+                animations::destroy_timer(self);
                 self.pause = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
-            // When a window is about to be unminimized, hide the border and let the thread sleep
-            // to wait for the window animation to finish, then show the border.
             WM_APP_MINIMIZEEND => {
+                // Keep the border hidden while the tracking window is in its unminimize animation
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
-
-                // TODO scuffed to work with fade animations. When the window is minimized,
-                // last_anim_time stops updating so when we go back to unminimize it,
-                // last_anim_time.elapsed() will be large. So, we have to reset it here.
-                self.last_anim_time = Some(time::Instant::now());
 
                 if has_native_border(self.tracking_window) {
                     self.update_color(Some(self.unminimize_delay)).log_if_err();
@@ -583,8 +536,7 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.set_anim_timer();
-
+                animations::set_timer(self);
                 self.pause = false;
             }
             WM_APP_ANIMATE => {
@@ -605,7 +557,7 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_params) in self.animations.current.clone().iter() {
+                for (anim_type, anim_params) in animations::get_current_anims(self).clone().iter() {
                     match anim_type {
                         AnimType::Spiral => {
                             animations::animate_spiral(self, &anim_elapsed, anim_params, false);
@@ -616,7 +568,7 @@ impl WindowBorder {
                             update = true;
                         }
                         AnimType::Fade => {
-                            if self.event_anim == ANIM_FADE {
+                            if self.animations.event == ANIM_FADE {
                                 animations::animate_fade(self, &anim_elapsed, anim_params);
                                 update = true;
                             }
