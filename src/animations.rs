@@ -287,7 +287,7 @@ pub fn get_current_anims(border: &mut WindowBorder) -> &HashMap<AnimType, AnimPa
     }
 }
 
-pub fn set_timer(border: &mut WindowBorder) {
+pub fn set_timer_if_anims_enabled(border: &mut WindowBorder) {
     if (!border.animations.active.is_empty() || !border.animations.inactive.is_empty())
         && border.animations.timer.is_none()
     {

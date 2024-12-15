@@ -148,7 +148,7 @@ impl WindowBorder {
                 self.render().log_if_err();
             }
 
-            animations::set_timer(self);
+            animations::set_timer_if_anims_enabled(self);
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
@@ -479,7 +479,7 @@ impl WindowBorder {
                 // the tracking window, so we update the border's position here when that happens
                 self.update_position(None).log_if_err();
             }
-            // EVENT_OBJECT_FOCUS
+            // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
                 self.is_active_window = is_active_window(self.tracking_window);
 
@@ -505,7 +505,7 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                animations::set_timer(self);
+                animations::set_timer_if_anims_enabled(self);
                 self.pause = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
@@ -536,7 +536,7 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                animations::set_timer(self);
+                animations::set_timer_if_anims_enabled(self);
                 self.pause = false;
             }
             WM_APP_ANIMATE => {
