@@ -48,7 +48,7 @@ pub struct GradientCoordinates {
 
 impl ColorConfig {
     // Convert the ColorConfig struct to a Color struct
-    pub fn convert_to_color(&self, is_active_color: bool) -> Color {
+    pub fn to_color(&self, is_active_color: bool) -> Color {
         match self {
             ColorConfig::SolidConfig(solid_config) => {
                 if solid_config == "accent" {

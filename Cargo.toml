@@ -30,6 +30,7 @@ features = [
   "Win32_UI_Input_Ime",
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_SystemServices",
+  "Win32_System_LibraryLoader",
 ]
 
 [build-dependencies]

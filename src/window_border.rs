@@ -1,7 +1,13 @@
-use crate::animations::{self, *};
-use crate::colors::*;
-use crate::utils::*;
-use crate::BORDERS;
+use crate::animations::{self, AnimType, Animations};
+use crate::border_config::{WindowRule, CONFIG};
+use crate::colors::Color;
+use crate::utils::{
+    are_rects_same_size, get_window_title, has_native_border, is_rect_visible,
+    is_window_foreground, is_window_visible, LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND,
+    WM_APP_HIDECLOAKED, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
+    WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
+};
+use crate::{BORDERS, INITIAL_WINDOWS};
 use anyhow::{anyhow, Context};
 use std::ptr;
 use std::sync::LazyLock;
@@ -10,7 +16,7 @@ use std::time;
 use windows::core::{w, PCWSTR};
 use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{
-    COLORREF, D2DERR_RECREATE_TARGET, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
+    COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
@@ -28,6 +34,8 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
@@ -69,14 +77,21 @@ pub struct WindowBorder {
     pub last_anim_time: Option<time::Instant>,
     pub initialize_delay: u64,
     pub unminimize_delay: u64,
-    pub pause: bool,
+    pub is_paused: bool,
 }
 
 impl WindowBorder {
-    pub fn create_border_window(&mut self, hinstance: HINSTANCE) -> windows::core::Result<()> {
+    pub fn new(tracking_window: HWND) -> Self {
+        Self {
+            tracking_window,
+            ..Default::default()
+        }
+    }
+
+    pub fn create_window(&mut self) -> windows::core::Result<()> {
         let title: Vec<u16> = format!(
             "tacky-border | {} | {:?}\0",
-            get_window_title(self.tracking_window),
+            get_window_title(self.tracking_window).unwrap_or_default(),
             self.tracking_window
         )
         .encode_utf16()
@@ -94,7 +109,7 @@ impl WindowBorder {
                 CW_USEDEFAULT,
                 None,
                 None,
-                hinstance,
+                GetModuleHandleW(None)?,
                 Some(ptr::addr_of!(*self) as _),
             )?;
         }
@@ -102,7 +117,9 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn init(&mut self) -> anyhow::Result<()> {
+    pub fn init(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
+        self.load_from_config(window_rule).log_if_err();
+
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(self.initialize_delay));
 
@@ -131,7 +148,7 @@ impl WindowBorder {
 
             // This is used a lot, so I think it's better to store it into its own variable instead
             // of constantly making the same Windows API calls
-            self.is_active_window = is_active_window(self.tracking_window);
+            self.is_active_window = is_window_foreground(self.tracking_window);
 
             self.update_color(Some(self.initialize_delay)).log_if_err();
             self.update_window_rect().log_if_err();
@@ -157,6 +174,66 @@ impl WindowBorder {
             }
             debug!("exiting border thread for {:?}!", self.tracking_window);
         }
+
+        Ok(())
+    }
+
+    pub fn load_from_config(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
+        let config = CONFIG.lock().unwrap();
+        let global = &config.global;
+
+        // TODO make this code prettier somehow
+        let width_config = window_rule.border_width.unwrap_or(global.border_width);
+        let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
+        let radius_config = window_rule
+            .border_radius
+            .as_ref()
+            .unwrap_or(&global.border_radius);
+        let active_color_config = window_rule
+            .active_color
+            .as_ref()
+            .unwrap_or(&global.active_color);
+        let inactive_color_config = window_rule
+            .inactive_color
+            .as_ref()
+            .unwrap_or(&global.inactive_color);
+
+        // Convert ColorConfig structs to Color
+        self.active_color = active_color_config.to_color(true);
+        self.inactive_color = inactive_color_config.to_color(false);
+
+        // Adjust the border width and radius based on the window/monitor dpi
+        let dpi = unsafe { GetDpiForWindow(self.tracking_window) } as f32;
+        if dpi == 0.0 {
+            return Err(anyhow!("received invalid dpi of 0.0 from GetDpiForWindow"));
+        }
+        self.border_width = (width_config * dpi / 96.0).round() as i32;
+        self.border_offset = offset_config;
+        self.border_radius = radius_config.to_radius(self.border_width, dpi, self.tracking_window);
+
+        self.animations = window_rule
+            .animations
+            .clone()
+            .unwrap_or(global.animations.clone().unwrap_or_default());
+
+        // If the tracking window is part of the initial windows list (meaning it was already open when
+        // tacky-borders was launched), then there should be no initialize delay.
+        self.initialize_delay = match INITIAL_WINDOWS
+            .lock()
+            .unwrap()
+            .contains(&(self.tracking_window.0 as isize))
+        {
+            true => 0,
+            false => window_rule
+                .initialize_delay
+                .unwrap_or(global.initialize_delay.unwrap_or(250)),
+        };
+        self.unminimize_delay = window_rule
+            .unminimize_delay
+            .unwrap_or(global.unminimize_delay.unwrap_or(200));
+
+        drop(config);
+        drop(window_rule);
 
         Ok(())
     }
@@ -278,7 +355,7 @@ impl WindowBorder {
                 self.update_brush_opacities();
                 animations::update_fade_progress(self)
             }
-            true => self.animations.event = ANIM_FADE,
+            true => self.animations.should_fade = true,
         }
 
         Ok(())
@@ -398,7 +475,7 @@ impl WindowBorder {
     }
 
     fn exit_border_thread(&mut self) {
-        self.pause = true;
+        self.is_paused = true;
         animations::destroy_timer(self);
         BORDERS
             .lock()
@@ -440,7 +517,7 @@ impl WindowBorder {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
             WM_APP_LOCATIONCHANGE => {
-                if self.pause {
+                if self.is_paused {
                     return LRESULT(0);
                 }
 
@@ -454,23 +531,23 @@ impl WindowBorder {
                 let old_rect = self.window_rect;
                 self.update_window_rect().log_if_err();
 
+                // TODO When a window is minimized, all four points of the rect go way below 0. For
+                // some reason, after unminimizing/restoring, render() will sometimes render at
+                // this minimized size. For now, I just do self.window_rect = old_rect to fix that.
+                if !is_rect_visible(&self.window_rect) {
+                    self.window_rect = old_rect;
+                    return LRESULT(0);
+                }
+
                 let update_pos_flags = match is_window_visible(self.border_window) {
                     true => None,
                     false => Some(SWP_SHOWWINDOW),
                 };
                 self.update_position(update_pos_flags).log_if_err();
 
-                // TODO When a window is minimized, all four points of the rect go way below 0. For
-                // some reason, after unminimizing/restoring, render() will sometimes render at
-                // this minimized size. For now, I just do self.window_rect = old_rect to fix that.
-                match is_rect_visible(&self.window_rect) {
-                    true => {
-                        if !are_rects_same_size(&self.window_rect, &old_rect) {
-                            // Only re-render the border when its size changes
-                            self.render().log_if_err();
-                        }
-                    }
-                    false => self.window_rect = old_rect,
+                if !are_rects_same_size(&self.window_rect, &old_rect) {
+                    // Only re-render the border when its size changes
+                    self.render().log_if_err();
                 }
             }
             // EVENT_OBJECT_REORDER
@@ -481,7 +558,7 @@ impl WindowBorder {
             }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
-                self.is_active_window = is_active_window(self.tracking_window);
+                self.is_active_window = is_window_foreground(self.tracking_window);
 
                 self.update_color(None).log_if_err();
                 self.update_position(None).log_if_err();
@@ -506,13 +583,13 @@ impl WindowBorder {
                 }
 
                 animations::set_timer_if_anims_enabled(self);
-                self.pause = false;
+                self.is_paused = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
                 animations::destroy_timer(self);
-                self.pause = true;
+                self.is_paused = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
             WM_APP_MINIMIZESTART => {
@@ -522,7 +599,7 @@ impl WindowBorder {
                 self.inactive_color.set_opacity(0.0);
 
                 animations::destroy_timer(self);
-                self.pause = true;
+                self.is_paused = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
             WM_APP_MINIMIZEEND => {
@@ -537,10 +614,10 @@ impl WindowBorder {
                 }
 
                 animations::set_timer_if_anims_enabled(self);
-                self.pause = false;
+                self.is_paused = false;
             }
             WM_APP_ANIMATE => {
-                if self.pause {
+                if self.is_paused {
                     return LRESULT(0);
                 }
 
@@ -568,7 +645,7 @@ impl WindowBorder {
                             update = true;
                         }
                         AnimType::Fade => {
-                            if self.animations.event == ANIM_FADE {
+                            if self.animations.should_fade {
                                 animations::animate_fade(self, &anim_elapsed, anim_params);
                                 update = true;
                             }

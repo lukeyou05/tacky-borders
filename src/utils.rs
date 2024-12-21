@@ -1,18 +1,17 @@
 use windows::Win32::Foundation::{
-    GetLastError, BOOL, FALSE, HINSTANCE, HWND, LPARAM, RECT, WPARAM,
+    GetLastError, SetLastError, BOOL, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE,
+    ERROR_SUCCESS, FALSE, HWND, LPARAM, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT,
-    DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DWM_WINDOW_CORNER_PREFERENCE,
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DWM_WINDOW_CORNER_PREFERENCE,
 };
-use windows::Win32::UI::HiDpi::{
-    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
-};
+use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT};
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible,
     PostMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MINIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -20,9 +19,9 @@ use regex::Regex;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::{MatchKind, MatchStrategy, RadiusConfig, WindowRule, CONFIG};
+use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
 use crate::window_border::WindowBorder;
-use crate::{SendHWND, __ImageBase, BORDERS, INITIAL_WINDOWS};
+use crate::{SendHWND, BORDERS};
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
 pub const WM_APP_REORDER: u32 = WM_APP + 1;
@@ -47,6 +46,7 @@ impl LogIfErr for anyhow::Result<()> {
         }
     }
 }
+
 impl LogIfErr for windows::core::Result<()> {
     fn log_if_err(&self) {
         if let Err(e) = self {
@@ -58,43 +58,79 @@ impl LogIfErr for windows::core::Result<()> {
     }
 }
 
-pub fn has_filtered_style(hwnd: HWND) -> bool {
+pub fn is_window_top_level(hwnd: HWND) -> bool {
     let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
-    let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
 
-    style & WS_CHILD.0 != 0
-        || ex_style & WS_EX_TOOLWINDOW.0 != 0
-        || ex_style & WS_EX_NOACTIVATE.0 != 0
+    style & WS_CHILD.0 == 0
 }
 
-pub fn get_window_title(hwnd: HWND) -> String {
+pub fn has_filtered_style(hwnd: HWND) -> bool {
+    let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
+
+    ex_style & WS_EX_TOOLWINDOW.0 != 0 || ex_style & WS_EX_NOACTIVATE.0 != 0
+}
+
+pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
     let mut title_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
         let last_error = unsafe { GetLastError() };
-        error!("could not retrieve window title for {hwnd:?}: {last_error:?}");
+
+        // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
+        // TODO figure out whats with the invalid window handles
+        if !matches!(
+            last_error,
+            ERROR_ENVVAR_NOT_FOUND | ERROR_SUCCESS | ERROR_INVALID_WINDOW_HANDLE
+        ) {
+            // We manually reset LastError here because it doesn't seem to reset by itself
+            unsafe { SetLastError(ERROR_SUCCESS) };
+            return Err(anyhow!("{last_error:?}"));
+        }
     }
 
     let title_binding = String::from_utf16_lossy(&title_arr);
-    title_binding.split_once("\0").unwrap().0.to_string()
+    Ok(title_binding.split_once("\0").unwrap().0.to_string())
 }
 
-pub fn get_window_class(hwnd: HWND) -> String {
+pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
     let mut class_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
         let last_error = unsafe { GetLastError() };
-        error!("could not retrieve window class for {hwnd:?}: {last_error:?}");
+
+        // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
+        // TODO figure out whats with the invalid window handles
+        if !matches!(
+            last_error,
+            ERROR_ENVVAR_NOT_FOUND | ERROR_SUCCESS | ERROR_INVALID_WINDOW_HANDLE
+        ) {
+            // We manually reset LastError here because it doesn't seem to reset by itself
+            unsafe { SetLastError(ERROR_SUCCESS) };
+            return Err(anyhow!("{last_error:?}"));
+        }
     }
 
     let class_binding = String::from_utf16_lossy(&class_arr);
-    class_binding.split_once("\0").unwrap().0.to_string()
+    Ok(class_binding.split_once("\0").unwrap().0.to_string())
 }
 
 // Get the window rule from 'window_rules' in the config
 pub fn get_window_rule(hwnd: HWND) -> WindowRule {
-    let title = get_window_title(hwnd);
-    let class = get_window_class(hwnd);
+    let title = match get_window_title(hwnd) {
+        Ok(val) => val,
+        Err(err) => {
+            error!("could not retrieve window title for {hwnd:?}: {err}");
+            "".to_string()
+        }
+    };
+
+    let class = match get_window_class(hwnd) {
+        Ok(val) => val,
+        Err(err) => {
+            error!("could not retrieve window class for {hwnd:?}: {err}");
+            "".to_string()
+        }
+    };
 
     let config = CONFIG.lock().unwrap();
 
@@ -127,12 +163,12 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
                 .is_some(),
         };
 
+        // Return the first match
         if has_match {
             return rule.clone();
         }
     }
 
-    drop(config);
     WindowRule::default()
 }
 
@@ -149,7 +185,7 @@ pub fn are_rects_same_size(rect1: &RECT, rect2: &RECT) -> bool {
         && rect1.bottom - rect1.top == rect2.bottom - rect2.top
 }
 
-pub fn is_cloaked(hwnd: HWND) -> bool {
+pub fn is_window_cloaked(hwnd: HWND) -> bool {
     let mut is_cloaked = FALSE;
     if let Err(e) = unsafe {
         DwmGetWindowAttribute(
@@ -165,8 +201,13 @@ pub fn is_cloaked(hwnd: HWND) -> bool {
     is_cloaked.as_bool()
 }
 
-pub fn is_active_window(hwnd: HWND) -> bool {
+pub fn is_window_foreground(hwnd: HWND) -> bool {
     unsafe { GetForegroundWindow() == hwnd }
+}
+
+pub fn is_window_minimized(hwnd: HWND) -> bool {
+    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
+    style & WS_MINIMIZE.0 as i32 != 0
 }
 
 pub fn post_message_w(
@@ -206,27 +247,13 @@ pub fn has_native_border(hwnd: HWND) -> bool {
     }
 }
 
-pub fn create_border_for_window(tracking_window: HWND) {
+pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) {
     debug!("creating border for: {:?}", tracking_window);
     let window = SendHWND(tracking_window);
 
     let _ = thread::spawn(move || {
         let window_sent = window;
         let window_isize = window_sent.0 .0 as isize;
-
-        let window_rule = get_window_rule(window_sent.0);
-        if window_rule.enabled == Some(false) {
-            info!("border is disabled for {:?}!", window_sent.0);
-            return;
-        }
-
-        let mut border = match create_border_struct(window_sent.0, &window_rule) {
-            Ok(val) => val,
-            Err(e) => {
-                error!("{e}");
-                return;
-            }
-        };
 
         // Note: 'key' for the hashmap is the tracking window, 'value' is the border window
         let mut borders_hashmap = BORDERS.lock().unwrap();
@@ -237,8 +264,9 @@ pub fn create_border_for_window(tracking_window: HWND) {
         }
 
         // Otherwise, continue creating the border window
-        let hinstance: HINSTANCE = unsafe { std::mem::transmute(&__ImageBase) };
-        if let Err(e) = border.create_border_window(hinstance) {
+        let mut border = WindowBorder::new(window_sent.0);
+
+        if let Err(e) = border.create_window() {
             error!("could not create border window: {e}");
             return;
         };
@@ -250,117 +278,17 @@ pub fn create_border_for_window(tracking_window: HWND) {
         // Drop these values (to save some RAM?) before calling init and entering a message loop
         let _ = window_sent;
         let _ = window_isize;
-        let _ = window_rule;
-        let _ = hinstance;
 
         // Note: init() contains a loop, so this should never return unless it's an Error
-        border.init().log_if_err();
+        border.init(window_rule).log_if_err();
     });
 }
 
-fn create_border_struct(
-    tracking_window: HWND,
-    window_rule: &WindowRule,
-) -> anyhow::Result<WindowBorder> {
-    let config = CONFIG.lock().unwrap();
-
-    // TODO do away with the cloning and make this code prettier somehow
-    let config_width = window_rule
-        .border_width
-        .unwrap_or(config.global.border_width);
-    let config_offset = window_rule
-        .border_offset
-        .unwrap_or(config.global.border_offset);
-    let config_radius = window_rule
-        .border_radius
-        .clone()
-        .unwrap_or(config.global.border_radius.clone());
-    let config_active = &window_rule
-        .active_color
-        .clone()
-        .unwrap_or(config.global.active_color.clone());
-    let config_inactive = window_rule
-        .inactive_color
-        .clone()
-        .unwrap_or(config.global.inactive_color.clone());
-
-    // Convert ColorConfig structs to Color
-    let active_color = config_active.convert_to_color(true);
-    let inactive_color = config_inactive.convert_to_color(false);
-
-    // Adjust the border width and radius based on the window/monitor dpi
-    let dpi = unsafe { GetDpiForWindow(tracking_window) } as f32;
-    if dpi == 0.0 {
-        return Err(anyhow!("received invalid dpi of 0.0 from GetDpiForWindow"));
-    }
-    let border_width = (config_width * dpi / 96.0).round() as i32;
-    let border_radius = convert_config_radius(&config_radius, border_width, dpi, tracking_window);
-
-    let animations = window_rule
-        .animations
-        .clone()
-        .unwrap_or(config.global.animations.clone().unwrap_or_default());
-
-    // If the tracking window is part of the initial windows list (meaning it was already open when
-    // tacky-borders was launched), then there should be no initialize delay.
-    let initialize_delay = match INITIAL_WINDOWS
-        .lock()
-        .unwrap()
-        .contains(&(tracking_window.0 as isize))
-    {
-        true => 0,
-        false => window_rule
-            .initialize_delay
-            .unwrap_or(config.global.initialize_delay.unwrap_or(250)),
-    };
-    let unminimize_delay = window_rule
-        .unminimize_delay
-        .unwrap_or(config.global.unminimize_delay.unwrap_or(200));
-
-    Ok(WindowBorder {
-        tracking_window,
-        border_width,
-        border_offset: config_offset,
-        border_radius,
-        active_color,
-        inactive_color,
-        animations,
-        initialize_delay,
-        unminimize_delay,
-        ..Default::default()
-    })
-}
-
-fn convert_config_radius(
-    config_radius: &RadiusConfig,
-    border_width: i32,
-    dpi: f32,
-    tracking_window: HWND,
-) -> f32 {
-    match config_radius {
-        // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
-        RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
-            match get_window_corner_preference(tracking_window) {
-                // TODO check if the user is running Windows 11 or 10
-                DWMWCP_DEFAULT => get_adjusted_radius(8.0, dpi, border_width),
-                DWMWCP_DONOTROUND => 0.0,
-                DWMWCP_ROUND => get_adjusted_radius(8.0, dpi, border_width),
-                DWMWCP_ROUNDSMALL => get_adjusted_radius(4.0, dpi, border_width),
-                _ => 0.0,
-            }
-        }
-        RadiusConfig::Square => 0.0,
-        RadiusConfig::Round => get_adjusted_radius(8.0, dpi, border_width),
-        RadiusConfig::RoundSmall => get_adjusted_radius(4.0, dpi, border_width),
-        RadiusConfig::Custom(radius) => radius * dpi / 96.0,
-    }
-}
-
-fn get_adjusted_radius(radius: f32, dpi: f32, border_width: i32) -> f32 {
+pub fn get_adjusted_radius(radius: f32, dpi: f32, border_width: i32) -> f32 {
     radius * dpi / 96.0 + (border_width as f32 / 2.0)
 }
 
-fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_PREFERENCE {
+pub fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_PREFERENCE {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
 
     unsafe {
@@ -378,19 +306,16 @@ fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_PREF
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) {
-    let window_isize = tracking_window.0 as isize;
-    let Some(&border_isize) = BORDERS.lock().unwrap().get(&window_isize) else {
-        return;
-    };
+    if let Some(&border_isize) = BORDERS.lock().unwrap().get(&(tracking_window.0 as isize)) {
+        let border_window = HWND(border_isize as _);
 
-    let border_window: HWND = HWND(border_isize as _);
-
-    post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
-        .context("destroy_border_for_window")
-        .log_if_err();
+        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+            .context("destroy_border_for_window")
+            .log_if_err();
+    }
 }
 
-pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
+pub fn get_border_for_window(hwnd: HWND) -> Option<HWND> {
     let borders_hashmap = BORDERS.lock().unwrap();
 
     let hwnd_isize = hwnd.0 as isize;
@@ -400,7 +325,6 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
     };
 
     let border_window: HWND = HWND(*border_isize as _);
-    drop(borders_hashmap);
 
     Some(border_window)
 }
@@ -408,16 +332,22 @@ pub fn get_border_from_window(hwnd: HWND) -> Option<HWND> {
 pub fn show_border_for_window(hwnd: HWND) {
     // If the border already exists, simply post a 'SHOW' message to its message queue. Otherwise,
     // create a new border.
-    if let Some(border) = get_border_from_window(hwnd) {
+    if let Some(border) = get_border_for_window(hwnd) {
         post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
             .context("show_border_for_window")
             .log_if_err();
-    } else if is_window_visible(hwnd) && !is_cloaked(hwnd) && !has_filtered_style(hwnd) {
-        create_border_for_window(hwnd);
+    } else if is_window_top_level(hwnd) && is_window_visible(hwnd) && !is_window_cloaked(hwnd) {
+        let window_rule = get_window_rule(hwnd);
+
+        if window_rule.enabled == Some(false) {
+            info!("border is disabled for {hwnd:?}");
+        } else if window_rule.enabled == Some(true) || !has_filtered_style(hwnd) {
+            create_border_for_window(hwnd, window_rule);
+        }
     }
 }
 
-pub fn hide_border_for_window(hwnd: HWND) -> bool {
+pub fn hide_border_for_window(hwnd: HWND) {
     let window = SendHWND(hwnd);
 
     // Spawn a new thread to guard against re-entrancy in the event hook, though it honestly isn't
@@ -425,13 +355,12 @@ pub fn hide_border_for_window(hwnd: HWND) -> bool {
     let _ = thread::spawn(move || {
         let window_sent = window;
 
-        if let Some(border) = get_border_from_window(window_sent.0) {
+        if let Some(border) = get_border_for_window(window_sent.0) {
             post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
                 .context("hide_border_for_window")
                 .log_if_err();
         }
     });
-    true
 }
 
 // Bezier curve algorithm together with @0xJWLabs
