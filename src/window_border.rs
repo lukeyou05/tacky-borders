@@ -2,15 +2,15 @@ use crate::animations::{self, AnimType, Animations};
 use crate::border_config::{WindowRule, CONFIG};
 use crate::colors::Color;
 use crate::utils::{
-    are_rects_same_size, get_window_title, has_native_border, is_rect_visible,
-    is_window_foreground, is_window_visible, LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND,
+    are_rects_same_size, get_foreground_window, get_window_title, has_native_border,
+    is_rect_visible, is_window_visible, LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND,
     WM_APP_HIDECLOAKED, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
     WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
 };
 use crate::{BORDERS, INITIAL_WINDOWS};
 use anyhow::{anyhow, Context};
 use std::ptr;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time;
 use windows::core::{w, PCWSTR};
@@ -58,6 +58,9 @@ static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
         }
     })
 };
+
+pub static ACTIVE_WINDOW: LazyLock<Mutex<isize>> =
+    LazyLock::new(|| Mutex::new(get_foreground_window().0 as isize));
 
 #[derive(Debug, Default)]
 pub struct WindowBorder {
@@ -146,10 +149,6 @@ impl WindowBorder {
             self.create_render_resources()
                 .context("could not create render resources in init()")?;
 
-            // This is used a lot, so I think it's better to store it into its own variable instead
-            // of constantly making the same Windows API calls
-            self.is_active_window = is_window_foreground(self.tracking_window);
-
             self.update_color(Some(self.initialize_delay)).log_if_err();
             self.update_window_rect().log_if_err();
 
@@ -179,7 +178,7 @@ impl WindowBorder {
     }
 
     pub fn load_from_config(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
-        let config = CONFIG.lock().unwrap();
+        let config = CONFIG.read().unwrap();
         let global = &config.global;
 
         // TODO make this code prettier somehow
@@ -274,10 +273,10 @@ impl WindowBorder {
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
             self.active_color
-                .create_brush(&render_target, &self.window_rect, &brush_properties)
+                .init_brush(&render_target, &self.window_rect, &brush_properties)
                 .log_if_err();
             self.inactive_color
-                .create_brush(&render_target, &self.window_rect, &brush_properties)
+                .init_brush(&render_target, &self.window_rect, &brush_properties)
                 .log_if_err();
 
             self.render_target = Some(render_target);
@@ -303,7 +302,7 @@ impl WindowBorder {
             return Err(e);
         }
 
-        // Increase the size of the window rect to make space for the border
+        // Make space for the border
         self.window_rect.top -= self.border_width;
         self.window_rect.left -= self.border_width;
         self.window_rect.right += self.border_width;
@@ -349,6 +348,8 @@ impl WindowBorder {
     }
 
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
+        self.is_active_window = self.tracking_window.0 as isize == *ACTIVE_WINDOW.lock().unwrap();
+
         match animations::get_current_anims(self).contains_key(&AnimType::Fade) {
             false => self.update_brush_opacities(),
             true if check_delay == Some(0) => {
@@ -558,8 +559,6 @@ impl WindowBorder {
             }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
-                self.is_active_window = is_window_foreground(self.tracking_window);
-
                 self.update_color(None).log_if_err();
                 self.update_position(None).log_if_err();
                 self.render().log_if_err();
@@ -576,6 +575,8 @@ impl WindowBorder {
                     self.window_rect = old_rect;
                     return LRESULT(0);
                 }
+
+                self.update_color(None).log_if_err();
 
                 if has_native_border(self.tracking_window) {
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();

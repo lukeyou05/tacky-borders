@@ -226,7 +226,7 @@ impl Gradient {
 }
 
 impl Color {
-    pub fn create_brush(
+    pub fn init_brush(
         &mut self,
         render_target: &ID2D1HwndRenderTarget,
         window_rect: &RECT,

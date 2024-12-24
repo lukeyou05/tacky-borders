@@ -13,6 +13,7 @@ use crate::utils::{
     post_message_w, send_notify_message_w, show_border_for_window, LogIfErr, WM_APP_FOREGROUND,
     WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
 };
+use crate::window_border::ACTIVE_WINDOW;
 use crate::BORDERS;
 
 pub extern "system" fn handle_win_event(
@@ -53,12 +54,15 @@ pub extern "system" fn handle_win_event(
             }
         }
         EVENT_SYSTEM_FOREGROUND => {
+            let hwnd_isize = _hwnd.0 as isize;
+            *ACTIVE_WINDOW.lock().unwrap() = hwnd_isize;
+
             // Send foreground messages to all the border windows
             for (key, val) in BORDERS.lock().unwrap().iter() {
                 let border_window = HWND(*val as _);
                 // Some apps like Flow Launcher can become focused even if they aren't visible yet,
                 // so I also need to check if 'key' is equal to '_hwnd' (the foreground window)
-                if is_window_visible(border_window) || key == &(_hwnd.0 as isize) {
+                if is_window_visible(border_window) || key == &hwnd_isize {
                     post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                         .context("EVENT_OBJECT_FOCUS")
                         .log_if_err();

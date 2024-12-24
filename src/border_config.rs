@@ -6,14 +6,14 @@ use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, RwLock};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
     DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
 };
 
-pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
-    Mutex::new(match Config::create_config() {
+pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
+    RwLock::new(match Config::create_config() {
         Ok(config) => config,
         Err(e) => {
             error!("could not read config.yaml: {e:#}");
@@ -154,6 +154,6 @@ impl Config {
                 Config::default()
             }
         };
-        *CONFIG.lock().unwrap() = new_config;
+        *CONFIG.write().unwrap() = new_config;
     }
 }

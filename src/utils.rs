@@ -9,9 +9,9 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT};
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible,
-    PostMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MINIMIZE,
+    GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible, PostMessageW,
+    RealGetWindowClassW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WM_APP, WM_NCDESTROY,
+    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MINIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -95,7 +95,7 @@ pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
 pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
     let mut class_arr: [u16; 256] = [0; 256];
 
-    if unsafe { GetClassNameW(hwnd, &mut class_arr) } == 0 {
+    if unsafe { RealGetWindowClassW(hwnd, &mut class_arr) } == 0 {
         let last_error = unsafe { GetLastError() };
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
@@ -132,7 +132,7 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
         }
     };
 
-    let config = CONFIG.lock().unwrap();
+    let config = CONFIG.read().unwrap();
 
     for rule in config.window_rules.iter() {
         let window_name = match rule.kind {
@@ -201,8 +201,8 @@ pub fn is_window_cloaked(hwnd: HWND) -> bool {
     is_cloaked.as_bool()
 }
 
-pub fn is_window_foreground(hwnd: HWND) -> bool {
-    unsafe { GetForegroundWindow() == hwnd }
+pub fn get_foreground_window() -> HWND {
+    unsafe { GetForegroundWindow() }
 }
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
@@ -407,10 +407,7 @@ fn de_casteljau(t: f32, p_i: f32, p1: f32, p2: f32, p_f: f32) -> f32 {
 
 // Generates a cubic Bézier curve function from control points.
 pub fn cubic_bezier(control_points: &[f32; 4]) -> Result<impl Fn(f32) -> f32, BezierError> {
-    let x1 = control_points[0];
-    let y1 = control_points[1];
-    let x2 = control_points[2];
-    let y2 = control_points[3];
+    let [x1, y1, x2, y2] = *control_points;
 
     // Ensure control points are within bounds.
     //
