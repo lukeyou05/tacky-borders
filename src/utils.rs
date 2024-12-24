@@ -10,8 +10,9 @@ use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CON
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible, PostMessageW,
-    RealGetWindowClassW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WM_APP, WM_NCDESTROY,
-    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MINIMIZE,
+    RealGetWindowClassW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
+    WS_MAXIMIZE, WS_MINIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -58,16 +59,24 @@ impl LogIfErr for windows::core::Result<()> {
     }
 }
 
-pub fn is_window_top_level(hwnd: HWND) -> bool {
-    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 };
+pub fn get_window_style(hwnd: HWND) -> WINDOW_STYLE {
+    unsafe { WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32) }
+}
 
-    style & WS_CHILD.0 == 0
+pub fn get_window_ex_style(hwnd: HWND) -> WINDOW_EX_STYLE {
+    unsafe { WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32) }
+}
+
+pub fn is_window_top_level(hwnd: HWND) -> bool {
+    let style = get_window_style(hwnd);
+
+    !style.contains(WS_CHILD)
 }
 
 pub fn has_filtered_style(hwnd: HWND) -> bool {
-    let ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 };
+    let ex_style = get_window_ex_style(hwnd);
 
-    ex_style & WS_EX_TOOLWINDOW.0 != 0 || ex_style & WS_EX_NOACTIVATE.0 != 0
+    ex_style.contains(WS_EX_TOOLWINDOW) || ex_style.contains(WS_EX_NOACTIVATE)
 }
 
 pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
