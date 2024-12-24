@@ -8,13 +8,15 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{anyhow, Context};
-use sp_log::*;
+use sp_log::{
+    ColorChoice, CombinedLogger, Config, FileLogger, LevelFilter, TermLogger, TerminalMode,
+};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use windows::core::w;
-use windows::Win32::Foundation::{GetLastError, BOOL, HINSTANCE, HWND, LPARAM, TRUE, WPARAM};
-use windows::Win32::System::SystemServices::IMAGE_DOS_HEADER;
+use windows::Win32::Foundation::{GetLastError, BOOL, HWND, LPARAM, TRUE, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -32,11 +34,11 @@ mod sys_tray_icon;
 mod utils;
 mod window_border;
 
-use crate::utils::*;
-
-extern "C" {
-    static __ImageBase: IMAGE_DOS_HEADER;
-}
+use crate::utils::{
+    create_border_for_window, get_window_rule, has_filtered_style, imm_disable_ime,
+    is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
+    set_process_dpi_awareness_context, LogIfErr,
+};
 
 thread_local! {
     static EVENT_HOOK: Cell<HWINEVENTHOOK> = Cell::new(HWINEVENTHOOK::default());
@@ -122,12 +124,10 @@ fn create_logger() -> anyhow::Result<()> {
 
 fn register_window_class() -> windows::core::Result<()> {
     unsafe {
-        let hinstance: HINSTANCE = std::mem::transmute(&__ImageBase);
-
         let window_class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(window_border::WindowBorder::s_wnd_proc),
-            hInstance: hinstance,
+            hInstance: GetModuleHandleW(None)?.into(),
             lpszClassName: w!("border"),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             ..Default::default()
@@ -187,9 +187,16 @@ fn reload_borders() {
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
-    if !has_filtered_style(_hwnd) {
-        if is_window_visible(_hwnd) && !is_cloaked(_hwnd) {
-            create_border_for_window(_hwnd);
+    if is_window_top_level(_hwnd) {
+        // Only create borders for visible windows
+        if is_window_visible(_hwnd) && !is_window_cloaked(_hwnd) {
+            let window_rule = get_window_rule(_hwnd);
+
+            if window_rule.enabled == Some(false) {
+                info!("border is disabled for {_hwnd:?}");
+            } else if window_rule.enabled == Some(true) || !has_filtered_style(_hwnd) {
+                create_border_for_window(_hwnd, window_rule);
+            }
         }
 
         // Add currently open windows to the intial windows list so we can keep track of them

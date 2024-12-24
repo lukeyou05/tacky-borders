@@ -27,7 +27,10 @@ impl AnimationTimer {
             while !*stop_flag_clone.lock().unwrap() {
                 if let Err(e) = post_message_w(window_sent.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0))
                 {
-                    error!("could not send animation timer message: {e}");
+                    error!(
+                        "could not send animation timer message for {:?}: {}",
+                        window_sent.0, e
+                    );
                     break;
                 }
                 thread::sleep(interval);

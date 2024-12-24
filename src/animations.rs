@@ -9,17 +9,12 @@ use crate::anim_timer::AnimationTimer;
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
-pub const ANIM_NONE: i32 = 0;
-pub const ANIM_FADE: i32 = 1;
-
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct Animations {
     #[serde(default, deserialize_with = "animation")]
     pub active: HashMap<AnimType, AnimParams>,
     #[serde(default, deserialize_with = "animation")]
     pub inactive: HashMap<AnimType, AnimParams>,
-    #[serde(skip)]
-    pub event: i32,
     #[serde(skip)]
     pub timer: Option<AnimationTimer>,
     #[serde(default = "default_fps")]
@@ -28,6 +23,8 @@ pub struct Animations {
     pub fade_progress: f32,
     #[serde(skip)]
     pub fade_to_visible: bool,
+    #[serde(skip)]
+    pub should_fade: bool,
     #[serde(skip)]
     pub spiral_progress: f32,
     #[serde(skip)]
@@ -262,7 +259,7 @@ pub fn animate_fade(
 
         border.animations.fade_progress = final_opacity;
         border.animations.fade_to_visible = false;
-        border.animations.event = ANIM_NONE;
+        border.animations.should_fade = false;
         return;
     }
 

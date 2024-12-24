@@ -1,11 +1,16 @@
 use crate::animations::Animations;
 use crate::colors::ColorConfig;
+use crate::utils::{get_adjusted_radius, get_window_corner_preference};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Dwm::{
+    DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
+};
 
 pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
     Mutex::new(match Config::create_config() {
@@ -47,6 +52,28 @@ pub enum RadiusConfig {
     RoundSmall,
     #[serde(untagged)]
     Custom(f32),
+}
+
+impl RadiusConfig {
+    pub fn to_radius(&self, border_width: i32, dpi: f32, tracking_window: HWND) -> f32 {
+        match self {
+            // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
+            RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
+                match get_window_corner_preference(tracking_window) {
+                    // TODO check if the user is running Windows 11 or 10
+                    DWMWCP_DEFAULT => get_adjusted_radius(8.0, dpi, border_width),
+                    DWMWCP_DONOTROUND => 0.0,
+                    DWMWCP_ROUND => get_adjusted_radius(8.0, dpi, border_width),
+                    DWMWCP_ROUNDSMALL => get_adjusted_radius(4.0, dpi, border_width),
+                    _ => 0.0,
+                }
+            }
+            RadiusConfig::Square => 0.0,
+            RadiusConfig::Round => get_adjusted_radius(8.0, dpi, border_width),
+            RadiusConfig::RoundSmall => get_adjusted_radius(4.0, dpi, border_width),
+            RadiusConfig::Custom(radius) => radius * dpi / 96.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
