@@ -11,7 +11,7 @@ open = "5.3.1"
 dirs = "5.0.1"
 regex = "1.11.1"
 log = "0.4.22"
-anyhow = "1.0.94"
+anyhow = "1.0.95"
 sp_log = "0.2.0"
 
 [dependencies.windows]
