@@ -28,6 +28,7 @@ impl Default for ColorConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GradientConfig {
     pub colors: Vec<String>,
     pub direction: GradientDirection,
@@ -41,6 +42,7 @@ pub enum GradientDirection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GradientCoordinates {
     pub start: [f32; 2],
     pub end: [f32; 2],

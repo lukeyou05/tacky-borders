@@ -2,17 +2,17 @@ use anyhow::Context;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
-    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR,
-    OBJID_WINDOW, WS_EX_NOACTIVATE,
+    CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
+    EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW,
+    EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
+    EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR, OBJID_WINDOW, WS_EX_NOACTIVATE,
 };
 
 use crate::utils::{
     destroy_border_for_window, get_border_for_window, get_window_ex_style, hide_border_for_window,
-    is_window_visible, post_message_w, send_notify_message_w, show_border_for_window, LogIfErr,
-    WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
-    WM_APP_REORDER,
+    is_window_top_level, is_window_visible, post_message_w, send_notify_message_w,
+    show_border_for_window, LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
+    WM_APP_MINIMIZESTART, WM_APP_REORDER,
 };
 use crate::window_border::ACTIVE_WINDOW;
 use crate::BORDERS;
@@ -54,13 +54,23 @@ pub extern "system" fn handle_win_event(
                 }
             }
         }
-        EVENT_SYSTEM_FOREGROUND => {
+        // I *would* just use GetForegroundWindow(), but that sometimes doesn't work correctly due
+        // to timing issues between the event trigger and said function's processing.
+        EVENT_SYSTEM_FOREGROUND | EVENT_OBJECT_FOCUS => {
+            // We have to check WS_EX_NOACTIVATE cuz of bad Windows API
+            if !is_window_top_level(_hwnd) || get_window_ex_style(_hwnd).contains(WS_EX_NOACTIVATE)
+            {
+                return;
+            }
+
             let hwnd_isize = _hwnd.0 as isize;
 
-            // TODO: jank solution for firefox fullscreen (MozillaTransitionWindowClass)
-            if !get_window_ex_style(_hwnd).contains(WS_EX_NOACTIVATE) {
-                *ACTIVE_WINDOW.lock().unwrap() = hwnd_isize;
+            // Filter through repeated events
+            if hwnd_isize == *ACTIVE_WINDOW.lock().unwrap() {
+                return;
             }
+
+            *ACTIVE_WINDOW.lock().unwrap() = hwnd_isize;
 
             // Send foreground messages to all the border windows
             for (key, val) in BORDERS.lock().unwrap().iter() {

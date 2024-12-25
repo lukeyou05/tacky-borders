@@ -10,6 +10,7 @@ use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
 #[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Animations {
     #[serde(default, deserialize_with = "animation")]
     pub active: HashMap<AnimType, AnimParams>,

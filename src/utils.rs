@@ -215,8 +215,9 @@ pub fn get_foreground_window() -> HWND {
 }
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
-    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
-    style & WS_MINIMIZE.0 as i32 != 0
+    let style = get_window_style(hwnd);
+
+    style.contains(WS_MINIMIZE)
 }
 
 pub fn post_message_w(
@@ -248,12 +249,10 @@ pub fn set_process_dpi_awareness_context(
 }
 
 pub fn has_native_border(hwnd: HWND) -> bool {
-    unsafe {
-        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    let style = get_window_style(hwnd);
+    let ex_style = get_window_ex_style(hwnd);
 
-        ex_style & WS_EX_WINDOWEDGE.0 != 0 && style & WS_MAXIMIZE.0 == 0
-    }
+    !style.contains(WS_MAXIMIZE) && ex_style.contains(WS_EX_WINDOWEDGE)
 }
 
 pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) {

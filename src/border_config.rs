@@ -24,12 +24,14 @@ pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub global: Global,
     pub window_rules: Vec<WindowRule>,
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Global {
     pub border_width: f32,
     pub border_offset: i32,
@@ -77,6 +79,7 @@ impl RadiusConfig {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WindowRule {
     #[serde(rename = "match")]
     pub kind: Option<MatchKind>,
