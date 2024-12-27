@@ -1,5 +1,4 @@
 use serde::{Deserialize, Deserializer};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time;
 
@@ -13,9 +12,9 @@ use crate::window_border::WindowBorder;
 #[serde(deny_unknown_fields)]
 pub struct Animations {
     #[serde(default, deserialize_with = "animation")]
-    pub active: HashMap<AnimType, AnimParams>,
+    pub active: Vec<AnimParams>,
     #[serde(default, deserialize_with = "animation")]
-    pub inactive: HashMap<AnimType, AnimParams>,
+    pub inactive: Vec<AnimParams>,
     #[serde(skip)]
     pub timer: Option<AnimationTimer>,
     #[serde(default = "default_fps")]
@@ -37,14 +36,23 @@ fn default_fps() -> i32 {
 }
 
 // Custom deserializer for HashMap<AnimationType, Option<AnimValues>>
-fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimType, AnimParams>, D::Error>
+fn animation<'de, D>(deserializer: D) -> Result<Vec<AnimParams>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let deserialized = HashMap::<AnimType, serde_yaml::Value>::deserialize(deserializer)?;
-    let mut hashmap = HashMap::new();
+    let deserialized = Vec::<serde_yaml::Value>::deserialize(deserializer)?;
+    let mut anim_params_vec = Vec::new();
 
-    for (anim_type, value) in deserialized {
+    for value in deserialized {
+        let anim_type = match value.get("type") {
+            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
+            None => {
+                return Err(serde::de::Error::custom(
+                    "expected 'type' for animation, but None found",
+                ))
+            }
+        };
+
         let duration = match value.get("duration") {
             Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
             None => match anim_type {
@@ -52,6 +60,7 @@ where
                 AnimType::Fade => 200.0,
             },
         };
+
         let easing_type = match value.get("easing") {
             Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
             None => AnimEasing::default(),
@@ -61,33 +70,36 @@ where
             cubic_bezier(&easing_type.to_points()).map_err(serde::de::Error::custom)?;
 
         let anim_params = AnimParams {
+            anim_type,
             duration,
             easing_fn: Arc::new(easing_function),
         };
 
-        hashmap.insert(anim_type, anim_params);
+        anim_params_vec.push(anim_params);
     }
 
-    Ok(hashmap)
+    Ok(anim_params_vec)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone)]
+pub struct AnimParams {
+    pub anim_type: AnimType,
+    pub duration: f32,
+    pub easing_fn: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub enum AnimType {
     Spiral,
     ReverseSpiral,
     Fade,
 }
 
-#[derive(Clone)]
-pub struct AnimParams {
-    pub duration: f32,
-    pub easing_fn: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
-}
-
 // We must manually implement Debug for AnimParams because Fn(f32) -> f32 doesn't implement it
 impl std::fmt::Debug for AnimParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnimParams")
+            .field("type", &self.anim_type)
             .field("duration", &self.duration)
             // TODO idk what to put here for "easing"
             .field("easing_fn", &Arc::as_ptr(&self.easing_fn))
@@ -278,7 +290,7 @@ pub fn animate_fade(
     border.inactive_color.set_opacity(new_inactive_opacity);
 }
 
-pub fn get_current_anims(border: &mut WindowBorder) -> &HashMap<AnimType, AnimParams> {
+pub fn get_current_anims(border: &mut WindowBorder) -> &Vec<AnimParams> {
     match border.is_active_window {
         true => &border.animations.active,
         false => &border.animations.inactive,

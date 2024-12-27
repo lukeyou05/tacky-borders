@@ -350,7 +350,10 @@ impl WindowBorder {
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
         self.is_active_window = self.tracking_window.0 as isize == *ACTIVE_WINDOW.lock().unwrap();
 
-        match animations::get_current_anims(self).contains_key(&AnimType::Fade) {
+        match animations::get_current_anims(self)
+            .iter()
+            .any(|anim_params| anim_params.anim_type == AnimType::Fade)
+        {
             false => self.update_brush_opacities(),
             true if check_delay == Some(0) => {
                 self.update_brush_opacities();
@@ -635,8 +638,8 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_params) in animations::get_current_anims(self).clone().iter() {
-                    match anim_type {
+                for anim_params in animations::get_current_anims(self).clone().iter() {
+                    match anim_params.anim_type {
                         AnimType::Spiral => {
                             animations::animate_spiral(self, &anim_elapsed, anim_params, false);
                             update = true;

@@ -83,9 +83,25 @@ global:
   #
   #   Note: spiral animations can be taxing on the CPU and GPU on low-end systems.
   animations:
-    active: { ReverseSpiral, Fade: { easing: EaseInOutQuad } }
-    inactive: { Spiral, Fade: { easing: EaseInOutQuad } }
     fps: 60
+
+    active:
+      - type: ReverseSpiral
+        duration: 1800
+        easing: EaseInOutQuad
+
+      - type: Fade
+        duration: 200
+        easing: EaseInOutQuad
+
+    inactive:
+      - type: Spiral
+        duration: 1800
+        easing: EaseInOutQuad
+
+      - type: Fade
+        duration: 200
+        easing: EaseInOutQuad
 
 # Customize config options on a per-app basis.
 window_rules:
