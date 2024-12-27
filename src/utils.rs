@@ -9,10 +9,10 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT};
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible, PostMessageW,
+    GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic, IsWindowVisible, PostMessageW,
     RealGetWindowClassW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
-    WS_MAXIMIZE, WS_MINIMIZE,
+    WS_MAXIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -215,9 +215,7 @@ pub fn get_foreground_window() -> HWND {
 }
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
-    let style = get_window_style(hwnd);
-
-    style.contains(WS_MINIMIZE)
+    unsafe { IsIconic(hwnd).as_bool() }
 }
 
 pub fn post_message_w(

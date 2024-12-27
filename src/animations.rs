@@ -1,3 +1,4 @@
+use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::sync::Arc;
 use std::time;
@@ -31,30 +32,34 @@ pub struct Animations {
     pub spiral_angle: f32,
 }
 
-fn default_fps() -> i32 {
-    60
-}
-
 // Custom deserializer for HashMap<AnimationType, Option<AnimValues>>
 fn animation<'de, D>(deserializer: D) -> Result<Vec<AnimParams>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let deserialized = Vec::<serde_yaml::Value>::deserialize(deserializer)?;
-    let mut anim_params_vec = Vec::new();
+    let mut anims_vec = Vec::new();
 
     for value in deserialized {
         let anim_type = match value.get("type") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
+            Some(val) => serde_yaml::from_value(val.clone()).map_err(D::Error::custom)?,
             None => {
-                return Err(serde::de::Error::custom(
+                return Err(D::Error::custom(
                     "expected 'type' for animation, but None found",
                 ))
             }
         };
 
+        // Check for duplicate animation types
+        if anims_vec.contains_type(anim_type) {
+            return Err(D::Error::custom(format!(
+                "duplicate animation type: {:?}",
+                anim_type
+            )));
+        };
+
         let duration = match value.get("duration") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
+            Some(val) => serde_yaml::from_value(val.clone()).map_err(D::Error::custom)?,
             None => match anim_type {
                 AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
                 AnimType::Fade => 200.0,
@@ -62,12 +67,11 @@ where
         };
 
         let easing_type = match value.get("easing") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
+            Some(val) => serde_yaml::from_value(val.clone()).map_err(D::Error::custom)?,
             None => AnimEasing::default(),
         };
 
-        let easing_function =
-            cubic_bezier(&easing_type.to_points()).map_err(serde::de::Error::custom)?;
+        let easing_function = cubic_bezier(&easing_type.to_points()).map_err(D::Error::custom)?;
 
         let anim_params = AnimParams {
             anim_type,
@@ -75,10 +79,25 @@ where
             easing_fn: Arc::new(easing_function),
         };
 
-        anim_params_vec.push(anim_params);
+        anims_vec.push(anim_params);
     }
 
-    Ok(anim_params_vec)
+    Ok(anims_vec)
+}
+
+fn default_fps() -> i32 {
+    60
+}
+
+pub trait AnimVec {
+    fn contains_type(&self, anim_type: AnimType) -> bool;
+}
+
+impl AnimVec for Vec<AnimParams> {
+    fn contains_type(&self, anim_type: AnimType) -> bool {
+        self.iter()
+            .any(|anim_params| anim_params.anim_type == anim_type)
+    }
 }
 
 #[derive(Clone)]
@@ -88,7 +107,7 @@ pub struct AnimParams {
     pub easing_fn: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum AnimType {
     Spiral,
     ReverseSpiral,

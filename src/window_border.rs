@@ -1,4 +1,4 @@
-use crate::animations::{self, AnimType, Animations};
+use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::border_config::{WindowRule, CONFIG};
 use crate::colors::Color;
 use crate::utils::{
@@ -350,10 +350,7 @@ impl WindowBorder {
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
         self.is_active_window = self.tracking_window.0 as isize == *ACTIVE_WINDOW.lock().unwrap();
 
-        match animations::get_current_anims(self)
-            .iter()
-            .any(|anim_params| anim_params.anim_type == AnimType::Fade)
-        {
+        match animations::get_current_anims(self).contains_type(AnimType::Fade) {
             false => self.update_brush_opacities(),
             true if check_delay == Some(0) => {
                 self.update_brush_opacities();
