@@ -17,7 +17,7 @@ use crate::utils::{
 use crate::window_border::ACTIVE_WINDOW;
 use crate::BORDERS;
 
-pub extern "system" fn handle_win_event(
+pub extern "system" fn process_win_event(
     _h_win_event_hook: HWINEVENTHOOK,
     _event: u32,
     _hwnd: HWND,

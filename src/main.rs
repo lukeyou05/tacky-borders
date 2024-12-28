@@ -80,6 +80,9 @@ fn main() {
     register_window_class().log_if_err();
     enum_windows().log_if_err();
 
+    // EXPERIMENTAL: Monitor config changes
+    border_config::Config::spawn_config_listener().log_if_err();
+
     unsafe {
         debug!("entering message loop!");
         let mut message = MSG::default();
@@ -149,7 +152,7 @@ fn set_event_hook() -> HWINEVENTHOOK {
             EVENT_MIN,
             EVENT_MAX,
             None,
-            Some(event_hook::handle_win_event),
+            Some(event_hook::process_win_event),
             0,
             0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
