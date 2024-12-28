@@ -204,7 +204,7 @@ impl Config {
             // Reconvert isize back to HANDLE
             let dir_handle = HANDLE(dir_handle_isize as _);
 
-            let mut buffer = [0u8; 256];
+            let mut buffer = [0u8; 1024];
             let mut bytes_returned = 0u32;
 
             let mut now = time::Instant::now();
@@ -238,7 +238,7 @@ impl Config {
         Ok(())
     }
 
-    fn process_dir_change_notifs(buffer: &[u8; 256], bytes_returned: u32) {
+    fn process_dir_change_notifs(buffer: &[u8; 1024], bytes_returned: u32) {
         let mut offset = 0usize;
 
         while offset < bytes_returned as usize {
