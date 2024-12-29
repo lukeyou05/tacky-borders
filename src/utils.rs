@@ -17,6 +17,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use anyhow::{anyhow, Context};
 use regex::Regex;
+use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::Path;
 use std::ptr;
 use std::thread;
 
@@ -367,6 +370,15 @@ pub fn hide_border_for_window(hwnd: HWND) {
                 .log_if_err();
         }
     });
+}
+
+pub fn get_file_hash(file_path: &Path) -> anyhow::Result<u64> {
+    let mut hasher = DefaultHasher::new();
+
+    let file = fs::read(file_path)?;
+    file.hash(&mut hasher);
+
+    Ok(hasher.finish())
 }
 
 // Bezier curve algorithm together with @0xJWLabs

@@ -69,29 +69,31 @@ fn main() {
         .log_if_err();
 
     // This is responsible for the actual tray icon window, so it must be kept in scope
-    let tray_icon_result = sys_tray_icon::create_tray_icon();
-    if let Err(e) = tray_icon_result {
+    let tray_icon_res = sys_tray_icon::create_tray_icon();
+    if let Err(e) = tray_icon_res {
         // TODO for some reason if I use {:#} or {:?}, it repeatedly prints the error. Could be
         // something to do with how it implements .source()?
         error!("could not create tray icon: {e:#?}");
     }
 
-    EVENT_HOOK.replace(set_event_hook());
+    let hwineventhook = set_event_hook();
+    EVENT_HOOK.replace(hwineventhook);
+
     register_window_class().log_if_err();
     enum_windows().log_if_err();
 
-    // EXPERIMENTAL: Monitor config changes
+    // EXPERIMENTAL: listen for config changes
     border_config::Config::spawn_config_listener().log_if_err();
 
+    debug!("entering message loop!");
     unsafe {
-        debug!("entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        error!("exited messsage loop in main.rs; this should not happen");
     }
+    error!("exited messsage loop in main.rs; this should not happen");
 }
 
 fn create_logger() -> anyhow::Result<()> {

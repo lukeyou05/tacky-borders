@@ -1,7 +1,7 @@
 use crate::animations::Animations;
 use crate::colors::ColorConfig;
 use crate::reload_borders;
-use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
+use crate::utils::{get_adjusted_radius, get_file_hash, get_window_corner_preference, LogIfErr};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -177,7 +177,9 @@ impl Config {
     }
 
     pub fn spawn_config_listener() -> anyhow::Result<()> {
-        let config_dir: Vec<u16> = Self::get_config_dir()?
+        let config_dir = Self::get_config_dir()?;
+        let config_dir_vec: Vec<u16> = config_dir
+            .clone()
             .into_os_string()
             .encode_wide()
             .chain(iter::once(0))
@@ -185,7 +187,7 @@ impl Config {
 
         let dir_handle = unsafe {
             CreateFileW(
-                PCWSTR(config_dir.as_ptr()),
+                PCWSTR(config_dir_vec.as_ptr()),
                 FILE_LIST_DIRECTORY.0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 None,
@@ -193,7 +195,7 @@ impl Config {
                 FILE_FLAG_BACKUP_SEMANTICS,
                 HANDLE::default(),
             )
-            .context("could not create dir handle for config monitoring")?
+            .context("could not create dir handle for config listening")?
         };
 
         // Convert HANDLE to isize so we can pass it into the thread
@@ -209,6 +211,15 @@ impl Config {
 
             let mut now = time::Instant::now();
             let delay = time::Duration::from_secs(1);
+
+            let config_path = config_dir.join("config.yaml");
+            let mut cur_config_hash = match get_file_hash(&config_path) {
+                Ok(hash) => hash,
+                Err(e) => {
+                    error!("could not hash config.yaml: {e}");
+                    return;
+                }
+            };
 
             loop {
                 if let Err(e) = ReadDirectoryChangesW(
@@ -230,7 +241,12 @@ impl Config {
                     thread::sleep(delay - now.elapsed());
                 }
 
-                Self::process_dir_change_notifs(&buffer, bytes_returned);
+                Self::process_dir_change_notifs(
+                    &buffer,
+                    bytes_returned,
+                    &config_path,
+                    &mut cur_config_hash,
+                );
                 now = time::Instant::now();
             }
         });
@@ -238,13 +254,18 @@ impl Config {
         Ok(())
     }
 
-    fn process_dir_change_notifs(buffer: &[u8; 1024], bytes_returned: u32) {
+    fn process_dir_change_notifs(
+        buffer: &[u8; 1024],
+        bytes_returned: u32,
+        config_path: &PathBuf,
+        cur_config_hash: &mut u64,
+    ) {
         let mut offset = 0usize;
 
         while offset < bytes_returned as usize {
             let info = unsafe { &*(buffer.as_ptr().add(offset) as *const FILE_NOTIFY_INFORMATION) };
 
-            // We divide FileNameLength by 2 because it's in bytes (u8), but FileName is the start of a u16 slice
+            // We divide FileNameLength by 2 because it's in bytes (u8), but FileName is in u16
             let name_slice = unsafe {
                 slice::from_raw_parts(info.FileName.as_ptr(), info.FileNameLength as usize / 2)
             };
@@ -252,8 +273,22 @@ impl Config {
             debug!("file changed: {}", file_name);
 
             if file_name == "config.yaml" {
-                Config::reload_config();
-                reload_borders();
+                let new_config_hash = match get_file_hash(&config_path) {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        error!("could not get hash of config.yaml: {e}");
+                        return;
+                    }
+                };
+
+                if *cur_config_hash != new_config_hash {
+                    info!("config.yaml has changed; reloading config");
+
+                    Self::reload_config();
+                    reload_borders();
+
+                    *cur_config_hash = new_config_hash;
+                }
 
                 // Break to prevent multiple reloads from the same notification
                 break;
