@@ -1,5 +1,4 @@
-use serde::de::Error;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time;
 
@@ -9,94 +8,74 @@ use crate::anim_timer::AnimationTimer;
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct AnimationsConfig {
+    pub active: Option<Vec<AnimParamsConfig>>,
+    pub inactive: Option<Vec<AnimParamsConfig>>,
+    pub fps: Option<i32>,
+}
+
+impl AnimationsConfig {
+    pub fn to_animations(&self) -> Animations {
+        Animations {
+            active: self
+                .active
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|config| config.to_anim_params())
+                .collect(),
+            inactive: self
+                .inactive
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|config| config.to_anim_params())
+                .collect(),
+            fps: self.fps.unwrap_or(60),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct Animations {
-    #[serde(default, deserialize_with = "animation")]
     pub active: Vec<AnimParams>,
-    #[serde(default, deserialize_with = "animation")]
     pub inactive: Vec<AnimParams>,
-    #[serde(skip)]
     pub timer: Option<AnimationTimer>,
-    #[serde(default = "default_fps")]
     pub fps: i32,
-    #[serde(skip)]
     pub fade_progress: f32,
-    #[serde(skip)]
     pub fade_to_visible: bool,
-    #[serde(skip)]
     pub should_fade: bool,
-    #[serde(skip)]
     pub spiral_progress: f32,
-    #[serde(skip)]
     pub spiral_angle: f32,
 }
 
-// Custom deserializer for HashMap<AnimationType, Option<AnimValues>>
-fn animation<'de, D>(deserializer: D) -> Result<Vec<AnimParams>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let deserialized = Vec::<serde_yaml::Value>::deserialize(deserializer)?;
-    let mut anims_vec = Vec::new();
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AnimParamsConfig {
+    #[serde(rename = "type")]
+    pub anim_type: AnimType,
+    pub duration: Option<f32>,
+    pub easing: Option<AnimEasing>,
+}
 
-    for value in deserialized {
-        let anim_type = match value.get("type") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(D::Error::custom)?,
-            None => {
-                return Err(D::Error::custom(
-                    "expected 'type' for animation, but None found",
-                ))
-            }
-        };
+impl AnimParamsConfig {
+    fn to_anim_params(&self) -> AnimParams {
+        let duration = self.duration.unwrap_or(match self.anim_type {
+            AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
+            AnimType::Fade => 200.0,
+        });
 
-        // Check for duplicate animation types
-        if anims_vec.contains_type(anim_type) {
-            return Err(D::Error::custom(format!(
-                "duplicate animation type: {:?}",
-                anim_type
-            )));
-        };
+        let easing = self.easing.unwrap_or_default();
+        let easing_function = cubic_bezier(&easing.to_points()).unwrap();
 
-        let duration = match value.get("duration") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(D::Error::custom)?,
-            None => match anim_type {
-                AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
-                AnimType::Fade => 200.0,
-            },
-        };
-
-        let easing_type = match value.get("easing") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(D::Error::custom)?,
-            None => AnimEasing::default(),
-        };
-
-        let easing_function = cubic_bezier(&easing_type.to_points()).map_err(D::Error::custom)?;
-
-        let anim_params = AnimParams {
-            anim_type,
+        AnimParams {
+            anim_type: self.anim_type,
             duration,
             easing_fn: Arc::new(easing_function),
-        };
-
-        anims_vec.push(anim_params);
-    }
-
-    Ok(anims_vec)
-}
-
-fn default_fps() -> i32 {
-    60
-}
-
-pub trait AnimVec {
-    fn contains_type(&self, anim_type: AnimType) -> bool;
-}
-
-impl AnimVec for Vec<AnimParams> {
-    fn contains_type(&self, anim_type: AnimType) -> bool {
-        self.iter()
-            .any(|anim_params| anim_params.anim_type == anim_type)
+        }
     }
 }
 
@@ -105,13 +84,6 @@ pub struct AnimParams {
     pub anim_type: AnimType,
     pub duration: f32,
     pub easing_fn: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum AnimType {
-    Spiral,
-    ReverseSpiral,
-    Fade,
 }
 
 // We must manually implement Debug for AnimParams because Fn(f32) -> f32 doesn't implement it
@@ -126,8 +98,26 @@ impl std::fmt::Debug for AnimParams {
     }
 }
 
+pub trait AnimVec {
+    fn contains_type(&self, anim_type: AnimType) -> bool;
+}
+
+impl AnimVec for Vec<AnimParams> {
+    fn contains_type(&self, anim_type: AnimType) -> bool {
+        self.iter()
+            .any(|anim_params| anim_params.anim_type == anim_type)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum AnimType {
+    Spiral,
+    ReverseSpiral,
+    Fade,
+}
+
 // Thanks to 0xJWLabs for the AnimEasing enum along with its methods
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum AnimEasing {
     // Linear
     #[default]

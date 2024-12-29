@@ -34,6 +34,7 @@ mod sys_tray_icon;
 mod utils;
 mod window_border;
 
+use crate::border_config::EnableMode;
 use crate::utils::{
     create_border_for_window, get_window_rule, has_filtered_style, imm_disable_ime,
     is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
@@ -197,9 +198,11 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
         if is_window_visible(_hwnd) && !is_window_cloaked(_hwnd) {
             let window_rule = get_window_rule(_hwnd);
 
-            if window_rule.enabled == Some(false) {
+            if window_rule.enabled == Some(EnableMode::Bool(false)) {
                 info!("border is disabled for {_hwnd:?}");
-            } else if window_rule.enabled == Some(true) || !has_filtered_style(_hwnd) {
+            } else if window_rule.enabled == Some(EnableMode::Bool(true))
+                || !has_filtered_style(_hwnd)
+            {
                 create_border_for_window(_hwnd, window_rule);
             }
         }

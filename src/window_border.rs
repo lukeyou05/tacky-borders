@@ -1,4 +1,4 @@
-use crate::animations::{self, AnimType, AnimVec, Animations};
+use crate::animations::{self, AnimType, AnimVec, Animations, AnimationsConfig};
 use crate::border_config::{WindowRule, CONFIG};
 use crate::colors::Color;
 use crate::utils::{
@@ -197,6 +197,13 @@ impl WindowBorder {
             .as_ref()
             .unwrap_or(&global.inactive_color);
 
+        // TODO: what the hell
+        let binding = AnimationsConfig::default();
+        let animations_config = window_rule
+            .animations
+            .as_ref()
+            .unwrap_or(&global.animations.as_ref().unwrap_or(&binding));
+
         // Convert ColorConfig structs to Color
         self.active_color = active_color_config.to_color(true);
         self.inactive_color = inactive_color_config.to_color(false);
@@ -210,10 +217,7 @@ impl WindowBorder {
         self.border_offset = offset_config;
         self.border_radius = radius_config.to_radius(self.border_width, dpi, self.tracking_window);
 
-        self.animations = window_rule
-            .animations
-            .clone()
-            .unwrap_or(global.animations.clone().unwrap_or_default());
+        self.animations = animations_config.to_animations();
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.

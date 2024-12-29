@@ -17,13 +17,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::fs;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::Path;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
+use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule, CONFIG};
 use crate::window_border::WindowBorder;
 use crate::{SendHWND, BORDERS};
 
@@ -348,9 +345,9 @@ pub fn show_border_for_window(hwnd: HWND) {
     } else if is_window_top_level(hwnd) && is_window_visible(hwnd) && !is_window_cloaked(hwnd) {
         let window_rule = get_window_rule(hwnd);
 
-        if window_rule.enabled == Some(false) {
+        if window_rule.enabled == Some(EnableMode::Bool(false)) {
             info!("border is disabled for {hwnd:?}");
-        } else if window_rule.enabled == Some(true) || !has_filtered_style(hwnd) {
+        } else if window_rule.enabled == Some(EnableMode::Bool(true)) || !has_filtered_style(hwnd) {
             create_border_for_window(hwnd, window_rule);
         }
     }
@@ -372,19 +369,11 @@ pub fn hide_border_for_window(hwnd: HWND) {
     });
 }
 
-pub fn get_file_hash(file_path: &Path) -> anyhow::Result<u64> {
-    let mut hasher = DefaultHasher::new();
-
-    let file = fs::read(file_path)?;
-    file.hash(&mut hasher);
-
-    Ok(hasher.finish())
-}
-
 // Bezier curve algorithm together with @0xJWLabs
 const SUBDIVISION_PRECISION: f32 = 0.0001; // Precision for binary subdivision
 const SUBDIVISION_MAX_ITERATIONS: u32 = 10; // Maximum number of iterations for binary subdivision
 
+#[derive(Debug)]
 pub enum BezierError {
     InvalidControlPoint,
 }

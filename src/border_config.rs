@@ -1,7 +1,7 @@
-use crate::animations::Animations;
+use crate::animations::AnimationsConfig;
 use crate::colors::ColorConfig;
 use crate::reload_borders;
-use crate::utils::{get_adjusted_radius, get_file_hash, get_window_corner_preference, LogIfErr};
+use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -39,14 +39,14 @@ pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
 
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub global: Global,
     pub window_rules: Vec<WindowRule>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Global {
     pub border_width: f32,
@@ -54,14 +54,47 @@ pub struct Global {
     pub border_radius: RadiusConfig,
     pub active_color: ColorConfig,
     pub inactive_color: ColorConfig,
-    pub animations: Option<Animations>,
+    pub animations: Option<AnimationsConfig>,
     #[serde(alias = "init_delay")]
     pub initialize_delay: Option<u64>, // Adjust delay when creating new windows/borders
     #[serde(alias = "restore_delay")]
     pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WindowRule {
+    #[serde(rename = "match")]
+    pub kind: Option<MatchKind>,
+    pub name: Option<String>,
+    pub strategy: Option<MatchStrategy>,
+    pub border_width: Option<f32>,
+    pub border_offset: Option<i32>,
+    pub border_radius: Option<RadiusConfig>,
+    pub active_color: Option<ColorConfig>,
+    pub inactive_color: Option<ColorConfig>,
+    pub enabled: Option<EnableMode>,
+    pub animations: Option<AnimationsConfig>,
+    #[serde(alias = "init_delay")]
+    pub initialize_delay: Option<u64>,
+    #[serde(alias = "restore_delay")]
+    pub unminimize_delay: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MatchKind {
+    Title,
+    Class,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MatchStrategy {
+    Equals,
+    Contains,
+    Regex,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub enum RadiusConfig {
     #[default]
     Auto,
@@ -93,38 +126,12 @@ impl RadiusConfig {
         }
     }
 }
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WindowRule {
-    #[serde(rename = "match")]
-    pub kind: Option<MatchKind>,
-    pub name: Option<String>,
-    pub strategy: Option<MatchStrategy>,
-    pub border_width: Option<f32>,
-    pub border_offset: Option<i32>,
-    pub border_radius: Option<RadiusConfig>,
-    pub active_color: Option<ColorConfig>,
-    pub inactive_color: Option<ColorConfig>,
-    pub enabled: Option<bool>,
-    pub animations: Option<Animations>,
-    #[serde(alias = "init_delay")]
-    pub initialize_delay: Option<u64>,
-    #[serde(alias = "restore_delay")]
-    pub unminimize_delay: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MatchKind {
-    Title,
-    Class,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MatchStrategy {
-    Equals,
-    Contains,
-    Regex,
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub enum EnableMode {
+    #[default]
+    Auto,
+    #[serde(untagged)]
+    Bool(bool),
 }
 
 impl Config {
@@ -212,15 +219,6 @@ impl Config {
             let mut now = time::Instant::now();
             let delay = time::Duration::from_secs(1);
 
-            let config_path = config_dir.join("config.yaml");
-            let mut cur_config_hash = match get_file_hash(&config_path) {
-                Ok(hash) => hash,
-                Err(e) => {
-                    error!("could not hash config.yaml: {e}");
-                    return;
-                }
-            };
-
             loop {
                 if let Err(e) = ReadDirectoryChangesW(
                     dir_handle,
@@ -241,12 +239,7 @@ impl Config {
                     thread::sleep(delay - now.elapsed());
                 }
 
-                Self::process_dir_change_notifs(
-                    &buffer,
-                    bytes_returned,
-                    &config_path,
-                    &mut cur_config_hash,
-                );
+                Self::process_dir_change_notifs(&buffer, bytes_returned);
                 now = time::Instant::now();
             }
         });
@@ -254,12 +247,7 @@ impl Config {
         Ok(())
     }
 
-    fn process_dir_change_notifs(
-        buffer: &[u8; 1024],
-        bytes_returned: u32,
-        config_path: &PathBuf,
-        cur_config_hash: &mut u64,
-    ) {
+    fn process_dir_change_notifs(buffer: &[u8; 1024], bytes_returned: u32) {
         let mut offset = 0usize;
 
         while offset < bytes_returned as usize {
@@ -273,21 +261,13 @@ impl Config {
             debug!("file changed: {}", file_name);
 
             if file_name == "config.yaml" {
-                let new_config_hash = match get_file_hash(&config_path) {
-                    Ok(hash) => hash,
-                    Err(e) => {
-                        error!("could not get hash of config.yaml: {e}");
-                        return;
-                    }
-                };
+                let old_config = (*CONFIG.read().unwrap()).clone();
+                Self::reload_config();
 
-                if *cur_config_hash != new_config_hash {
-                    info!("config.yaml has changed; reloading config");
-
-                    Self::reload_config();
+                // Check if the config has actually changed
+                if old_config != *CONFIG.read().unwrap() {
+                    info!("config.yaml has changed; reloading borders");
                     reload_borders();
-
-                    *cur_config_hash = new_config_hash;
                 }
 
                 // Break to prevent multiple reloads from the same notification

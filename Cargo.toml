@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-serde = "1.0.216"
+serde = "1.0.217"
 serde_yaml = "0.9.34"
 tray-icon = "0.19.2"
 open = "5.3.1"
@@ -12,28 +12,28 @@ dirs = "5.0.1"
 regex = "1.11.1"
 log = "0.4.22"
 anyhow = "1.0.95"
-sp_log = "0.2.0"
+sp_log = "0.2.1"
 
 [dependencies.windows]
 version = "0.58.0"
 features = [
-    "Win32_Foundation",
-    "Foundation_Numerics",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Direct2D",
-    "Win32_Graphics_Direct2D_Common",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_System_Threading",
-    "Win32_UI_Accessibility",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input_Ime",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_SystemServices",
-    "Win32_System_LibraryLoader",
-    "Win32_Security",
-    "Win32_System_IO",
-    "Win32_Storage_FileSystem",
+  "Win32_Foundation",
+  "Foundation_Numerics",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Direct2D_Common",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_SystemServices",
+  "Win32_System_LibraryLoader",
+  "Win32_Security",
+  "Win32_System_IO",
+  "Win32_Storage_FileSystem",
 ]
 
 [build-dependencies]
