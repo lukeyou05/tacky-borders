@@ -83,10 +83,6 @@ fn main() {
     register_window_class().log_if_err();
     enum_windows().log_if_err();
 
-    // EXPERIMENTAL: listen for config changes
-    border_config::Config::spawn_config_listener().log_if_err();
-
-    debug!("entering message loop!");
     unsafe {
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {

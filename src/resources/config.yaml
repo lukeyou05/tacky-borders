@@ -1,3 +1,6 @@
+# watch_config_changes: Automatically reload borders whenever the config file is modified.
+watch_config_changes: True
+
 # Global configuration options
 global:
   # border_width: Width of the border (in pixels)

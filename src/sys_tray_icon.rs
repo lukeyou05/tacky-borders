@@ -56,13 +56,14 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
         }
         // Close
         "2" => unsafe {
-            if UnhookWinEvent(EVENT_HOOK.get()).as_bool()
-                && Config::destroy_config_listener().is_ok()
-            {
+            let unhook_bool = UnhookWinEvent(EVENT_HOOK.get());
+            let destroy_res = Config::destroy_config_watcher();
+
+            if unhook_bool.as_bool() && destroy_res.is_ok() {
                 debug!("exiting tacky-borders!");
                 ExitProcess(0);
             } else {
-                error!("could not unhook win event hook or destroy config monitor");
+                error!("attempt to unhook win event: {unhook_bool:?}; attempt to destroy config watcher: {destroy_res:?}");
             }
         },
         _ => {}

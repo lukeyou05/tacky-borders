@@ -1,4 +1,4 @@
-use crate::animations::{self, AnimType, AnimVec, Animations, AnimationsConfig};
+use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::border_config::{WindowRule, CONFIG};
 use crate::colors::Color;
 use crate::utils::{
@@ -196,15 +196,11 @@ impl WindowBorder {
             .inactive_color
             .as_ref()
             .unwrap_or(&global.inactive_color);
-
-        // TODO: what the hell
-        let binding = AnimationsConfig::default();
         let animations_config = window_rule
             .animations
             .as_ref()
-            .unwrap_or(&global.animations.as_ref().unwrap_or(&binding));
+            .unwrap_or(&global.animations);
 
-        // Convert ColorConfig structs to Color
         self.active_color = active_color_config.to_color(true);
         self.inactive_color = inactive_color_config.to_color(false);
 
@@ -229,11 +225,11 @@ impl WindowBorder {
             true => 0,
             false => window_rule
                 .initialize_delay
-                .unwrap_or(global.initialize_delay.unwrap_or(250)),
+                .unwrap_or(global.initialize_delay),
         };
         self.unminimize_delay = window_rule
             .unminimize_delay
-            .unwrap_or(global.unminimize_delay.unwrap_or(200));
+            .unwrap_or(global.unminimize_delay);
 
         drop(config);
         drop(window_rule);

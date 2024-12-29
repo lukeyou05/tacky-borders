@@ -5,11 +5,10 @@ use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
 use std::fs::{self, DirBuilder};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{LazyLock, Mutex, RwLock};
 use std::{iter, ptr, slice, thread, time};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, FALSE, HANDLE, HWND};
@@ -23,10 +22,6 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::IO::CancelIoEx;
 
-thread_local! {
-    static CONFIG_DIR_HANDLE: Cell<Option<isize>> = Cell::new(None);
-}
-
 pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     RwLock::new(match Config::create_config() {
         Ok(config) => config,
@@ -37,28 +32,66 @@ pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     })
 });
 
+static CONFIG_DIR_HANDLE: LazyLock<Mutex<Option<isize>>> = LazyLock::new(|| Mutex::new(None));
+
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub watch_config_changes: bool,
+    #[serde(default = "serde_default_global")]
     pub global: Global,
+    #[serde(default)]
     pub window_rules: Vec<WindowRule>,
+}
+
+// Show borders even if the config.yaml is completely empty
+// NOTE: this is just for serde and is intentionally kept separate from the Default trait
+// because I still want the width and offset zeroed out when I call Config::default()
+fn serde_default_global() -> Global {
+    Global {
+        border_width: serde_default_f32::<4>(),
+        border_offset: serde_default_i32::<-1>(),
+        ..Default::default()
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Global {
+    #[serde(default = "serde_default_f32::<4>")]
     pub border_width: f32,
+    #[serde(default = "serde_default_i32::<-1>")]
     pub border_offset: i32,
+    #[serde(default)]
     pub border_radius: RadiusConfig,
+    #[serde(default)]
     pub active_color: ColorConfig,
+    #[serde(default)]
     pub inactive_color: ColorConfig,
-    pub animations: Option<AnimationsConfig>,
+    #[serde(default)]
+    pub animations: AnimationsConfig,
     #[serde(alias = "init_delay")]
-    pub initialize_delay: Option<u64>, // Adjust delay when creating new windows/borders
+    #[serde(default = "serde_default_u64::<250>")]
+    pub initialize_delay: u64, // Adjust delay when creating new windows/borders
     #[serde(alias = "restore_delay")]
-    pub unminimize_delay: Option<u64>, // Adjust delay when restoring minimized windows
+    #[serde(default = "serde_default_u64::<200>")]
+    pub unminimize_delay: u64, // Adjust delay when restoring minimized windows
+}
+
+pub fn serde_default_u64<const V: u64>() -> u64 {
+    V
+}
+
+pub fn serde_default_i32<const V: i32>() -> i32 {
+    V
+}
+
+// f32 cannot be a const, so we have to do the following instead
+pub fn serde_default_f32<const V: i32>() -> f32 {
+    V as f32
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -81,13 +114,13 @@ pub struct WindowRule {
     pub unminimize_delay: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum MatchKind {
     Title,
     Class,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum MatchStrategy {
     Equals,
     Contains,
@@ -149,8 +182,14 @@ impl Config {
         }
 
         let contents = fs::read_to_string(&config_path).context("could not read config.yaml")?;
+        let config: Config = serde_yaml::from_str(&contents)?;
 
-        let config = serde_yaml::from_str(&contents)?;
+        if config.watch_config_changes && CONFIG_DIR_HANDLE.lock().unwrap().is_none() {
+            Self::spawn_config_watcher()?;
+        } else if !config.watch_config_changes && CONFIG_DIR_HANDLE.lock().unwrap().is_some() {
+            Self::destroy_config_watcher()?;
+        }
+
         Ok(config)
     }
 
@@ -183,7 +222,9 @@ impl Config {
         *CONFIG.write().unwrap() = new_config;
     }
 
-    pub fn spawn_config_listener() -> anyhow::Result<()> {
+    pub fn spawn_config_watcher() -> anyhow::Result<()> {
+        info!("spawning config watcher");
+
         let config_dir = Self::get_config_dir()?;
         let config_dir_vec: Vec<u16> = config_dir
             .clone()
@@ -202,12 +243,12 @@ impl Config {
                 FILE_FLAG_BACKUP_SEMANTICS,
                 HANDLE::default(),
             )
-            .context("could not create dir handle for config listening")?
+            .context("could not create dir handle for config watching")?
         };
 
         // Convert HANDLE to isize so we can pass it into the thread
         let dir_handle_isize = dir_handle.0 as isize;
-        CONFIG_DIR_HANDLE.replace(Some(dir_handle_isize));
+        *CONFIG_DIR_HANDLE.lock().unwrap() = Some(dir_handle_isize);
 
         let _ = thread::spawn(move || unsafe {
             // Reconvert isize back to HANDLE
@@ -231,7 +272,7 @@ impl Config {
                     None,
                 ) {
                     error!("could not check for changes in config dir: {e}");
-                    return;
+                    break;
                 }
 
                 // Prevent too many directory checks in quick succession
@@ -242,6 +283,8 @@ impl Config {
                 Self::process_dir_change_notifs(&buffer, bytes_returned);
                 now = time::Instant::now();
             }
+
+            debug!("exiting config watcher thread");
         });
 
         Ok(())
@@ -263,9 +306,9 @@ impl Config {
             if file_name == "config.yaml" {
                 let old_config = (*CONFIG.read().unwrap()).clone();
                 Self::reload_config();
+                let new_config = CONFIG.read().unwrap();
 
-                // Check if the config has actually changed
-                if old_config != *CONFIG.read().unwrap() {
+                if old_config != *new_config {
                     info!("config.yaml has changed; reloading borders");
                     reload_borders();
                 }
@@ -283,18 +326,29 @@ impl Config {
         }
     }
 
-    pub fn destroy_config_listener() -> anyhow::Result<()> {
-        if let Some(dir_handle_isize) = CONFIG_DIR_HANDLE.get() {
+    pub fn destroy_config_watcher() -> anyhow::Result<()> {
+        info!("destroying config watcher");
+
+        let mut config_dir_handle = CONFIG_DIR_HANDLE.lock().unwrap();
+        if let Some(dir_handle_isize) = *config_dir_handle {
             let dir_handle = HANDLE(dir_handle_isize as _);
 
             // Cancel all pending I/O operations on the handle
             unsafe { CancelIoEx(dir_handle, None) }.log_if_err();
 
-            // Close the handle for cleanup
-            return unsafe { CloseHandle(dir_handle) }.map_err(anyhow::Error::new);
-        }
+            // Close the handle for cleanup. This should automatically close the config watcher thread.
+            let res = unsafe { CloseHandle(dir_handle) }.map_err(anyhow::Error::new);
 
-        info!("config_dir_handle not found; skipping cleanup");
-        Ok(())
+            // Reset CONFIG_DIR_HANDLE after successfully closing it
+            if res.is_ok() {
+                *config_dir_handle = None;
+            }
+
+            res
+        } else {
+            info!("config_dir_handle not found; skipping cleanup");
+
+            Ok(())
+        }
     }
 }

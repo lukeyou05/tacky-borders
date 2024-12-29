@@ -5,15 +5,19 @@ use std::time;
 use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
+use crate::border_config::serde_default_i32;
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AnimationsConfig {
-    pub active: Option<Vec<AnimParamsConfig>>,
-    pub inactive: Option<Vec<AnimParamsConfig>>,
-    pub fps: Option<i32>,
+    #[serde(default)]
+    pub active: Vec<AnimParamsConfig>,
+    #[serde(default)]
+    pub inactive: Vec<AnimParamsConfig>,
+    #[serde(default = "serde_default_i32::<60>")]
+    pub fps: i32,
 }
 
 impl AnimationsConfig {
@@ -21,19 +25,15 @@ impl AnimationsConfig {
         Animations {
             active: self
                 .active
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
+                .iter()
                 .map(|config| config.to_anim_params())
                 .collect(),
             inactive: self
                 .inactive
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
+                .iter()
                 .map(|config| config.to_anim_params())
                 .collect(),
-            fps: self.fps.unwrap_or(60),
+            fps: self.fps,
             ..Default::default()
         }
     }
@@ -164,7 +164,7 @@ impl AnimEasing {
     /// Converts the easing to a corresponding array of points.
     /// Linear and named easing variants will return predefined control points,
     /// while CubicBezier returns its own array.
-    pub fn to_points(&self) -> [f32; 4] {
+    pub fn to_points(self) -> [f32; 4] {
         match self {
             // Linear
             AnimEasing::Linear => [0.0, 0.0, 1.0, 1.0],
@@ -203,7 +203,7 @@ impl AnimEasing {
             AnimEasing::EaseInOutBack => [0.68, -0.6, 0.32, 1.6],
 
             // CubicBezier variant returns its own points.
-            AnimEasing::CubicBezier(bezier) => *bezier,
+            AnimEasing::CubicBezier(bezier) => bezier,
         }
     }
 }

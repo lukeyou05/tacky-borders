@@ -23,7 +23,7 @@ pub enum ColorConfig {
 
 impl Default for ColorConfig {
     fn default() -> Self {
-        Self::SolidConfig("#000000".to_string())
+        Self::SolidConfig("accent".to_string())
     }
 }
 
