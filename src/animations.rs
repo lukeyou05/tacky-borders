@@ -26,12 +26,12 @@ impl AnimationsConfig {
             active: self
                 .active
                 .iter()
-                .map(|config| config.to_anim_params())
+                .map(|params_config| params_config.to_anim_params())
                 .collect(),
             inactive: self
                 .inactive
                 .iter()
-                .map(|config| config.to_anim_params())
+                .map(|params_config| params_config.to_anim_params())
                 .collect(),
             fps: self.fps,
             ..Default::default()

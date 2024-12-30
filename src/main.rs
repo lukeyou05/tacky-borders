@@ -60,6 +60,8 @@ fn main() {
         println!("[ERROR] {}", e);
     };
 
+    info!("starting tacky-borders");
+
     // xFFFFFFFF can be used to disable IME windows for all threads in the current process.
     if !imm_disable_ime(0xFFFFFFFF).as_bool() {
         error!("could not disable ime!");
@@ -90,7 +92,8 @@ fn main() {
             DispatchMessageW(&message);
         }
     }
-    error!("exited messsage loop in main.rs; this should not happen");
+
+    info!("exiting tacky-borders");
 }
 
 fn create_logger() -> anyhow::Result<()> {

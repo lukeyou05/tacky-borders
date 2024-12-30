@@ -48,8 +48,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
     LazyLock::new(|| {
-        D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|error| {
-            error!("could not create ID2D1Factory: {error}");
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
+            error!("could not create ID2D1Factory: {err}");
             panic!()
         })
     })

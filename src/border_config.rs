@@ -262,7 +262,7 @@ impl ConfigWatcher {
     }
 
     pub fn start(&mut self) -> anyhow::Result<()> {
-        info!("starting config watcher");
+        debug!("starting config watcher");
 
         if self.is_running() {
             return Err(anyhow!("config watcher is already running"));
@@ -379,7 +379,7 @@ impl ConfigWatcher {
     }
 
     pub fn stop(&mut self) -> anyhow::Result<()> {
-        info!("stopping config watcher");
+        debug!("stopping config watcher");
 
         if let Some(dir_handle_isize) = self.config_dir_handle {
             let dir_handle = HANDLE(dir_handle_isize as _);
