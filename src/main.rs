@@ -34,6 +34,7 @@ mod sys_tray_icon;
 mod utils;
 mod window_border;
 
+use crate::border_config::EnableMode;
 use crate::utils::{
     create_border_for_window, get_window_rule, has_filtered_style, imm_disable_ime,
     is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
@@ -59,6 +60,8 @@ fn main() {
         println!("[ERROR] {}", e);
     };
 
+    info!("starting tacky-borders");
+
     // xFFFFFFFF can be used to disable IME windows for all threads in the current process.
     if !imm_disable_ime(0xFFFFFFFF).as_bool() {
         error!("could not disable ime!");
@@ -69,26 +72,28 @@ fn main() {
         .log_if_err();
 
     // This is responsible for the actual tray icon window, so it must be kept in scope
-    let tray_icon_result = sys_tray_icon::create_tray_icon();
-    if let Err(e) = tray_icon_result {
+    let tray_icon_res = sys_tray_icon::create_tray_icon();
+    if let Err(e) = tray_icon_res {
         // TODO for some reason if I use {:#} or {:?}, it repeatedly prints the error. Could be
         // something to do with how it implements .source()?
         error!("could not create tray icon: {e:#?}");
     }
 
-    EVENT_HOOK.replace(set_event_hook());
+    let hwineventhook = set_event_hook();
+    EVENT_HOOK.replace(hwineventhook);
+
     register_window_class().log_if_err();
     enum_windows().log_if_err();
 
     unsafe {
-        debug!("entering message loop!");
         let mut message = MSG::default();
         while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        error!("exited messsage loop in main.rs; this should not happen");
     }
+
+    info!("exiting tacky-borders");
 }
 
 fn create_logger() -> anyhow::Result<()> {
@@ -149,7 +154,7 @@ fn set_event_hook() -> HWINEVENTHOOK {
             EVENT_MIN,
             EVENT_MAX,
             None,
-            Some(event_hook::handle_win_event),
+            Some(event_hook::process_win_event),
             0,
             0,
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
@@ -192,9 +197,11 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
         if is_window_visible(_hwnd) && !is_window_cloaked(_hwnd) {
             let window_rule = get_window_rule(_hwnd);
 
-            if window_rule.enabled == Some(false) {
+            if window_rule.enabled == Some(EnableMode::Bool(false)) {
                 info!("border is disabled for {_hwnd:?}");
-            } else if window_rule.enabled == Some(true) || !has_filtered_style(_hwnd) {
+            } else if window_rule.enabled == Some(EnableMode::Bool(true))
+                || !has_filtered_style(_hwnd)
+            {
                 create_border_for_window(_hwnd, window_rule);
             }
         }

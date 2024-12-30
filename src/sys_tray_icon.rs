@@ -1,10 +1,10 @@
 use anyhow::Context;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-use windows::Win32::System::Threading::ExitProcess;
 use windows::Win32::UI::Accessibility::UnhookWinEvent;
+use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
-use crate::border_config::Config;
+use crate::border_config::{Config, CONFIG_WATCHER};
 use crate::{reload_borders, EVENT_HOOK};
 
 pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
@@ -56,11 +56,13 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
         }
         // Close
         "2" => unsafe {
-            if UnhookWinEvent(EVENT_HOOK.get()).as_bool() {
-                debug!("exiting tacky-borders!");
-                ExitProcess(0);
+            let unhook_bool = UnhookWinEvent(EVENT_HOOK.get()).as_bool();
+            let stop_res = CONFIG_WATCHER.lock().unwrap().stop();
+
+            if unhook_bool && stop_res.is_ok() {
+                PostQuitMessage(0);
             } else {
-                error!("could not unhook win event hook");
+                error!("attempt to unhook win event: {unhook_bool:?}; attempt to stop config watcher: {stop_res:?}");
             }
         },
         _ => {}

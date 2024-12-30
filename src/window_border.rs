@@ -1,4 +1,4 @@
-use crate::animations::{self, AnimType, Animations};
+use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::border_config::{WindowRule, CONFIG};
 use crate::colors::Color;
 use crate::utils::{
@@ -48,14 +48,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
     LazyLock::new(|| {
-        match D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None) {
-            Ok(factory) => factory,
-            Err(e) => {
-                // Not sure how I can recover from this error so I'm just going to panic
-                error!("could not create ID2D1Factory: {e}");
-                panic!("could not create ID2D1Factory: {e}");
-            }
-        }
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
+            error!("could not create ID2D1Factory: {err}");
+            panic!()
+        })
     })
 };
 
@@ -181,7 +177,6 @@ impl WindowBorder {
         let config = CONFIG.read().unwrap();
         let global = &config.global;
 
-        // TODO make this code prettier somehow
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
         let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
         let radius_config = window_rule
@@ -196,8 +191,11 @@ impl WindowBorder {
             .inactive_color
             .as_ref()
             .unwrap_or(&global.inactive_color);
+        let animations_config = window_rule
+            .animations
+            .as_ref()
+            .unwrap_or(&global.animations);
 
-        // Convert ColorConfig structs to Color
         self.active_color = active_color_config.to_color(true);
         self.inactive_color = inactive_color_config.to_color(false);
 
@@ -210,10 +208,7 @@ impl WindowBorder {
         self.border_offset = offset_config;
         self.border_radius = radius_config.to_radius(self.border_width, dpi, self.tracking_window);
 
-        self.animations = window_rule
-            .animations
-            .clone()
-            .unwrap_or(global.animations.clone().unwrap_or_default());
+        self.animations = animations_config.to_animations();
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
@@ -225,11 +220,11 @@ impl WindowBorder {
             true => 0,
             false => window_rule
                 .initialize_delay
-                .unwrap_or(global.initialize_delay.unwrap_or(250)),
+                .unwrap_or(global.initialize_delay),
         };
         self.unminimize_delay = window_rule
             .unminimize_delay
-            .unwrap_or(global.unminimize_delay.unwrap_or(200));
+            .unwrap_or(global.unminimize_delay);
 
         drop(config);
         drop(window_rule);
@@ -350,7 +345,7 @@ impl WindowBorder {
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
         self.is_active_window = self.tracking_window.0 as isize == *ACTIVE_WINDOW.lock().unwrap();
 
-        match animations::get_current_anims(self).contains_key(&AnimType::Fade) {
+        match animations::get_current_anims(self).contains_type(AnimType::Fade) {
             false => self.update_brush_opacities(),
             true if check_delay == Some(0) => {
                 self.update_brush_opacities();
@@ -635,8 +630,8 @@ impl WindowBorder {
 
                 let mut update = false;
 
-                for (anim_type, anim_params) in animations::get_current_anims(self).clone().iter() {
-                    match anim_type {
+                for anim_params in animations::get_current_anims(self).clone().iter() {
+                    match anim_params.anim_type {
                         AnimType::Spiral => {
                             animations::animate_spiral(self, &anim_elapsed, anim_params, false);
                             update = true;

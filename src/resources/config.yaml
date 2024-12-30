@@ -1,50 +1,45 @@
-# Customize global config options
+# watch_config_changes: Automatically reload borders whenever the config file is modified.
+watch_config_changes: True
+
+# Global configuration options
 global:
-  # border_width: the width of the border in pixels
+  # border_width: Width of the border (in pixels)
   border_width: 3
 
-  # border_offset: how offset the border is from the edges of the window in pixels
+  # border_offset: Offset of the border from the window edges (in pixels)
+  #   - Negative values shrink the border inwards
+  #   - Positive values expand the border outwards
   border_offset: -1
 
-  # border-radius: the radius of the border's corners.
-  # Supported types:
-  #   Auto
-  #   Square
-  #   Round
-  #   RoundSmall
-  #
-  #   Or just put in any number you wish to use as the radius
+  # border-radius: Radius of the border's corners. Supported values:
+  #   - Auto: Automatically determine the radius
+  #   - Square: Sharp corners (radius = 0)
+  #   - Round: Fully rounded corners
+  #   - RoundSmall: Slightly rounded corners
+  #   - Or specify any numeric value for a custom radius
   border_radius: Auto
 
   # active_color: the color of the active window's border
   # inactive_color: the color of the inactive window's border
   #
-  # Two types of colors are supported: solid and gradient.
-  #   Gradient colors support hex codes.
-  #   Solid colors support both a hex code and "accent".
-  #
-  # SOLID EXAMPLE:
-  #   active_color: "#ffffff"
-  #
-  #   OR
-  #
-  #   active_color: "accent"
-  #
-  # GRADIENT EXAMPLE:
-  #   active_color:
-  #     colors: ["#000000", "#ffffff"]
-  #     direction: 45deg
-  #
-  #   OR
-  #
-  #   active_color:
-  #     colors: ["#000000", "#ffffff"]
-  #     direction:
-  #       start: [0.0, 1.0]
-  #       end: [1.0, 0.0]
-  #
-  #   Note: [0.0, 0.0] is the top left corner
-  #         [1.0, 1.0] is the bottom right corner
+  # Supported color types:
+  #   - Solid: Use a hex code or "accent"
+  #       Example:
+  #         active_color: "#ffffff"
+  #         OR
+  #         active_color: "accent"
+  #   - Gradient: Define colors and direction
+  #       Example:
+  #         active_color:
+  #           colors: ["#000000", "#ffffff"]
+  #           direction: 45deg
+  #         OR
+  #         active_color:
+  #           colors: ["#000000", "#ffffff"]
+  #           direction:
+  #             start: [0.0, 1.0]
+  #             end: [1.0, 0.0]
+  #       Note: [0.0, 0.0] = top-left, [1.0, 1.0] = bottom-right
   active_color:
     colors: ["#6274e7", "#8752a3"]
     direction: 45deg
@@ -55,70 +50,87 @@ global:
       start: [0.0, 1.0]
       end: [1.0, 0.0]
 
-  # intialize_delay: the time (in milliseconds) it takes for the border to show after a window is opened.
-  # unminimize_delay: the time (in milliseconds) it takes for the border to show after a window is unminimized.
+  # initialize_delay: Time (in ms) before the border appears after opening a new window
+  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
   #
-  # There is no easy way to deal with window animations (such as when a window is opened or unminimized), and these
-  # delays are here to help account for that. If you have window animations disabled, I recommend setting these to 0.
+  # These settings help accommodate window animations (e.g., open or unminimize animations).
+  # If window animations are disabled, set these to 0.
   #
-  # These can also be adjusted to account for things like fade animations, which take additional time.
+  # These can also be used to accomodate border animations (e.g., fade animations).
   initialize_delay: 200
   unminimize_delay: 150
 
-  # animations:
-  #   active: adjusts the active window's animations
-  #   inactive: adjusts the inactive window's animations
-  #   fps: adjusts the animation fps
+  # animations: Configure animation behavior for window borders
+  #   fps: Animation frame rate
+  #   active: Animations for active windows
+  #   inactive: Animations for inactive windows
   #
-  #   Currently, three types of animations are supported:
-  #     Spiral,
-  #     ReverseSpiral,
-  #     Fade,
+  # Supported animation types:
+  #   - Spiral
+  #   - ReverseSpiral
+  #   - Fade
   #
-  #   The animation types can be adjusted by specifying their name like follows:
-  #     active: { Spiral, Fade }
+  # Specify animation types and parameters as follows:
+  #   active:
+  #     - type: Spiral
+  #       duration: 1800
+  #       easing: Linear
   #
-  #   The animation parameters can be adjusted by appending them to the animation type like follows:
-  #     active: { Spiral: { duration: 1800, easing: Linear }, Fade: { duration: 300, easing: EaseInOutQuad } }
-  #
-  #   Note: spiral animations can be taxing on the CPU and GPU on low-end systems.
+  # Note: Spiral animations may be resource-intensive on low-end systems.
   animations:
-    active: { ReverseSpiral, Fade: { easing: EaseInOutQuad } }
-    inactive: { Spiral, Fade: { easing: EaseInOutQuad } }
     fps: 60
 
-# Customize config options on a per-app basis.
+    active:
+      - type: ReverseSpiral
+        duration: 1800
+        easing: EaseInOutQuad
+
+      - type: Fade
+        duration: 200
+        easing: EaseInOutQuad
+
+    inactive:
+      - type: Spiral
+        duration: 1800
+        easing: EaseInOutQuad
+
+      - type: Fade
+        duration: 200
+        easing: EaseInOutQuad
+
+# Per-application configuration overrides
 window_rules:
-  - match: "Class"
+  - match: Class
     name: "Windows.UI.Core.CoreWindow"
-    enabled: false
+    enabled: False
 
-  - match: "Class"
+  - match: Class
     name: "XamlExplorerHostIslandWindow"
-    enabled: false
+    enabled: False
 
-  - match: "Title"
-    strategy: "Contains"
+  - match: Title
+    strategy: Contains
     name: "Zebar"
-    enabled: false
+    enabled: False
 
-  - match: "Title"
+  - match: Title
     name: "komorebi-bar"
-    enabled: false
+    enabled: False
 
-  - match: "Title"
+  - match: Title
     name: "keyviz"
-    enabled: false
+    enabled: False
 
-  - match: "Title"
+  - match: Title
     name: "Picture-in-Picture"
-    enabled: false
+    enabled: False
 
-  # EXAMPLE CONFIGURATION:
-  # - match: "Class"               # Currently supports "Class" or "Title"
-  #   name: "MozillaWindowClass"   # Name of the class or title
-  #   strategy: "Equals"           # Optional. Currently supports "Equals", "Contains", or "Regex". Defaults to "Equals"
-  #   enabled: true                # Optional. Enables/disables the border. Defaults to true. Note: you can't forcibly enable borders
+  # Example rule:
+  # - match: Class                   # Match based on Class or Title
+  #   name: "MozillaWindowClass"     # Class or title name to match
+  #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
+  #   enabled: True                  # Enable mode: True, False, or Auto (default: Auto)
   #
-  # Any option in the global config can also be defined in window_rules.
-  # If something isn't defined here, it will default to global config options.
+  # Notes:
+  #   - Any option in the global config can also be defined in window_rules.
+  #   - If not defined in a rule, settings will fall back to global config values.

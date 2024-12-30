@@ -2,22 +2,22 @@ use anyhow::Context;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
-    EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW,
-    EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
-    EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR, OBJID_WINDOW, WS_EX_NOACTIVATE,
+    CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
+    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR,
+    OBJID_WINDOW,
 };
 
 use crate::utils::{
-    destroy_border_for_window, get_border_for_window, get_window_ex_style, hide_border_for_window,
-    is_window_top_level, is_window_visible, post_message_w, send_notify_message_w,
+    destroy_border_for_window, get_border_for_window, get_foreground_window,
+    hide_border_for_window, is_window_visible, post_message_w, send_notify_message_w,
     show_border_for_window, LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
     WM_APP_MINIMIZESTART, WM_APP_REORDER,
 };
 use crate::window_border::ACTIVE_WINDOW;
 use crate::BORDERS;
 
-pub extern "system" fn handle_win_event(
+pub extern "system" fn process_win_event(
     _h_win_event_hook: HWINEVENTHOOK,
     _event: u32,
     _hwnd: HWND,
@@ -54,30 +54,33 @@ pub extern "system" fn handle_win_event(
                 }
             }
         }
-        // I *would* just use GetForegroundWindow(), but that sometimes doesn't work correctly due
-        // to timing issues between the event trigger and said function's processing.
-        EVENT_SYSTEM_FOREGROUND | EVENT_OBJECT_FOCUS => {
-            // We have to check WS_EX_NOACTIVATE cuz of bad Windows API
-            if !is_window_top_level(_hwnd) || get_window_ex_style(_hwnd).contains(WS_EX_NOACTIVATE)
-            {
-                return;
-            }
+        // Neither the HWND passed by the event nor the one returned by GetForegroundWindow() work
+        // correctly 100% of the time, so we use the following logic to improve reliability.
+        EVENT_SYSTEM_FOREGROUND => {
+            // Step one: check the visibility of the HWND passed by the event
+            // NOTE: just because _hwnd isn't visible doesn't necessarily mean it's incorrect, but
+            // it does at least allow us to filter through potentially incorrect HWNDs
+            let new_active_window = match is_window_visible(_hwnd) {
+                true => _hwnd.0 as isize,
+                false => {
+                    let foreground_hwnd = get_foreground_window();
 
-            let hwnd_isize = _hwnd.0 as isize;
+                    // Step two: check the validity of the HWND returned by GetForegroundWindow()
+                    match !foreground_hwnd.is_invalid() {
+                        true => foreground_hwnd.0 as isize,
+                        false => _hwnd.0 as isize,
+                    }
+                }
+            };
 
-            // Filter through repeated events
-            if hwnd_isize == *ACTIVE_WINDOW.lock().unwrap() {
-                return;
-            }
-
-            *ACTIVE_WINDOW.lock().unwrap() = hwnd_isize;
+            *ACTIVE_WINDOW.lock().unwrap() = new_active_window;
 
             // Send foreground messages to all the border windows
             for (key, val) in BORDERS.lock().unwrap().iter() {
                 let border_window = HWND(*val as _);
-                // Some apps like Flow Launcher can become focused even if they aren't visible yet,
-                // so I also need to check if 'key' is equal to '_hwnd' (the foreground window)
-                if is_window_visible(border_window) || key == &hwnd_isize {
+                // NOTE: some apps can become foreground even if they're not visible, so we also
+                // have to check the keys against the active_window HWND from earlier
+                if is_window_visible(border_window) || *key == new_active_window {
                     post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                         .context("EVENT_OBJECT_FOCUS")
                         .log_if_err();

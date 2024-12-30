@@ -1,85 +1,87 @@
-use serde::{Deserialize, Deserializer};
-use std::collections::HashMap;
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time;
 
 use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
+use crate::border_config::serde_default_i32;
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct Animations {
-    #[serde(default, deserialize_with = "animation")]
-    pub active: HashMap<AnimType, AnimParams>,
-    #[serde(default, deserialize_with = "animation")]
-    pub inactive: HashMap<AnimType, AnimParams>,
-    #[serde(skip)]
-    pub timer: Option<AnimationTimer>,
-    #[serde(default = "default_fps")]
+pub struct AnimationsConfig {
+    #[serde(default)]
+    pub active: Vec<AnimParamsConfig>,
+    #[serde(default)]
+    pub inactive: Vec<AnimParamsConfig>,
+    #[serde(default = "serde_default_i32::<60>")]
     pub fps: i32,
-    #[serde(skip)]
+}
+
+impl AnimationsConfig {
+    pub fn to_animations(&self) -> Animations {
+        Animations {
+            active: self
+                .active
+                .iter()
+                .map(|params_config| params_config.to_anim_params())
+                .collect(),
+            inactive: self
+                .inactive
+                .iter()
+                .map(|params_config| params_config.to_anim_params())
+                .collect(),
+            fps: self.fps,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Animations {
+    pub active: Vec<AnimParams>,
+    pub inactive: Vec<AnimParams>,
+    pub timer: Option<AnimationTimer>,
+    pub fps: i32,
     pub fade_progress: f32,
-    #[serde(skip)]
     pub fade_to_visible: bool,
-    #[serde(skip)]
     pub should_fade: bool,
-    #[serde(skip)]
     pub spiral_progress: f32,
-    #[serde(skip)]
     pub spiral_angle: f32,
 }
 
-fn default_fps() -> i32 {
-    60
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AnimParamsConfig {
+    #[serde(rename = "type")]
+    pub anim_type: AnimType,
+    pub duration: Option<f32>,
+    pub easing: Option<AnimEasing>,
 }
 
-// Custom deserializer for HashMap<AnimationType, Option<AnimValues>>
-fn animation<'de, D>(deserializer: D) -> Result<HashMap<AnimType, AnimParams>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let deserialized = HashMap::<AnimType, serde_yaml::Value>::deserialize(deserializer)?;
-    let mut hashmap = HashMap::new();
+impl AnimParamsConfig {
+    fn to_anim_params(&self) -> AnimParams {
+        let duration = self.duration.unwrap_or(match self.anim_type {
+            AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
+            AnimType::Fade => 200.0,
+        });
 
-    for (anim_type, value) in deserialized {
-        let duration = match value.get("duration") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
-            None => match anim_type {
-                AnimType::Spiral | AnimType::ReverseSpiral => 1800.0,
-                AnimType::Fade => 200.0,
-            },
-        };
-        let easing_type = match value.get("easing") {
-            Some(val) => serde_yaml::from_value(val.clone()).map_err(serde::de::Error::custom)?,
-            None => AnimEasing::default(),
-        };
+        let easing = self.easing.unwrap_or_default();
+        let easing_function = cubic_bezier(&easing.to_points()).unwrap();
 
-        let easing_function =
-            cubic_bezier(&easing_type.to_points()).map_err(serde::de::Error::custom)?;
-
-        let anim_params = AnimParams {
+        AnimParams {
+            anim_type: self.anim_type,
             duration,
             easing_fn: Arc::new(easing_function),
-        };
-
-        hashmap.insert(anim_type, anim_params);
+        }
     }
-
-    Ok(hashmap)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
-pub enum AnimType {
-    Spiral,
-    ReverseSpiral,
-    Fade,
 }
 
 #[derive(Clone)]
 pub struct AnimParams {
+    pub anim_type: AnimType,
     pub duration: f32,
     pub easing_fn: Arc<dyn Fn(f32) -> f32 + Send + Sync>,
 }
@@ -88,15 +90,33 @@ pub struct AnimParams {
 impl std::fmt::Debug for AnimParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnimParams")
+            .field("type", &self.anim_type)
             .field("duration", &self.duration)
-            // TODO idk what to put here for "easing"
             .field("easing_fn", &Arc::as_ptr(&self.easing_fn))
             .finish()
     }
 }
 
+pub trait AnimVec {
+    fn contains_type(&self, anim_type: AnimType) -> bool;
+}
+
+impl AnimVec for Vec<AnimParams> {
+    fn contains_type(&self, anim_type: AnimType) -> bool {
+        self.iter()
+            .any(|anim_params| anim_params.anim_type == anim_type)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum AnimType {
+    Spiral,
+    ReverseSpiral,
+    Fade,
+}
+
 // Thanks to 0xJWLabs for the AnimEasing enum along with its methods
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum AnimEasing {
     // Linear
     #[default]
@@ -143,7 +163,7 @@ impl AnimEasing {
     /// Converts the easing to a corresponding array of points.
     /// Linear and named easing variants will return predefined control points,
     /// while CubicBezier returns its own array.
-    pub fn to_points(&self) -> [f32; 4] {
+    pub fn to_points(self) -> [f32; 4] {
         match self {
             // Linear
             AnimEasing::Linear => [0.0, 0.0, 1.0, 1.0],
@@ -182,7 +202,7 @@ impl AnimEasing {
             AnimEasing::EaseInOutBack => [0.68, -0.6, 0.32, 1.6],
 
             // CubicBezier variant returns its own points.
-            AnimEasing::CubicBezier(bezier) => *bezier,
+            AnimEasing::CubicBezier(bezier) => bezier,
         }
     }
 }
@@ -278,7 +298,7 @@ pub fn animate_fade(
     border.inactive_color.set_opacity(new_inactive_opacity);
 }
 
-pub fn get_current_anims(border: &mut WindowBorder) -> &HashMap<AnimType, AnimParams> {
+pub fn get_current_anims(border: &mut WindowBorder) -> &Vec<AnimParams> {
     match border.is_active_window {
         true => &border.animations.active,
         false => &border.animations.inactive,

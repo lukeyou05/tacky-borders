@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 
 use crate::LogIfErr;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ColorConfig {
     SolidConfig(String),
@@ -23,29 +23,57 @@ pub enum ColorConfig {
 
 impl Default for ColorConfig {
     fn default() -> Self {
-        Self::SolidConfig("#000000".to_string())
+        Self::SolidConfig("accent".to_string())
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GradientConfig {
     pub colors: Vec<String>,
     pub direction: GradientDirection,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum GradientDirection {
     Angle(String),
     Coordinates(GradientCoordinates),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GradientCoordinates {
     pub start: [f32; 2],
     pub end: [f32; 2],
+}
+
+#[derive(Debug, Clone)]
+pub enum Color {
+    Solid(Solid),
+    Gradient(Gradient),
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Color::Solid(Solid {
+            color: D2D1_COLOR_F::default(),
+            brush: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Solid {
+    color: D2D1_COLOR_F,
+    brush: Option<ID2D1SolidColorBrush>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Gradient {
+    gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
+    direction: GradientCoordinates,
+    brush: Option<ID2D1LinearGradientBrush>,
 }
 
 impl ColorConfig {
@@ -183,50 +211,6 @@ impl Line {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Color {
-    Solid(Solid),
-    Gradient(Gradient),
-}
-
-#[derive(Debug, Clone)]
-pub struct Solid {
-    color: D2D1_COLOR_F,
-    brush: Option<ID2D1SolidColorBrush>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Gradient {
-    gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
-    direction: GradientCoordinates,
-    brush: Option<ID2D1LinearGradientBrush>,
-}
-
-impl Gradient {
-    pub fn update_start_end_points(&self, window_rect: &RECT) {
-        let width = (window_rect.right - window_rect.left) as f32;
-        let height = (window_rect.bottom - window_rect.top) as f32;
-
-        // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
-        // convert it into coordinates in terms of pixels
-        let start_point = D2D_POINT_2F {
-            x: self.direction.start[0] * width,
-            y: self.direction.start[1] * height,
-        };
-        let end_point = D2D_POINT_2F {
-            x: self.direction.end[0] * width,
-            y: self.direction.end[1] * height,
-        };
-
-        if let Some(ref id2d1_brush) = self.brush {
-            unsafe {
-                id2d1_brush.SetStartPoint(start_point);
-                id2d1_brush.SetEndPoint(end_point)
-            };
-        }
-    }
-}
-
 impl Color {
     pub fn init_brush(
         &mut self,
@@ -339,12 +323,28 @@ impl Color {
     }
 }
 
-impl Default for Color {
-    fn default() -> Self {
-        Color::Solid(Solid {
-            color: D2D1_COLOR_F::default(),
-            brush: None,
-        })
+impl Gradient {
+    pub fn update_start_end_points(&self, window_rect: &RECT) {
+        let width = (window_rect.right - window_rect.left) as f32;
+        let height = (window_rect.bottom - window_rect.top) as f32;
+
+        // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
+        // convert it into coordinates in terms of pixels
+        let start_point = D2D_POINT_2F {
+            x: self.direction.start[0] * width,
+            y: self.direction.start[1] * height,
+        };
+        let end_point = D2D_POINT_2F {
+            x: self.direction.end[0] * width,
+            y: self.direction.end[1] * height,
+        };
+
+        if let Some(ref id2d1_brush) = self.brush {
+            unsafe {
+                id2d1_brush.SetStartPoint(start_point);
+                id2d1_brush.SetEndPoint(end_point)
+            };
+        }
     }
 }
 

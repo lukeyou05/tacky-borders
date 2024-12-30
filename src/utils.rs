@@ -9,10 +9,10 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT};
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsWindowVisible, PostMessageW,
+    GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic, IsWindowVisible, PostMessageW,
     RealGetWindowClassW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
-    WS_MAXIMIZE, WS_MINIMIZE,
+    WS_MAXIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -20,7 +20,7 @@ use regex::Regex;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::{MatchKind, MatchStrategy, WindowRule, CONFIG};
+use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule, CONFIG};
 use crate::window_border::WindowBorder;
 use crate::{SendHWND, BORDERS};
 
@@ -40,9 +40,6 @@ pub trait LogIfErr {
 impl LogIfErr for anyhow::Result<()> {
     fn log_if_err(&self) {
         if let Err(e) = self {
-            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
-            // the one in main.rs for tray_icon_result). It could have something to do with how they
-            // implement .source()
             error!("{e:#}");
         }
     }
@@ -51,9 +48,6 @@ impl LogIfErr for anyhow::Result<()> {
 impl LogIfErr for windows::core::Result<()> {
     fn log_if_err(&self) {
         if let Err(e) = self {
-            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
-            // the one in main.rs for tray_icon_result). It could have something to do with how they
-            // implement .source()
             error!("{e:#}");
         }
     }
@@ -215,9 +209,7 @@ pub fn get_foreground_window() -> HWND {
 }
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
-    let style = get_window_style(hwnd);
-
-    style.contains(WS_MINIMIZE)
+    unsafe { IsIconic(hwnd).as_bool() }
 }
 
 pub fn post_message_w(
@@ -347,9 +339,9 @@ pub fn show_border_for_window(hwnd: HWND) {
     } else if is_window_top_level(hwnd) && is_window_visible(hwnd) && !is_window_cloaked(hwnd) {
         let window_rule = get_window_rule(hwnd);
 
-        if window_rule.enabled == Some(false) {
+        if window_rule.enabled == Some(EnableMode::Bool(false)) {
             info!("border is disabled for {hwnd:?}");
-        } else if window_rule.enabled == Some(true) || !has_filtered_style(hwnd) {
+        } else if window_rule.enabled == Some(EnableMode::Bool(true)) || !has_filtered_style(hwnd) {
             create_border_for_window(hwnd, window_rule);
         }
     }
@@ -375,6 +367,7 @@ pub fn hide_border_for_window(hwnd: HWND) {
 const SUBDIVISION_PRECISION: f32 = 0.0001; // Precision for binary subdivision
 const SUBDIVISION_MAX_ITERATIONS: u32 = 10; // Maximum number of iterations for binary subdivision
 
+#[derive(Debug)]
 pub enum BezierError {
     InvalidControlPoint,
 }
