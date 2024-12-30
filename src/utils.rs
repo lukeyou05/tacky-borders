@@ -40,9 +40,6 @@ pub trait LogIfErr {
 impl LogIfErr for anyhow::Result<()> {
     fn log_if_err(&self) {
         if let Err(e) = self {
-            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
-            // the one in main.rs for tray_icon_result). It could have something to do with how they
-            // implement .source()
             error!("{e:#}");
         }
     }
@@ -51,9 +48,6 @@ impl LogIfErr for anyhow::Result<()> {
 impl LogIfErr for windows::core::Result<()> {
     fn log_if_err(&self) {
         if let Err(e) = self {
-            // TODO for some reason if I use {:#} or {:?}, some errors will repeatedly print (like
-            // the one in main.rs for tray_icon_result). It could have something to do with how they
-            // implement .source()
             error!("{e:#}");
         }
     }

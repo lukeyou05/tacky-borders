@@ -48,14 +48,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
     LazyLock::new(|| {
-        match D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_MULTI_THREADED, None) {
-            Ok(factory) => factory,
-            Err(e) => {
-                // Not sure how I can recover from this error so I'm just going to panic
-                error!("could not create ID2D1Factory: {e}");
-                panic!("could not create ID2D1Factory: {e}");
-            }
-        }
+        D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|error| {
+            error!("could not create ID2D1Factory: {error}");
+            panic!()
+        })
     })
 };
 
@@ -181,7 +177,6 @@ impl WindowBorder {
         let config = CONFIG.read().unwrap();
         let global = &config.global;
 
-        // TODO make this code prettier somehow
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
         let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
         let radius_config = window_rule

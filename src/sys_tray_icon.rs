@@ -4,7 +4,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::System::Threading::ExitProcess;
 use windows::Win32::UI::Accessibility::UnhookWinEvent;
 
-use crate::border_config::Config;
+use crate::border_config::{Config, CONFIG_WATCHER};
 use crate::{reload_borders, EVENT_HOOK};
 
 pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
@@ -57,7 +57,7 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
         // Close
         "2" => unsafe {
             let unhook_bool = UnhookWinEvent(EVENT_HOOK.get());
-            let destroy_res = Config::destroy_config_watcher();
+            let destroy_res = CONFIG_WATCHER.lock().unwrap().stop();
 
             if unhook_bool.as_bool() && destroy_res.is_ok() {
                 debug!("exiting tacky-borders!");

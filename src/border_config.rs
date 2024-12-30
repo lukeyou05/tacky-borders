@@ -32,7 +32,16 @@ pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     })
 });
 
-static CONFIG_DIR_HANDLE: LazyLock<Mutex<Option<isize>>> = LazyLock::new(|| Mutex::new(None));
+pub static CONFIG_WATCHER: LazyLock<Mutex<ConfigWatcher>> = LazyLock::new(|| {
+    // TODO: right now we use unwrap_or_default() to prevent panic, but we should probably handle it
+    Mutex::new(ConfigWatcher::new(
+        Config::get_config_dir()
+            .unwrap_or_default()
+            .join("config.yaml"),
+        500,
+        Config::config_watcher_callback,
+    ))
+});
 
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
@@ -182,12 +191,12 @@ impl Config {
         }
 
         let contents = fs::read_to_string(&config_path).context("could not read config.yaml")?;
-        let config: Config = serde_yaml::from_str(&contents)?;
+        let config: Config = serde_yml::from_str(&contents)?;
 
-        if config.watch_config_changes && CONFIG_DIR_HANDLE.lock().unwrap().is_none() {
-            Self::spawn_config_watcher()?;
-        } else if !config.watch_config_changes && CONFIG_DIR_HANDLE.lock().unwrap().is_some() {
-            Self::destroy_config_watcher()?;
+        if config.watch_config_changes && !CONFIG_WATCHER.lock().unwrap().is_running() {
+            CONFIG_WATCHER.lock().unwrap().start()?;
+        } else if !config.watch_config_changes && CONFIG_WATCHER.lock().unwrap().is_running() {
+            CONFIG_WATCHER.lock().unwrap().stop()?;
         }
 
         Ok(config)
@@ -222,13 +231,50 @@ impl Config {
         *CONFIG.write().unwrap() = new_config;
     }
 
-    pub fn spawn_config_watcher() -> anyhow::Result<()> {
-        info!("spawning config watcher");
+    fn config_watcher_callback() {
+        let old_config = (*CONFIG.read().unwrap()).clone();
+        Self::reload_config();
+        let new_config = CONFIG.read().unwrap();
 
-        let config_dir = Self::get_config_dir()?;
+        if old_config != *new_config {
+            info!("config.yaml has changed; reloading borders");
+            reload_borders();
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigWatcher {
+    config_path: PathBuf,
+    debounce_time: time::Duration,
+    callback_fn: fn(),
+    config_dir_handle: Option<isize>,
+}
+
+impl ConfigWatcher {
+    pub fn new(config_path: PathBuf, debounce_time: u64, callback_fn: fn()) -> Self {
+        Self {
+            config_path,
+            debounce_time: time::Duration::from_millis(debounce_time),
+            callback_fn,
+            config_dir_handle: None,
+        }
+    }
+
+    pub fn start(&mut self) -> anyhow::Result<()> {
+        info!("starting config watcher");
+
+        if self.is_running() {
+            return Err(anyhow!("config watcher is already running"));
+        }
+
+        // NOTE: apparently you can use context() on an Option lol
+        let config_dir = self
+            .config_path
+            .parent()
+            .context("could not get parent dir for config watcher")?;
         let config_dir_vec: Vec<u16> = config_dir
-            .clone()
-            .into_os_string()
+            .as_os_str()
             .encode_wide()
             .chain(iter::once(0))
             .collect();
@@ -243,12 +289,23 @@ impl Config {
                 FILE_FLAG_BACKUP_SEMANTICS,
                 HANDLE::default(),
             )
-            .context("could not create dir handle for config watching")?
+            .context("could not create dir handle for config watcher")?
         };
 
-        // Convert HANDLE to isize so we can pass it into the thread
+        // Convert HANDLE to isize so we can move it into the new thread
         let dir_handle_isize = dir_handle.0 as isize;
-        *CONFIG_DIR_HANDLE.lock().unwrap() = Some(dir_handle_isize);
+        self.config_dir_handle = Some(dir_handle_isize);
+
+        // Also initialize these variables so we move them into the new thread
+        let config_name = self
+            .config_path
+            .file_name()
+            .context("could not get config name for config watcher")?
+            .to_owned()
+            .into_string()
+            .map_err(|_| anyhow!("could not convert config name for config watcher"))?;
+        let debounce_time = self.debounce_time;
+        let callback_fn = self.callback_fn;
 
         let _ = thread::spawn(move || unsafe {
             // Reconvert isize back to HANDLE
@@ -258,7 +315,6 @@ impl Config {
             let mut bytes_returned = 0u32;
 
             let mut now = time::Instant::now();
-            let delay = time::Duration::from_secs(1);
 
             loop {
                 if let Err(e) = ReadDirectoryChangesW(
@@ -276,11 +332,11 @@ impl Config {
                 }
 
                 // Prevent too many directory checks in quick succession
-                if now.elapsed() < delay {
-                    thread::sleep(delay - now.elapsed());
+                if now.elapsed() < debounce_time {
+                    thread::sleep(debounce_time - now.elapsed());
                 }
 
-                Self::process_dir_change_notifs(&buffer, bytes_returned);
+                Self::process_dir_change_notifs(&buffer, bytes_returned, &config_name, callback_fn);
                 now = time::Instant::now();
             }
 
@@ -290,7 +346,12 @@ impl Config {
         Ok(())
     }
 
-    fn process_dir_change_notifs(buffer: &[u8; 1024], bytes_returned: u32) {
+    pub fn process_dir_change_notifs(
+        buffer: &[u8; 1024],
+        bytes_returned: u32,
+        config_name: &str,
+        callback_fn: fn(),
+    ) {
         let mut offset = 0usize;
 
         while offset < bytes_returned as usize {
@@ -303,18 +364,9 @@ impl Config {
             let file_name = String::from_utf16_lossy(name_slice);
             debug!("file changed: {}", file_name);
 
-            if file_name == "config.yaml" {
-                let old_config = (*CONFIG.read().unwrap()).clone();
-                Self::reload_config();
-                let new_config = CONFIG.read().unwrap();
-
-                if old_config != *new_config {
-                    info!("config.yaml has changed; reloading borders");
-                    reload_borders();
-                }
-
-                // Break to prevent multiple reloads from the same notification
-                break;
+            if file_name == *config_name {
+                callback_fn();
+                break; // Prevent multiple callbacks from the same notification
             }
 
             // If NextEntryOffset = 0, then we have reached the end of the notification
@@ -326,29 +378,30 @@ impl Config {
         }
     }
 
-    pub fn destroy_config_watcher() -> anyhow::Result<()> {
-        info!("destroying config watcher");
+    pub fn stop(&mut self) -> anyhow::Result<()> {
+        info!("stopping config watcher");
 
-        let mut config_dir_handle = CONFIG_DIR_HANDLE.lock().unwrap();
-        if let Some(dir_handle_isize) = *config_dir_handle {
+        if let Some(dir_handle_isize) = self.config_dir_handle {
             let dir_handle = HANDLE(dir_handle_isize as _);
 
             // Cancel all pending I/O operations on the handle
             unsafe { CancelIoEx(dir_handle, None) }.log_if_err();
 
-            // Close the handle for cleanup. This should automatically close the config watcher thread.
+            // Close the handle for cleanup. This should automatically exit the watcher thread.
             let res = unsafe { CloseHandle(dir_handle) }.map_err(anyhow::Error::new);
 
-            // Reset CONFIG_DIR_HANDLE after successfully closing it
+            // Reset the config dir handle if we successfully closed it
             if res.is_ok() {
-                *config_dir_handle = None;
+                self.config_dir_handle = None;
             }
 
             res
         } else {
-            info!("config_dir_handle not found; skipping cleanup");
-
-            Ok(())
+            Err(anyhow!("config watcher is not running"))
         }
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.config_dir_handle.is_some()
     }
 }

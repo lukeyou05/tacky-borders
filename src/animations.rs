@@ -92,7 +92,6 @@ impl std::fmt::Debug for AnimParams {
         f.debug_struct("AnimParams")
             .field("type", &self.anim_type)
             .field("duration", &self.duration)
-            // TODO idk what to put here for "easing"
             .field("easing_fn", &Arc::as_ptr(&self.easing_fn))
             .finish()
     }
