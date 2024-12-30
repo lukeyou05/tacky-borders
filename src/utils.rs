@@ -6,7 +6,9 @@ use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWM_WINDOW_CORNER_PREFERENCE,
 };
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT};
+use windows::Win32::UI::HiDpi::{
+    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+};
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic, IsWindowVisible, PostMessageW,
@@ -303,6 +305,10 @@ pub fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_
     .log_if_err();
 
     corner_preference
+}
+
+pub fn get_dpi_for_window(hwnd: HWND) -> u32 {
+    unsafe { GetDpiForWindow(hwnd) }
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) {
