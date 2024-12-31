@@ -54,25 +54,15 @@ pub extern "system" fn process_win_event(
                 }
             }
         }
-        // Neither the HWND passed by the event nor the one returned by GetForegroundWindow() work
-        // correctly 100% of the time, so we use the following logic to improve reliability.
+        // Both the HWND passed by the event and the one returned by GetForegroundWindow() should
+        // refer to the same "active" window, but they don't, and I give up at this point.
         EVENT_SYSTEM_FOREGROUND => {
-            // Step one: check the visibility of the HWND passed by the event
-            // NOTE: just because _hwnd isn't visible doesn't necessarily mean it's incorrect, but
-            // it does at least allow us to filter through potentially incorrect HWNDs
-            let new_active_window = match is_window_visible(_hwnd) {
-                true => _hwnd.0 as isize,
-                false => {
-                    let foreground_hwnd = get_foreground_window();
+            let potential_active_hwnd = get_foreground_window();
 
-                    // Step two: check the validity of the HWND returned by GetForegroundWindow()
-                    match !foreground_hwnd.is_invalid() {
-                        true => foreground_hwnd.0 as isize,
-                        false => _hwnd.0 as isize,
-                    }
-                }
+            let new_active_window = match !potential_active_hwnd.is_invalid() {
+                true => potential_active_hwnd.0 as isize,
+                false => _hwnd.0 as isize,
             };
-
             *ACTIVE_WINDOW.lock().unwrap() = new_active_window;
 
             // Send foreground messages to all the border windows

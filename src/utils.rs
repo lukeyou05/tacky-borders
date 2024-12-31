@@ -281,7 +281,7 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
         let _ = window_sent;
         let _ = window_isize;
 
-        // Note: init() contains a loop, so this should never return unless it's an Error
+        // Note: init() contains a loop
         border.init(window_rule).log_if_err();
     });
 }

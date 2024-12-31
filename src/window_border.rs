@@ -3,9 +3,10 @@ use crate::border_config::{WindowRule, CONFIG};
 use crate::colors::Color;
 use crate::utils::{
     are_rects_same_size, get_dpi_for_window, get_foreground_window, get_window_rule,
-    get_window_title, has_native_border, is_rect_visible, is_window_visible, LogIfErr,
-    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_LOCATIONCHANGE,
-    WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
+    get_window_title, has_native_border, is_rect_visible, is_window_minimized, is_window_visible,
+    post_message_w, LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
+    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
+    WM_APP_SHOWUNCLOAKED,
 };
 use crate::{BORDERS, INITIAL_WINDOWS};
 use anyhow::{anyhow, Context};
@@ -162,6 +163,19 @@ impl WindowBorder {
 
             animations::set_timer_if_anims_enabled(self);
 
+            // Handle the case where the tracking window is already minimized
+            // TODO: maybe put this in a better spot but idk where
+            if is_window_minimized(self.tracking_window) {
+                post_message_w(
+                    self.border_window,
+                    WM_APP_MINIMIZESTART,
+                    WPARAM(0),
+                    LPARAM(0),
+                )
+                .context("could not post WM_APP_MINIMIZESTART message in init()")
+                .log_if_err();
+            }
+
             let mut message = MSG::default();
             while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
                 let _ = TranslateMessage(&message);
@@ -200,7 +214,10 @@ impl WindowBorder {
         self.inactive_color = inactive_color_config.to_color(false);
 
         self.current_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
-            0.0 => return Err(anyhow!("received invalid dpi of 0 from GetDpiForWindow")),
+            0.0 => {
+                self.exit_border_thread();
+                return Err(anyhow!("received invalid dpi of 0 from GetDpiForWindow"));
+            }
             valid_dpi => valid_dpi,
         };
 
@@ -227,9 +244,6 @@ impl WindowBorder {
         self.unminimize_delay = window_rule
             .unminimize_delay
             .unwrap_or(global.unminimize_delay);
-
-        drop(config);
-        drop(window_rule);
 
         Ok(())
     }

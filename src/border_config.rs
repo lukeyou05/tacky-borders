@@ -397,7 +397,9 @@ impl ConfigWatcher {
 
             res
         } else {
-            Err(anyhow!("config watcher is not running"))
+            debug!("config watcher is not running; skipping cleanup");
+
+            Ok(())
         }
     }
 
