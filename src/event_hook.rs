@@ -1,4 +1,7 @@
 use anyhow::Context;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -16,6 +19,8 @@ use crate::utils::{
 };
 use crate::window_border::ACTIVE_WINDOW;
 use crate::BORDERS;
+
+static IS_POLLING_ACTIVE_WINDOW: AtomicBool = AtomicBool::new(false);
 
 pub extern "system" fn process_win_event(
     _h_win_event_hook: HWINEVENTHOOK,
@@ -55,26 +60,15 @@ pub extern "system" fn process_win_event(
             }
         }
         // Both the HWND passed by the event and the one returned by GetForegroundWindow() should
-        // refer to the same "active" window, but they don't, and I give up at this point.
+        // refer to the same "active" window, but they don't.
         EVENT_SYSTEM_FOREGROUND => {
             let potential_active_hwnd = get_foreground_window();
 
-            let new_active_window = match !potential_active_hwnd.is_invalid() {
-                true => potential_active_hwnd.0 as isize,
-                false => _hwnd.0 as isize,
-            };
-            *ACTIVE_WINDOW.lock().unwrap() = new_active_window;
-
-            // Send foreground messages to all the border windows
-            for (key, val) in BORDERS.lock().unwrap().iter() {
-                let border_window = HWND(*val as _);
-                // NOTE: some apps can become foreground even if they're not visible, so we also
-                // have to check the keys against the active_window HWND from earlier
-                if is_window_visible(border_window) || *key == new_active_window {
-                    post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
-                        .context("EVENT_OBJECT_FOCUS")
-                        .log_if_err();
-                }
+            // I GIVE UP I ACTUALLY GIVE UP im just gonna poll
+            if potential_active_hwnd != _hwnd && !IS_POLLING_ACTIVE_WINDOW.load(Ordering::SeqCst) {
+                poll_active_window_with_limit(3);
+            } else {
+                handle_foreground_event(potential_active_hwnd, _hwnd);
             }
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
@@ -107,5 +101,44 @@ pub extern "system" fn process_win_event(
             }
         }
         _ => {}
+    }
+}
+
+fn poll_active_window_with_limit(max_polls: u32) {
+    IS_POLLING_ACTIVE_WINDOW.store(true, Ordering::SeqCst);
+
+    let _ = thread::spawn(move || {
+        for _ in 0..max_polls {
+            let current_active_hwnd = HWND(*ACTIVE_WINDOW.lock().unwrap() as _);
+            let new_active_hwnd = get_foreground_window();
+
+            if new_active_hwnd != current_active_hwnd && !new_active_hwnd.is_invalid() {
+                handle_foreground_event(new_active_hwnd, current_active_hwnd);
+            }
+
+            thread::sleep(time::Duration::from_millis(50));
+        }
+
+        IS_POLLING_ACTIVE_WINDOW.store(false, Ordering::SeqCst);
+    });
+}
+
+fn handle_foreground_event(potential_active_hwnd: HWND, event_hwnd: HWND) {
+    let new_active_window = match !potential_active_hwnd.is_invalid() {
+        true => potential_active_hwnd.0 as isize,
+        false => event_hwnd.0 as isize,
+    };
+    *ACTIVE_WINDOW.lock().unwrap() = new_active_window;
+
+    // Send foreground messages to all the border windows
+    for (key, val) in BORDERS.lock().unwrap().iter() {
+        let border_window = HWND(*val as _);
+        // NOTE: some apps can become foreground even if they're not visible, so we also
+        // have to check the keys against the active_window HWND from earlier
+        if is_window_visible(border_window) || *key == new_active_window {
+            post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
+                .context("EVENT_OBJECT_FOCUS")
+                .log_if_err();
+        }
     }
 }
