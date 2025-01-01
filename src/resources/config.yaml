@@ -39,7 +39,7 @@ global:
   #           direction:
   #             start: [0.0, 1.0]
   #             end: [1.0, 0.0]
-  #       Note: [0.0, 0.0] = top-left, [1.0, 1.0] = bottom-right
+  #       NOTE: [0.0, 0.0] = top-left, [1.0, 1.0] = bottom-right
   active_color:
     colors: ["#6274e7", "#8752a3"]
     direction: 45deg
@@ -76,24 +76,20 @@ global:
   #       duration: 1800
   #       easing: Linear
   #
-  # Note: Spiral animations may be resource-intensive on low-end systems.
+  #     - type: Fade
+  #       duration: 200
+  #       easing: EaseInOutQuad
+  #
+  # NOTE: Spiral animations may be resource-intensive on low-end systems.
   animations:
     fps: 60
 
     active:
-      - type: ReverseSpiral
-        duration: 1800
-        easing: EaseInOutQuad
-
       - type: Fade
         duration: 200
         easing: EaseInOutQuad
 
     inactive:
-      - type: Spiral
-        duration: 1800
-        easing: EaseInOutQuad
-
       - type: Fade
         duration: 200
         easing: EaseInOutQuad

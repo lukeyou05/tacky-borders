@@ -104,7 +104,11 @@ impl ColorConfig {
                     .enumerate()
                     .map(|(i, color)| D2D1_GRADIENT_STOP {
                         position: i as f32 * step,
-                        color: get_color_from_hex(color.as_str()),
+                        color: if color == "accent" {
+                            get_accent_color(is_active_color)
+                        } else {
+                            get_color_from_hex(color.as_str())
+                        },
                     })
                     .collect();
 
