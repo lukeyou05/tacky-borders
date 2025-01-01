@@ -3,8 +3,8 @@ use std::thread;
 use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 
+use crate::post_message_w;
 use crate::utils::WM_APP_ANIMATE;
-use crate::{post_message_w, SendHWND};
 
 #[derive(Debug, Clone)]
 pub struct AnimationTimer {
@@ -16,20 +16,18 @@ impl AnimationTimer {
         let stop_flag = Arc::new(Mutex::new(false));
         let stop_flag_clone = stop_flag.clone();
 
-        // Wrap HWND in a struct that implements Send and Sync to move it into the thread
-        let window = SendHWND(hwnd);
+        let hwnd_isize = hwnd.0 as isize;
 
         // Spawn a worker thread for the timer
         thread::spawn(move || {
-            let window_sent = window;
+            let hwnd = HWND(hwnd_isize as _);
             let interval = Duration::from_millis(interval_ms);
 
             while !*stop_flag_clone.lock().unwrap() {
-                if let Err(e) = post_message_w(window_sent.0, WM_APP_ANIMATE, WPARAM(0), LPARAM(0))
-                {
+                if let Err(e) = post_message_w(hwnd, WM_APP_ANIMATE, WPARAM(0), LPARAM(0)) {
                     error!(
                         "could not send animation timer message for {:?}: {}",
-                        window_sent.0, e
+                        hwnd, e
                     );
                     break;
                 }

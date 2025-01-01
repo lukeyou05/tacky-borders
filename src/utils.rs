@@ -22,9 +22,9 @@ use regex::Regex;
 use std::ptr;
 use std::thread;
 
-use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule, CONFIG};
+use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
 use crate::window_border::WindowBorder;
-use crate::{SendHWND, BORDERS};
+use crate::APP_STATE;
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
 pub const WM_APP_REORDER: u32 = WM_APP + 1;
@@ -137,7 +137,7 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
         }
     };
 
-    let config = CONFIG.read().unwrap();
+    let config = APP_STATE.config.read().unwrap();
 
     for rule in config.window_rules.iter() {
         let window_name = match rule.kind {
@@ -251,35 +251,34 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 
 pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) {
     debug!("creating border for: {:?}", tracking_window);
-    let window = SendHWND(tracking_window);
+    let tracking_window_isize = tracking_window.0 as isize;
 
     let _ = thread::spawn(move || {
-        let window_sent = window;
-        let window_isize = window_sent.0 .0 as isize;
+        let tracking_window = HWND(tracking_window_isize as _);
 
         // Note: 'key' for the hashmap is the tracking window, 'value' is the border window
-        let mut borders_hashmap = BORDERS.lock().unwrap();
+        let mut borders_hashmap = APP_STATE.borders.lock().unwrap();
 
         // Check to see if there is already a border for the given tracking window
-        if borders_hashmap.contains_key(&window_isize) {
+        if borders_hashmap.contains_key(&tracking_window_isize) {
             return;
         }
 
         // Otherwise, continue creating the border window
-        let mut border = WindowBorder::new(window_sent.0);
+        let mut border = WindowBorder::new(tracking_window);
 
         if let Err(e) = border.create_window() {
             error!("could not create border window: {e}");
             return;
         };
 
-        borders_hashmap.insert(window_isize, border.border_window.0 as isize);
+        borders_hashmap.insert(tracking_window_isize, border.border_window.0 as isize);
 
         drop(borders_hashmap);
 
         // Drop these values (to save some RAM?) before calling init and entering a message loop
-        let _ = window_sent;
-        let _ = window_isize;
+        let _ = tracking_window;
+        let _ = tracking_window_isize;
 
         // Note: init() contains a loop
         border.init(window_rule).log_if_err();
@@ -312,7 +311,12 @@ pub fn get_dpi_for_window(hwnd: HWND) -> u32 {
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) {
-    if let Some(&border_isize) = BORDERS.lock().unwrap().get(&(tracking_window.0 as isize)) {
+    if let Some(&border_isize) = APP_STATE
+        .borders
+        .lock()
+        .unwrap()
+        .get(&(tracking_window.0 as isize))
+    {
         let border_window = HWND(border_isize as _);
 
         post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
@@ -322,7 +326,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) {
 }
 
 pub fn get_border_for_window(hwnd: HWND) -> Option<HWND> {
-    let borders_hashmap = BORDERS.lock().unwrap();
+    let borders_hashmap = APP_STATE.borders.lock().unwrap();
 
     let hwnd_isize = hwnd.0 as isize;
     let Some(border_isize) = borders_hashmap.get(&hwnd_isize) else {
@@ -354,14 +358,14 @@ pub fn show_border_for_window(hwnd: HWND) {
 }
 
 pub fn hide_border_for_window(hwnd: HWND) {
-    let window = SendHWND(hwnd);
+    let hwnd_isize = hwnd.0 as isize;
 
     // Spawn a new thread to guard against re-entrancy in the event hook, though it honestly isn't
     // that important for our purposes I think
     let _ = thread::spawn(move || {
-        let window_sent = window;
+        let hwnd = HWND(hwnd_isize as _);
 
-        if let Some(border) = get_border_for_window(window_sent.0) {
+        if let Some(border) = get_border_for_window(hwnd) {
             post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
                 .context("hide_border_for_window")
                 .log_if_err();

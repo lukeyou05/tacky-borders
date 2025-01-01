@@ -1,13 +1,13 @@
 use anyhow::Context;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-use windows::Win32::UI::Accessibility::UnhookWinEvent;
+use windows::Win32::UI::Accessibility::{UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
-use crate::border_config::{Config, CONFIG_WATCHER};
-use crate::{reload_borders, EVENT_HOOK};
+use crate::border_config::Config;
+use crate::{reload_borders, APP_STATE};
 
-pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
+pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
         Err(e) => {
@@ -36,11 +36,14 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
         .with_icon(icon)
         .build();
 
+    // Convert HWINEVENTHOOK to isize so we can move it into the thread below
+    let hwineventhook_isize = hwineventhook.0 as isize;
+
     // Handle tray icon events (i.e. clicking on the menu items)
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| match event.id.0.as_str() {
         // Show Config
         "0" => {
-            match Config::get_config_dir() {
+            match Config::get_dir() {
                 Ok(dir) => {
                     // I don't really think I need to check this Result from open::that() because
                     // it's pretty obvious to the user if they can't open the directory
@@ -51,13 +54,16 @@ pub fn create_tray_icon() -> anyhow::Result<TrayIcon> {
         }
         // Reload
         "1" => {
-            Config::reload_config();
+            Config::reload();
             reload_borders();
         }
         // Close
         "2" => unsafe {
-            let unhook_bool = UnhookWinEvent(EVENT_HOOK.get()).as_bool();
-            let stop_res = CONFIG_WATCHER.lock().unwrap().stop();
+            // Convert hwineventhook_isize back into HWINEVENTHOOK
+            let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
+
+            let unhook_bool = UnhookWinEvent(hwineventhook).as_bool();
+            let stop_res = APP_STATE.config_watcher.lock().unwrap().stop();
 
             if unhook_bool && stop_res.is_ok() {
                 PostQuitMessage(0);

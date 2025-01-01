@@ -1,17 +1,15 @@
 use crate::animations::{self, AnimType, AnimVec, Animations};
-use crate::border_config::{WindowRule, CONFIG};
+use crate::border_config::WindowRule;
 use crate::colors::Color;
 use crate::utils::{
-    are_rects_same_size, get_dpi_for_window, get_foreground_window, get_window_rule,
-    get_window_title, has_native_border, is_rect_visible, is_window_minimized, is_window_visible,
-    post_message_w, LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
-    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
-    WM_APP_SHOWUNCLOAKED,
+    are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
+    is_rect_visible, is_window_minimized, is_window_visible, post_message_w, LogIfErr,
+    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_LOCATIONCHANGE,
+    WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
 };
-use crate::{BORDERS, INITIAL_WINDOWS};
+use crate::APP_STATE;
 use anyhow::{anyhow, Context};
 use std::ptr;
-use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time;
 use windows::core::{w, PCWSTR};
@@ -23,8 +21,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget,
-    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BRUSH_PROPERTIES, D2D1_FACTORY_TYPE_MULTI_THREADED,
+    ID2D1Brush, ID2D1HwndRenderTarget, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BRUSH_PROPERTIES,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
     D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_ROUNDED_RECT,
@@ -45,18 +42,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
-
-static RENDER_FACTORY: LazyLock<ID2D1Factory> = unsafe {
-    LazyLock::new(|| {
-        D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
-            error!("could not create ID2D1Factory: {err}");
-            panic!()
-        })
-    })
-};
-
-pub static ACTIVE_WINDOW: LazyLock<Mutex<isize>> =
-    LazyLock::new(|| Mutex::new(get_foreground_window().0 as isize));
 
 #[derive(Debug, Default)]
 pub struct WindowBorder {
@@ -188,7 +173,7 @@ impl WindowBorder {
     }
 
     pub fn load_from_config(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
-        let config = CONFIG.read().unwrap();
+        let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
 
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
@@ -231,7 +216,8 @@ impl WindowBorder {
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
-        self.initialize_delay = match INITIAL_WINDOWS
+        self.initialize_delay = match APP_STATE
+            .initial_windows
             .lock()
             .unwrap()
             .contains(&(self.tracking_window.0 as isize))
@@ -276,7 +262,7 @@ impl WindowBorder {
         };
 
         unsafe {
-            let render_target = RENDER_FACTORY.CreateHwndRenderTarget(
+            let render_target = APP_STATE.render_factory.CreateHwndRenderTarget(
                 &render_target_properties,
                 &hwnd_render_target_properties,
             )?;
@@ -359,7 +345,8 @@ impl WindowBorder {
     }
 
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
-        self.is_active_window = self.tracking_window.0 as isize == *ACTIVE_WINDOW.lock().unwrap();
+        self.is_active_window =
+            self.tracking_window.0 as isize == *APP_STATE.active_window.lock().unwrap();
 
         match animations::get_current_anims(self).contains_type(AnimType::Fade) {
             false => self.update_brush_opacities(),
@@ -384,7 +371,7 @@ impl WindowBorder {
 
     fn update_width_radius(&mut self) {
         let window_rule = get_window_rule(self.tracking_window);
-        let config = CONFIG.read().unwrap();
+        let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
 
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
@@ -505,7 +492,8 @@ impl WindowBorder {
     fn exit_border_thread(&mut self) {
         self.is_paused = true;
         animations::destroy_timer(self);
-        BORDERS
+        APP_STATE
+            .borders
             .lock()
             .unwrap()
             .remove(&(self.tracking_window.0 as isize));

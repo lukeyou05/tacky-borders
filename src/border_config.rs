@@ -1,14 +1,13 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorConfig;
-use crate::reload_borders;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
+use crate::{reload_borders, APP_STATE};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex, RwLock};
 use std::{iter, ptr, slice, thread, time};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, FALSE, HANDLE, HWND};
@@ -21,27 +20,6 @@ use windows::Win32::Storage::FileSystem::{
     FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::IO::CancelIoEx;
-
-pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
-    RwLock::new(match Config::create_config() {
-        Ok(config) => config,
-        Err(e) => {
-            error!("could not read config.yaml: {e:#}");
-            Config::default()
-        }
-    })
-});
-
-pub static CONFIG_WATCHER: LazyLock<Mutex<ConfigWatcher>> = LazyLock::new(|| {
-    // TODO: right now we use unwrap_or_default() to prevent panic, but we should probably handle it
-    Mutex::new(ConfigWatcher::new(
-        Config::get_config_dir()
-            .unwrap_or_default()
-            .join("config.yaml"),
-        500,
-        Config::config_watcher_callback,
-    ))
-});
 
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
@@ -177,8 +155,8 @@ pub enum EnableMode {
 }
 
 impl Config {
-    pub fn create_config() -> anyhow::Result<Self> {
-        let config_dir = Self::get_config_dir()?;
+    pub fn create() -> anyhow::Result<Self> {
+        let config_dir = Self::get_dir()?;
         let config_path = config_dir.join("config.yaml");
 
         // If the config.yaml does not exist, try to create it
@@ -191,18 +169,11 @@ impl Config {
         }
 
         let contents = fs::read_to_string(&config_path).context("could not read config.yaml")?;
-        let config: Config = serde_yml::from_str(&contents)?;
 
-        if config.watch_config_changes && !CONFIG_WATCHER.lock().unwrap().is_running() {
-            CONFIG_WATCHER.lock().unwrap().start()?;
-        } else if !config.watch_config_changes && CONFIG_WATCHER.lock().unwrap().is_running() {
-            CONFIG_WATCHER.lock().unwrap().stop()?;
-        }
-
-        Ok(config)
+        serde_yml::from_str(&contents).map_err(anyhow::Error::new)
     }
 
-    pub fn get_config_dir() -> anyhow::Result<PathBuf> {
+    pub fn get_dir() -> anyhow::Result<PathBuf> {
         let Some(home_dir) = home_dir() else {
             return Err(anyhow!("could not find home directory!"));
         };
@@ -220,21 +191,31 @@ impl Config {
         Ok(config_dir)
     }
 
-    pub fn reload_config() {
-        let new_config = match Self::create_config() {
-            Ok(config) => config,
-            Err(e) => {
-                error!("could not reload config: {e:#}");
+    pub fn reload() {
+        let new_config = match Self::create() {
+            Ok(config) => {
+                let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
+
+                if config.watch_config_changes && !config_watcher.is_running() {
+                    config_watcher.start().log_if_err();
+                } else if !config.watch_config_changes && config_watcher.is_running() {
+                    config_watcher.stop().log_if_err();
+                }
+
+                config
+            }
+            Err(err) => {
+                error!("could not reload config: {err:#}");
                 Config::default()
             }
         };
-        *CONFIG.write().unwrap() = new_config;
+        *APP_STATE.config.write().unwrap() = new_config;
     }
 
-    fn config_watcher_callback() {
-        let old_config = (*CONFIG.read().unwrap()).clone();
-        Self::reload_config();
-        let new_config = CONFIG.read().unwrap();
+    pub fn config_watcher_callback() {
+        let old_config = (*APP_STATE.config.read().unwrap()).clone();
+        Self::reload();
+        let new_config = APP_STATE.config.read().unwrap();
 
         if old_config != *new_config {
             info!("config.yaml has changed; reloading borders");
