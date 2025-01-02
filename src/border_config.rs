@@ -142,7 +142,7 @@ impl RadiusConfig {
             RadiusConfig::Square => 0.0,
             RadiusConfig::Round => get_adjusted_radius(8.0, dpi, border_width),
             RadiusConfig::RoundSmall => get_adjusted_radius(4.0, dpi, border_width),
-            RadiusConfig::Custom(radius) => radius * dpi / 96.0,
+            RadiusConfig::Custom(radius) => get_adjusted_radius(*radius, dpi, border_width),
         }
     }
 }

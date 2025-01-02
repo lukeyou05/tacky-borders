@@ -414,7 +414,7 @@ impl WindowBorder {
                 .Resize(&pixel_size)
                 .context("could not resize render_target")?;
 
-            // Determine which color/rectangle should be drawn on top
+            // Determine which color should be drawn on top (for color fade animation)
             let (bottom_color, top_color) = match self.is_active_window {
                 true => (&self.inactive_color, &self.active_color),
                 false => (&self.active_color, &self.inactive_color),
