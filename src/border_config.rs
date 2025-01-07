@@ -1,5 +1,6 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorConfig;
+use crate::komorebi::KomorebiColorsConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
 use crate::{reload_borders, APP_STATE};
 use anyhow::{anyhow, Context};
@@ -28,6 +29,8 @@ const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 pub struct Config {
     #[serde(default)]
     pub watch_config_changes: bool,
+    #[serde(default)]
+    pub enable_komorebi_integration: bool,
     #[serde(default = "serde_default_global")]
     pub global: Global,
     #[serde(default)]
@@ -58,6 +61,9 @@ pub struct Global {
     pub active_color: ColorConfig,
     #[serde(default)]
     pub inactive_color: ColorConfig,
+    // TODO: should i use an Option here instead?
+    #[serde(default)]
+    pub komorebi_colors: KomorebiColorsConfig,
     #[serde(default)]
     pub animations: AnimationsConfig,
     #[serde(alias = "init_delay")]
@@ -93,6 +99,7 @@ pub struct WindowRule {
     pub border_radius: Option<RadiusConfig>,
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
+    pub komorebi_colors: Option<KomorebiColorsConfig>,
     pub enabled: Option<EnableMode>,
     pub animations: Option<AnimationsConfig>,
     #[serde(alias = "init_delay")]

@@ -8,13 +8,14 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{anyhow, Context};
+use komorebi::KomorebiIntegration;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
-use utils::get_foreground_window;
+use utils::{get_foreground_window, get_last_error};
 use windows::core::w;
-use windows::Win32::Foundation::{GetLastError, BOOL, HWND, LPARAM, TRUE, WPARAM};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, D2D1_FACTORY_TYPE_MULTI_THREADED,
 };
@@ -32,9 +33,12 @@ mod animations;
 mod border_config;
 mod colors;
 mod event_hook;
+mod iocp;
+mod komorebi;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
+mod windows_api;
 
 use crate::border_config::{Config, ConfigWatcher, EnableMode};
 use crate::utils::{
@@ -54,6 +58,7 @@ struct AppState {
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
     render_factory: ID2D1Factory,
+    komorebi_integration: Mutex<KomorebiIntegration>,
 }
 
 impl AppState {
@@ -67,11 +72,19 @@ impl AppState {
             Config::config_watcher_callback,
         );
 
+        // NOTE: experimental
+        let mut komorebi_integration = KomorebiIntegration::new();
+
         let config = match Config::create() {
             Ok(config) => {
                 if config.watch_config_changes {
                     config_watcher.start().log_if_err();
                 }
+
+                if config.enable_komorebi_integration {
+                    komorebi_integration.start().log_if_err();
+                }
+
                 config
             }
             Err(err) => {
@@ -95,6 +108,7 @@ impl AppState {
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
             render_factory,
+            komorebi_integration: Mutex::new(komorebi_integration),
         }
     }
 
@@ -156,12 +170,6 @@ fn create_logger() -> anyhow::Result<()> {
 
     CombinedLogger::init(vec![
         TermLogger::new(
-            LevelFilter::Warn,
-            sp_log::Config::default(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        ),
-        TermLogger::new(
             LevelFilter::Debug,
             sp_log::Config::default(),
             TerminalMode::Mixed,
@@ -192,7 +200,7 @@ fn register_window_class() -> windows::core::Result<()> {
 
         let result = RegisterClassExW(&window_class);
         if result == 0 {
-            let last_error = GetLastError();
+            let last_error = get_last_error();
             error!("could not register window class: {last_error:?}");
         }
     }

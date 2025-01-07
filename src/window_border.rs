@@ -1,10 +1,11 @@
 use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::border_config::WindowRule;
 use crate::colors::Color;
+use crate::komorebi::{WindowKind, FOCUS_STATE};
 use crate::utils::{
     are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
     is_rect_visible, is_window_minimized, is_window_visible, post_message_w, LogIfErr,
-    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_LOCATIONCHANGE,
+    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE,
     WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
 };
 use crate::APP_STATE;
@@ -692,6 +693,53 @@ impl WindowBorder {
                 if update && (time_diff.abs() <= 0.001 || time_diff >= 0.0) {
                     self.render().log_if_err();
                 }
+            }
+            WM_APP_KOMOREBI => {
+                // TODO: awful, bad, unefficient, i should just cache the color brushes somewhere
+                let old_active_opacity = self.active_color.get_opacity().unwrap_or_default();
+
+                let focus_state = FOCUS_STATE.lock().unwrap();
+                // TODO: idk what to do with None so i just do unwrap_or() rn
+                let window_kind = focus_state
+                    .get(&(self.tracking_window.0 as isize))
+                    .unwrap_or(&WindowKind::Single);
+
+                let window_rule = get_window_rule(self.tracking_window);
+                let global = &APP_STATE.config.read().unwrap().global;
+
+                let active_color_config = window_rule
+                    .active_color
+                    .as_ref()
+                    .unwrap_or(&global.active_color);
+                let komorebi_colors_config = window_rule
+                    .komorebi_colors
+                    .as_ref()
+                    .unwrap_or(&global.komorebi_colors);
+
+                // TODO: having WindowKind::Unfocused here is weird lol
+                self.active_color = match window_kind {
+                    WindowKind::Single => active_color_config.to_color(true),
+                    WindowKind::Stack => komorebi_colors_config.stack_color.to_color(true),
+                    WindowKind::Monocle => komorebi_colors_config.monocle_color.to_color(true),
+                    WindowKind::Unfocused => self.active_color.clone(),
+                    WindowKind::Floating => komorebi_colors_config.floating_color.to_color(true),
+                };
+
+                let Some(ref render_target) = self.render_target else {
+                    error!("render target has not been set yet");
+                    return LRESULT(0);
+                };
+
+                let brush_properties = D2D1_BRUSH_PROPERTIES {
+                    opacity: 1.0,
+                    transform: Matrix3x2::identity(),
+                };
+
+                self.active_color
+                    .init_brush(render_target, &self.window_rect, &brush_properties)
+                    .log_if_err();
+
+                self.active_color.set_opacity(old_active_opacity);
             }
             WM_PAINT => {
                 let _ = ValidateRect(window, None);

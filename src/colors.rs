@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
@@ -385,7 +385,10 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 }
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
-    if !matches!(hex.len(), 7 | 9 | 4 | 5) || !hex.starts_with('#') {
+    let s = hex.strip_prefix("#").unwrap_or_default();
+    parse_hex(s).unwrap_or_default()
+
+    /*if !matches!(hex.len(), 7 | 9 | 4 | 5) || !hex.starts_with('#') {
         error!("invalid hex color format: {hex}");
         return D2D1_COLOR_F {
             r: 1.0,
@@ -442,5 +445,53 @@ fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
         1.0
     };
 
-    D2D1_COLOR_F { r, g, b, a }
+    D2D1_COLOR_F { r, g, b, a }*/
+}
+
+fn parse_hex(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
+    if !matches!(s.len(), 3 | 4 | 6 | 8) || !s[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!("invalid hex: {s}"));
+    }
+
+    let n = s.len();
+
+    let parse_digit = |digit: &str, single: bool| -> anyhow::Result<f32> {
+        u8::from_str_radix(digit, 16)
+            .map(|n| {
+                if single {
+                    ((n << 4) | n) as f32 / 255.0
+                } else {
+                    n as f32 / 255.0
+                }
+            })
+            .map_err(|_| anyhow!("invalid hex: {s}"))
+    };
+
+    if n == 3 || n == 4 {
+        let r = parse_digit(&s[0..1], true)?;
+        let g = parse_digit(&s[1..2], true)?;
+        let b = parse_digit(&s[2..3], true)?;
+
+        let a = if n == 4 {
+            parse_digit(&s[3..4], true)?
+        } else {
+            1.0
+        };
+
+        Ok(D2D1_COLOR_F { r, g, b, a })
+    } else if n == 6 || n == 8 {
+        let r = parse_digit(&s[0..2], false)?;
+        let g = parse_digit(&s[2..4], false)?;
+        let b = parse_digit(&s[4..6], false)?;
+
+        let a = if n == 8 {
+            parse_digit(&s[6..8], false)?
+        } else {
+            1.0
+        };
+
+        Ok(D2D1_COLOR_F { r, g, b, a })
+    } else {
+        Err(anyhow!("invalid hex: {s}"))
+    }
 }

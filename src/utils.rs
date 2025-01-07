@@ -1,6 +1,6 @@
 use windows::Win32::Foundation::{
     GetLastError, SetLastError, BOOL, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE,
-    ERROR_SUCCESS, FALSE, HWND, LPARAM, RECT, WPARAM,
+    ERROR_SUCCESS, FALSE, HWND, LPARAM, RECT, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -34,6 +34,7 @@ pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
+pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 
 pub trait LogIfErr {
     fn log_if_err(&self);
@@ -79,7 +80,7 @@ pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
     let mut title_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
-        let last_error = unsafe { GetLastError() };
+        let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
         // TODO figure out whats with the invalid window handles
@@ -101,7 +102,7 @@ pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
     let mut class_arr: [u16; 256] = [0; 256];
 
     if unsafe { RealGetWindowClassW(hwnd, &mut class_arr) } == 0 {
-        let last_error = unsafe { GetLastError() };
+        let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
         // TODO figure out whats with the invalid window handles
@@ -371,6 +372,10 @@ pub fn hide_border_for_window(hwnd: HWND) {
                 .log_if_err();
         }
     });
+}
+
+pub fn get_last_error() -> WIN32_ERROR {
+    unsafe { GetLastError() }
 }
 
 // Bezier curve algorithm together with @0xJWLabs

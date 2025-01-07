@@ -39,7 +39,7 @@ impl AnimationsConfig {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct Animations {
     pub active: Vec<AnimParams>,
     pub inactive: Vec<AnimParams>,
