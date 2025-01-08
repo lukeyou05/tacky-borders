@@ -5,16 +5,14 @@ use std::{io, mem, ptr};
 use windows::core::PSTR;
 use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
-    AcceptEx, WSARecv, WSASocketW, WSAStartup, ADDRESS_FAMILY, AF_UNIX, SOCKADDR, SOCKADDR_UN,
-    SOCKET, SOCKET_ERROR, SOCK_STREAM, SOMAXCONN, WSABUF, WSADATA, WSA_FLAG_OVERLAPPED,
-    WSA_IO_PENDING,
+    bind, closesocket, listen, AcceptEx, WSACleanup, WSAGetLastError, WSARecv, WSASocketW,
+    WSAStartup, ADDRESS_FAMILY, AF_UNIX, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOCK_STREAM,
+    SOMAXCONN, WSABUF, WSADATA, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING,
 };
 use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, OVERLAPPED_ENTRY,
 };
-
-use crate::windows_api::{self, closesocket, wsa_cleanup, wsa_get_last_error};
 
 pub struct UnixListener {
     pub socket: UnixDomainSocket,
@@ -49,8 +47,10 @@ impl UnixListener {
     }
 
     pub fn shutdown(&self) {
-        closesocket(self.socket.0);
-        wsa_cleanup();
+        unsafe {
+            closesocket(self.socket.0);
+            WSACleanup();
+        };
     }
 }
 
@@ -59,8 +59,10 @@ unsafe impl Sync for UnixListener {}
 
 impl Drop for UnixListener {
     fn drop(&mut self) {
-        closesocket(self.socket.0);
-        wsa_cleanup();
+        unsafe {
+            closesocket(self.socket.0);
+            WSACleanup();
+        };
     }
 }
 
@@ -80,7 +82,7 @@ impl UnixStream {
 
 impl Drop for UnixStream {
     fn drop(&mut self) {
-        closesocket(self.socket.0);
+        unsafe { closesocket(self.socket.0) };
     }
 }
 
@@ -122,8 +124,8 @@ impl UnixDomainSocket {
             sun_path,
         };
 
-        let iresult = {
-            windows_api::bind(
+        let iresult = unsafe {
+            bind(
                 self.0,
                 ptr::addr_of!(sockaddr_un) as *const SOCKADDR,
                 mem::size_of_val(&sockaddr_un) as i32,
@@ -131,7 +133,7 @@ impl UnixDomainSocket {
         };
         if iresult == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            closesocket(self.0);
+            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not bind socket: {:?}", last_error));
         }
 
@@ -139,9 +141,9 @@ impl UnixDomainSocket {
     }
 
     pub fn listen(&self) -> anyhow::Result<()> {
-        if windows_api::listen(self.0, SOMAXCONN as i32) == SOCKET_ERROR {
+        if unsafe { listen(self.0, SOMAXCONN as i32) } == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            closesocket(self.0);
+            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not listen to socket: {:?}", last_error));
         }
 
@@ -171,12 +173,14 @@ impl UnixDomainSocket {
         .as_bool()
         {
             // TODO: get_queued_completion_status crashes when i use io::Error::last_os_error()
-            let last_error = wsa_get_last_error();
+            let last_error = unsafe { WSAGetLastError() };
 
             // WSA_IO_PENDING just means it will complete at a later time (async)
             if last_error != WSA_IO_PENDING {
-                closesocket(self.0);
-                closesocket(client_socket.0);
+                unsafe {
+                    closesocket(self.0);
+                    closesocket(client_socket.0);
+                }
                 return Err(anyhow!(
                     "could not accept client socket connection: {:?}",
                     last_error
@@ -213,7 +217,7 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                closesocket(self.0);
+                unsafe { closesocket(self.0) };
                 return Err(anyhow!("could not receive data: {:?}", last_error));
             }
         }
@@ -224,7 +228,7 @@ impl UnixDomainSocket {
 
 impl Drop for UnixDomainSocket {
     fn drop(&mut self) {
-        closesocket(self.0);
+        unsafe { closesocket(self.0) };
     }
 }
 
@@ -238,22 +242,22 @@ unsafe impl Sync for CompletionPort {}
 
 impl CompletionPort {
     pub fn new(threads: u32) -> anyhow::Result<Self> {
-        let iocp_handle = match unsafe {
-            CreateIoCompletionPort(INVALID_HANDLE_VALUE, HANDLE(ptr::null_mut()), 0, threads)
-        } {
-            Ok(handle) => handle,
-            Err(err) => {
-                return Err(anyhow!("could not create iocp: {err}"));
-            }
-        };
+        let iocp_handle =
+            match unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, threads) } {
+                Ok(handle) => handle,
+                Err(err) => {
+                    return Err(anyhow!("could not create iocp: {err}"));
+                }
+            };
 
         Ok(Self { iocp_handle })
     }
 
     pub fn associate_handle(&self, handle: HANDLE) -> anyhow::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ = unsafe { CreateIoCompletionPort(handle, self.iocp_handle, handle.0 as usize, 0) }
-            .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
+        let _ =
+            unsafe { CreateIoCompletionPort(handle, Some(self.iocp_handle), handle.0 as usize, 0) }
+                .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
 
         Ok(())
     }

@@ -275,7 +275,7 @@ impl ConfigWatcher {
                 None,
                 OPEN_EXISTING,
                 FILE_FLAG_BACKUP_SEMANTICS,
-                HANDLE::default(),
+                None,
             )
             .context("could not create dir handle for config watcher")?
         };
@@ -309,7 +309,7 @@ impl ConfigWatcher {
                     dir_handle,
                     buffer.as_mut_ptr() as _,
                     buffer.len() as u32,
-                    FALSE,
+                    false,
                     FILE_NOTIFY_CHANGE_LAST_WRITE,
                     Some(ptr::addr_of_mut!(bytes_returned)),
                     None,

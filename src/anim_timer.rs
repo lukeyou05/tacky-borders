@@ -36,7 +36,7 @@ impl AnimationTimer {
 
             while !*stop_flag_clone.lock().unwrap() {
                 let hwnd = HWND(hwnd_isize as _);
-                if let Err(e) = post_message_w(hwnd, WM_APP_ANIMATE, WPARAM(0), LPARAM(0)) {
+                if let Err(e) = post_message_w(Some(hwnd), WM_APP_ANIMATE, WPARAM(0), LPARAM(0)) {
                     error!(
                         "could not send animation timer message for {:?}: {}",
                         hwnd, e

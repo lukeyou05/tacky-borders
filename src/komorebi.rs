@@ -7,13 +7,13 @@ use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::{fs, io, mem, ptr, thread};
 use windows::Win32::Foundation::{FALSE, HANDLE, HWND, LPARAM, WPARAM};
-use windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST;
+use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::UI::WindowsAndMessaging::IsZoomed;
 
 use crate::colors::ColorConfig;
 use crate::iocp::CompletionPort;
 use crate::iocp::UnixListener;
 use crate::utils::{get_foreground_window, post_message_w, LogIfErr, WM_APP_KOMOREBI};
-use crate::windows_api::{is_zoomed, monitor_from_window};
 use crate::APP_STATE;
 
 // NOTE: in komorebi it's <border hwnd, WindowKind>, but here it's <tracking hwnd, WindowKind>
@@ -200,10 +200,10 @@ impl KomorebiIntegration {
 
                 let foreground_hwnd = get_foreground_window();
                 let foreground_monitor_id =
-                    monitor_from_window(foreground_hwnd, MONITOR_DEFAULTTONEAREST);
+                    unsafe { MonitorFromWindow(foreground_hwnd, MONITOR_DEFAULTTONEAREST) };
                 let is_maximized = foreground_monitor_id.0 as isize
                     == m["id"].as_i64().unwrap() as isize
-                    && is_zoomed(foreground_hwnd);
+                    && unsafe { IsZoomed(foreground_hwnd) }.as_bool();
 
                 if is_maximized {
                     // NOTE: again, don't think we need to do anything here
@@ -283,7 +283,7 @@ impl KomorebiIntegration {
             // Only post update messages when the window kind has actually changed
             if previous_window_kind != new_window_kind {
                 let border_hwnd = HWND(*border as _);
-                post_message_w(border_hwnd, WM_APP_KOMOREBI, WPARAM(0), LPARAM(0))
+                post_message_w(Some(border_hwnd), WM_APP_KOMOREBI, WPARAM(0), LPARAM(0))
                     .context("WM_APP_KOMOREBI")
                     .log_if_err();
             }

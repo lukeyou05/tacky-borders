@@ -216,7 +216,7 @@ pub fn is_window_minimized(hwnd: HWND) -> bool {
 }
 
 pub fn post_message_w(
-    hwnd: HWND,
+    hwnd: Option<HWND>,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
@@ -320,7 +320,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) {
     {
         let border_window = HWND(border_isize as _);
 
-        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+        post_message_w(Some(border_window), WM_NCDESTROY, WPARAM(0), LPARAM(0))
             .context("destroy_border_for_window")
             .log_if_err();
     }
@@ -344,7 +344,7 @@ pub fn show_border_for_window(hwnd: HWND) {
     // If the border already exists, simply post a 'SHOW' message to its message queue. Otherwise,
     // create a new border.
     if let Some(border) = get_border_for_window(hwnd) {
-        post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
+        post_message_w(Some(border), WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
             .context("show_border_for_window")
             .log_if_err();
     } else if is_window_top_level(hwnd) && is_window_visible(hwnd) && !is_window_cloaked(hwnd) {
@@ -367,7 +367,7 @@ pub fn hide_border_for_window(hwnd: HWND) {
         let hwnd = HWND(hwnd_isize as _);
 
         if let Some(border) = get_border_for_window(hwnd) {
-            post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
+            post_message_w(Some(border), WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
                 .context("hide_border_for_window")
                 .log_if_err();
         }

@@ -95,7 +95,7 @@ impl WindowBorder {
                 CW_USEDEFAULT,
                 None,
                 None,
-                GetModuleHandleW(None)?,
+                Some(GetModuleHandleW(None)?.into()),
                 Some(ptr::addr_of!(*self) as _),
             )?;
         }
@@ -153,7 +153,7 @@ impl WindowBorder {
             // TODO: maybe put this in a better spot but idk where
             if is_window_minimized(self.tracking_window) {
                 post_message_w(
-                    self.border_window,
+                    Some(self.border_window),
                     WM_APP_MINIMIZESTART,
                     WPARAM(0),
                     LPARAM(0),
@@ -163,7 +163,7 @@ impl WindowBorder {
             }
 
             let mut message = MSG::default();
-            while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+            while GetMessageW(&mut message, None, 0, 0).into() {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
@@ -327,7 +327,7 @@ impl WindowBorder {
 
             if let Err(e) = SetWindowPos(
                 self.border_window,
-                hwnd_above_tracking.unwrap_or(HWND_TOP),
+                Some(hwnd_above_tracking.unwrap_or(HWND_TOP)),
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
@@ -742,7 +742,7 @@ impl WindowBorder {
                 self.active_color.set_opacity(old_active_opacity);
             }
             WM_PAINT => {
-                let _ = ValidateRect(window, None);
+                let _ = ValidateRect(Some(window), None);
             }
             WM_NCDESTROY => {
                 // TODO not actually sure if we need to set GWLP_USERDATA to 0 here

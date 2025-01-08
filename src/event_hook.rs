@@ -49,7 +49,7 @@ pub extern "system" fn process_win_event(
             for value in APP_STATE.borders.lock().unwrap().values() {
                 let border_window = HWND(*value as _);
                 if is_window_visible(border_window) {
-                    post_message_w(border_window, WM_APP_REORDER, WPARAM(0), LPARAM(0))
+                    post_message_w(Some(border_window), WM_APP_REORDER, WPARAM(0), LPARAM(0))
                         .context("EVENT_OBJECT_REORDER")
                         .log_if_err();
                 }
@@ -79,14 +79,14 @@ pub extern "system" fn process_win_event(
         }
         EVENT_SYSTEM_MINIMIZESTART => {
             if let Some(border) = get_border_for_window(_hwnd) {
-                post_message_w(border, WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0))
+                post_message_w(Some(border), WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MINIMIZESTART")
                     .log_if_err();
             }
         }
         EVENT_SYSTEM_MINIMIZEEND => {
             if let Some(border) = get_border_for_window(_hwnd) {
-                post_message_w(border, WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
+                post_message_w(Some(border), WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MINIMIZEEND")
                     .log_if_err();
             }
@@ -132,7 +132,7 @@ fn handle_foreground_event(potential_active_hwnd: HWND, event_hwnd: HWND) {
         // NOTE: some apps can become foreground even if they're not visible, so we also
         // have to check the keys against the active_window HWND from earlier
         if is_window_visible(border_window) || *key == new_active_window {
-            post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
+            post_message_w(Some(border_window), WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                 .context("EVENT_OBJECT_FOCUS")
                 .log_if_err();
         }

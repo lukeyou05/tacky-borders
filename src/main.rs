@@ -61,6 +61,9 @@ struct AppState {
     komorebi_integration: Mutex<KomorebiIntegration>,
 }
 
+unsafe impl Send for AppState {}
+unsafe impl Sync for AppState {}
+
 impl AppState {
     fn new() -> Self {
         let active_window = get_foreground_window().0 as isize;
@@ -152,7 +155,7 @@ fn main() {
 
     unsafe {
         let mut message = MSG::default();
-        while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+        while GetMessageW(&mut message, None, 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
@@ -236,7 +239,7 @@ fn reload_borders() {
     // Send destroy messages to all the border windows
     for value in borders.values() {
         let border_window = HWND(*value as _);
-        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+        post_message_w(Some(border_window), WM_NCDESTROY, WPARAM(0), LPARAM(0))
             .context("reload_borders")
             .log_if_err();
     }
