@@ -32,6 +32,7 @@ pub struct UnixListener {
 unsafe impl Send for UnixListener {}
 unsafe impl Sync for UnixListener {}
 
+#[allow(unused)]
 impl UnixListener {
     pub fn bind(socket_path: &Path) -> anyhow::Result<Self> {
         let server_socket = UnixDomainSocket::new()?;
@@ -57,7 +58,7 @@ impl UnixListener {
             socket: UnixDomainSocket::default(),
             overlapped: Box::new(OVERLAPPED::default()),
             flags: 0,
-            buffer: Vec::from([0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize]),
+            buffer: vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize],
         };
 
         client_stream.socket = self
@@ -69,6 +70,10 @@ impl UnixListener {
 
     pub fn token(&self) -> usize {
         self.socket.0 .0
+    }
+
+    pub fn take_buffer(&mut self) -> Vec<u8> {
+        mem::take(&mut self.buffer)
     }
 }
 
@@ -88,15 +93,22 @@ pub struct UnixStream {
 unsafe impl Send for UnixStream {}
 unsafe impl Sync for UnixStream {}
 
+#[allow(unused)]
 impl UnixStream {
     pub fn read(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<()> {
+        // Take ownership of this output buffer
         self.buffer = outputbuffer;
+
         self.socket
             .read(&mut self.buffer, self.overlapped.as_mut(), &mut self.flags)
     }
 
     pub fn token(&self) -> usize {
         self.socket.0 .0
+    }
+
+    pub fn take_buffer(&mut self) -> Vec<u8> {
+        mem::take(&mut self.buffer)
     }
 }
 
@@ -264,6 +276,7 @@ pub struct CompletionPort {
 unsafe impl Send for CompletionPort {}
 unsafe impl Sync for CompletionPort {}
 
+#[allow(unused)]
 impl CompletionPort {
     pub fn new(threads: u32) -> anyhow::Result<Self> {
         let iocp_handle =
@@ -286,7 +299,6 @@ impl CompletionPort {
         Ok(())
     }
 
-    #[allow(unused)]
     pub fn poll_single(
         &self,
         timeout: Option<time::Duration>,
@@ -325,7 +337,6 @@ impl CompletionPort {
         Ok(())
     }
 
-    #[allow(unused)]
     pub fn poll_many(
         &self,
         timeout: Option<time::Duration>,

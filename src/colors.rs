@@ -386,66 +386,10 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     let s = hex.strip_prefix("#").unwrap_or_default();
-    parse_hex(s).unwrap_or_default()
-
-    /*if !matches!(hex.len(), 7 | 9 | 4 | 5) || !hex.starts_with('#') {
-        error!("invalid hex color format: {hex}");
-        return D2D1_COLOR_F {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
-    }
-    // Expand shorthand hex formats (#RGB or #RGBA to #RRGGBB or #RRGGBBAA)
-    let expanded_hex = match hex.len() {
-        4 => format!(
-            "#{}{}{}{}{}{}",
-            &hex[1..2],
-            &hex[1..2],
-            &hex[2..3],
-            &hex[2..3],
-            &hex[3..4],
-            &hex[3..4]
-        ),
-        5 => format!(
-            "#{}{}{}{}{}{}{}{}",
-            &hex[1..2],
-            &hex[1..2],
-            &hex[2..3],
-            &hex[2..3],
-            &hex[3..4],
-            &hex[3..4],
-            &hex[4..5],
-            &hex[4..5]
-        ),
-        _ => hex.to_string(),
-    };
-
-    // Convert each color component to f32 between 0.0 and 1.0, handling errors
-    let parse_component = |s: &str| -> f32 {
-        match u8::from_str_radix(s, 16) {
-            Ok(val) => val as f32 / 255.0,
-            Err(_) => {
-                error!("invalid component '{s}' in hex: {expanded_hex}");
-                0.0
-            }
-        }
-    };
-
-    // Parse RGB values
-    let r = parse_component(&expanded_hex[1..3]);
-    let g = parse_component(&expanded_hex[3..5]);
-    let b = parse_component(&expanded_hex[5..7]);
-
-    // Parse alpha value if present
-    let a = if expanded_hex.len() == 9 {
-        parse_component(&expanded_hex[7..9])
-    } else {
-        1.0
-    };
-
-    D2D1_COLOR_F { r, g, b, a }*/
+    parse_hex(s).unwrap_or_else(|err| {
+        error!("could not parse hex: {err}");
+        D2D1_COLOR_F::default()
+    })
 }
 
 fn parse_hex(s: &str) -> anyhow::Result<D2D1_COLOR_F> {

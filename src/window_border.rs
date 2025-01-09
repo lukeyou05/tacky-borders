@@ -1,7 +1,7 @@
 use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::border_config::WindowRule;
 use crate::colors::Color;
-use crate::komorebi::{WindowKind, FOCUS_STATE};
+use crate::komorebi::WindowKind;
 use crate::utils::{
     are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
     is_rect_visible, is_window_minimized, is_window_visible, post_message_w, LogIfErr,
@@ -697,7 +697,9 @@ impl WindowBorder {
                 // TODO: awful, bad, unefficient, i should just cache the color brushes somewhere
                 let old_active_opacity = self.active_color.get_opacity().unwrap_or_default();
 
-                let focus_state = FOCUS_STATE.lock().unwrap();
+                let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                let focus_state = komorebi_integration.focus_state.lock().unwrap();
+
                 // TODO: idk what to do with None so i just do unwrap_or() rn
                 let window_kind = focus_state
                     .get(&(self.tracking_window.0 as isize))

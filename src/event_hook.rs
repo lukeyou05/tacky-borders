@@ -55,16 +55,16 @@ pub extern "system" fn process_win_event(
                 }
             }
         }
-        // Both the HWND passed by the event and the one returned by GetForegroundWindow() should
-        // refer to the same "active" window, but they don't.
+        // Neither the HWND passed by this event nor the one returned by GetForegroundWindow() are
+        // accurate 100% of the time. I tried finding workarounds without polling, but gave up.
         EVENT_SYSTEM_FOREGROUND => {
             let potential_active_hwnd = get_foreground_window();
 
-            // I GIVE UP I ACTUALLY GIVE UP im just gonna poll
-            if potential_active_hwnd != _hwnd && !APP_STATE.is_polling_active_window() {
-                poll_active_window_with_limit(3);
-            } else {
-                handle_foreground_event(potential_active_hwnd, _hwnd);
+            // Immediately try these HWNDs, and if they're wrong, hope that polling works.
+            handle_foreground_event(potential_active_hwnd, _hwnd);
+
+            if !APP_STATE.is_polling_active_window() {
+                poll_active_window_with_limit(2);
             }
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
@@ -105,14 +105,14 @@ fn poll_active_window_with_limit(max_polls: u32) {
 
     let _ = thread::spawn(move || {
         for _ in 0..max_polls {
+            thread::sleep(time::Duration::from_millis(50));
+
             let current_active_hwnd = HWND(*APP_STATE.active_window.lock().unwrap() as _);
             let new_active_hwnd = get_foreground_window();
 
             if new_active_hwnd != current_active_hwnd && !new_active_hwnd.is_invalid() {
                 handle_foreground_event(new_active_hwnd, current_active_hwnd);
             }
-
-            thread::sleep(time::Duration::from_millis(50));
         }
 
         APP_STATE.set_polling_active_window(false);

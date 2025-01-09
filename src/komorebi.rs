@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{LazyLock, Mutex};
-use std::{fs, thread};
+use std::sync::{Arc, Mutex};
+use std::{fs, thread, time};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
@@ -18,9 +18,7 @@ use crate::iocp::{UnixListener, UnixStream};
 use crate::utils::{get_foreground_window, post_message_w, LogIfErr, WM_APP_KOMOREBI};
 use crate::APP_STATE;
 
-// NOTE: in komorebi it's <border hwnd, WindowKind>, but here it's <tracking hwnd, WindowKind>
-pub static FOCUS_STATE: LazyLock<Mutex<HashMap<isize, WindowKind>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(300);
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 pub struct KomorebiColorsConfig {
@@ -30,12 +28,15 @@ pub struct KomorebiColorsConfig {
 }
 
 pub struct KomorebiIntegration {
+    // NOTE: in komorebi it's <Border HWND, WindowKind>, but here it's <Tracking HWND, WindowKind>
+    pub focus_state: Arc<Mutex<HashMap<isize, WindowKind>>>,
     pub listen_socket: Option<UnixDomainSocket>,
 }
 
 impl KomorebiIntegration {
     pub fn new() -> Self {
         Self {
+            focus_state: Arc::new(Mutex::new(HashMap::new())),
             listen_socket: None,
         }
     }
@@ -69,11 +70,18 @@ impl KomorebiIntegration {
         let port = CompletionPort::new(2)?;
         port.associate_handle(listener.socket.to_handle())?;
 
-        self.listen_socket = Some(listener.socket.clone());
+        // Prevent overriding already existing sockets
+        if self.listen_socket.is_none() {
+            self.listen_socket = Some(listener.socket.clone());
+        }
 
-        let _ = thread::spawn(|| {
+        // Get a reference to the mutex because I don't think we can pass 'self' into threads
+        let focus_state = self.focus_state.clone();
+
+        let _ = thread::spawn(move || {
             move || -> anyhow::Result<()> {
                 let mut entries = [OVERLAPPED_ENTRY::default(); 8];
+                let mut bufferpool = VecDeque::<Vec<u8>>::new();
 
                 let mut accept_streams = HashMap::<usize, Box<UnixStream>>::new();
                 let mut read_streams = HashMap::<usize, Box<UnixStream>>::new();
@@ -83,15 +91,30 @@ impl KomorebiIntegration {
                 port.associate_handle(stream.socket.to_handle())?;
                 accept_streams.insert(listener.token(), stream);
 
+                let mut now = time::Instant::now();
+
                 loop {
+                    // Clear the buffer pool after the refresh interval has elapsed
+                    if now.elapsed() > BUFFER_POOL_REFRESH_INTERVAL {
+                        debug!("cleaning up buffer pool for komorebic socket");
+                        bufferpool.clear();
+                        now = time::Instant::now();
+                    }
+
                     // This will block until an I/O operation has completed (accept or read)
                     let num_removed = port.poll_many(None, &mut entries)?;
 
                     // Now we can iterate through the completed I/O operations
                     for entry in entries[..num_removed as usize].iter() {
                         if let Some(mut stream) = accept_streams.remove(&entry.lpCompletionKey) {
-                            // Has been accepted; ready to read
-                            let outputbuffer = Vec::from([0u8; 8192]);
+                            // Stream has been accepted; ready to read
+
+                            // Attempt to retrieve a buffer from the bufferpool
+                            // NOTE: we use unwrap_or_else() because it is lazily evaluated
+                            let outputbuffer = bufferpool.pop_front().unwrap_or_else(|| {
+                                debug!("creating new buffer for komorebic socket");
+                                vec![0u8; 8192]
+                            });
                             stream.read(outputbuffer)?;
 
                             // The stream has now begun its read operation, so place it in read_streams
@@ -101,12 +124,18 @@ impl KomorebiIntegration {
                             let stream = Box::new(listener.accept()?);
                             port.associate_handle(stream.socket.to_handle())?;
                             accept_streams.insert(listener.token(), stream);
-                        } else if let Some(stream) = read_streams.remove(&entry.lpCompletionKey) {
-                            // Has been read; ready to process
+                        } else if let Some(mut stream) = read_streams.remove(&entry.lpCompletionKey)
+                        {
+                            // Stream has been read; ready to process
+
                             Self::process_komorebi_notification(
+                                focus_state.clone(),
                                 &stream.buffer,
-                                entry.dwNumberOfBytesTransferred as i32,
+                                entry.dwNumberOfBytesTransferred,
                             );
+
+                            // We don't need this stream anymore, so place its buffer into the pool
+                            bufferpool.push_back(stream.take_buffer());
                         } else {
                             error!("invalid completion key found");
                         }
@@ -150,7 +179,11 @@ impl KomorebiIntegration {
     }
 
     // Largely adapted from komorebi's own border implementation. Thanks @LGUG2Z
-    pub fn process_komorebi_notification(buffer: &[u8], bytes_received: i32) {
+    pub fn process_komorebi_notification(
+        focus_state_mutex: Arc<Mutex<HashMap<isize, WindowKind>>>,
+        buffer: &[u8],
+        bytes_received: u32,
+    ) {
         let notification: serde_json::Value =
             match serde_json::from_slice(&buffer[..bytes_received as usize]) {
                 Ok(event) => event,
@@ -160,18 +193,7 @@ impl KomorebiIntegration {
                 }
             };
 
-        let notification_type = notification["event"]["content"]
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|r#type| r#type.as_str())
-            .unwrap_or_default();
-
-        // Filter through extraneous notification types
-        if notification_type == "ObjectNameChange" {
-            return;
-        }
-
-        let previous_focus_state = (*FOCUS_STATE.lock().unwrap()).clone();
+        let previous_focus_state = (*focus_state_mutex.lock().unwrap()).clone();
 
         // TODO: replace all the unwrap with unwrap_or_default later, rn we just do it to test. also
         // use filter() on some of the Option values
@@ -195,7 +217,7 @@ impl KomorebiIntegration {
                         WindowKind::Monocle
                     };
                     {
-                        let mut focus_state = FOCUS_STATE.lock().unwrap();
+                        let mut focus_state = focus_state_mutex.lock().unwrap();
                         focus_state.insert(
                             // NOTE: if this is a monocole, I assume there's only 1 window in "windows"
                             monocole["windows"]["elements"].as_array().unwrap()[0]["hwnd"]
@@ -235,7 +257,7 @@ impl KomorebiIntegration {
 
                     // Update the window kind for all containers on this workspace
                     {
-                        let mut focus_state = FOCUS_STATE.lock().unwrap();
+                        let mut focus_state = focus_state_mutex.lock().unwrap();
                         let _ = focus_state.insert(
                             c["windows"]["elements"].as_array().unwrap()
                                 [c["windows"]["focused"].as_u64().unwrap() as usize]["hwnd"]
@@ -255,7 +277,7 @@ impl KomorebiIntegration {
                         }
 
                         {
-                            let mut focus_state = FOCUS_STATE.lock().unwrap();
+                            let mut focus_state = focus_state_mutex.lock().unwrap();
                             let _ = focus_state
                                 .insert(window["hwnd"].as_i64().unwrap() as isize, new_focus_state);
                         }
@@ -264,7 +286,7 @@ impl KomorebiIntegration {
             }
         }
 
-        let new_focus_state = FOCUS_STATE.lock().unwrap();
+        let new_focus_state = focus_state_mutex.lock().unwrap();
 
         for (tracking, border) in APP_STATE.borders.lock().unwrap().iter() {
             let previous_window_kind = previous_focus_state.get(tracking);
