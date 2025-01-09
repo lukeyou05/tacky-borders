@@ -11,7 +11,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::{iter, ptr, slice, thread, time};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, FALSE, HANDLE, HWND};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::Graphics::Dwm::{
     DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
 };

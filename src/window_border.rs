@@ -33,7 +33,6 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
@@ -95,7 +94,7 @@ impl WindowBorder {
                 CW_USEDEFAULT,
                 None,
                 None,
-                Some(GetModuleHandleW(None)?.into()),
+                None,
                 Some(ptr::addr_of!(*self) as _),
             )?;
         }

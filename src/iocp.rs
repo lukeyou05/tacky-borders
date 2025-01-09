@@ -3,33 +3,45 @@ use core::time;
 use std::path::Path;
 use std::{io, mem, ptr};
 use windows::core::PSTR;
-use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
-    bind, closesocket, listen, AcceptEx, WSACleanup, WSAGetLastError, WSARecv, WSASocketW,
-    WSAStartup, ADDRESS_FAMILY, AF_UNIX, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOCK_STREAM,
-    SOMAXCONN, WSABUF, WSADATA, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING,
+    bind, closesocket, listen, AcceptEx, WSARecv, WSASocketW, ADDRESS_FAMILY, AF_UNIX, SOCKADDR,
+    SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOCK_STREAM, SOMAXCONN, WSABUF, WSA_FLAG_OVERLAPPED,
+    WSA_IO_PENDING,
 };
 use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::System::IO::{
-    CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, OVERLAPPED_ENTRY,
+    CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx, OVERLAPPED,
+    OVERLAPPED_ENTRY,
 };
 
+use crate::utils::LogIfErr;
+
+const UNIX_ADDR_LEN: u32 = mem::size_of::<SOCKADDR_UN>() as u32;
+
+#[allow(unused)]
 pub struct UnixListener {
     pub socket: UnixDomainSocket,
+    pub buffer: Vec<u8>,
+    // TODO: im not sure if i need Box, would depend on how exactly GetQueuedCompletionStatus gets
+    // the OVERLAPPED struct pointer
+    pub overlapped: Box<OVERLAPPED>,
+    pub flags: u32,
 }
+
+unsafe impl Send for UnixListener {}
+unsafe impl Sync for UnixListener {}
 
 impl UnixListener {
     pub fn bind(socket_path: &Path) -> anyhow::Result<Self> {
-        let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
-        if iresult != 0 {
-            return Err(anyhow!("WSAStartup failure: {iresult}"));
-        }
-
         let server_socket = UnixDomainSocket::new()?;
         server_socket.bind(socket_path)?;
 
         Ok(Self {
             socket: server_socket,
+            buffer: Vec::new(),
+            overlapped: Box::new(OVERLAPPED::default()),
+            flags: 0,
         })
     }
 
@@ -38,45 +50,53 @@ impl UnixListener {
     }
 
     pub fn accept(&mut self) -> anyhow::Result<UnixStream> {
-        // TODO: why can i pass OVERLAPPED::default() here, but not in AcceptEx itself?
-        let client_socket = self.socket.accept(&mut OVERLAPPED::default())?;
+        // TODO: should i create the buffer in here or in read()
+        // ALSO im not sure why this addr len works, but it's just double the len used in AcceptEx
+        // (double i assume because there's both the local and remote address)
+        let mut client_stream = UnixStream {
+            socket: UnixDomainSocket::default(),
+            overlapped: Box::new(OVERLAPPED::default()),
+            flags: 0,
+            buffer: Vec::from([0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize]),
+        };
 
-        Ok(UnixStream {
-            socket: client_socket,
-        })
+        client_stream.socket = self
+            .socket
+            .accept(&mut client_stream.buffer, client_stream.overlapped.as_mut())?;
+
+        Ok(client_stream)
     }
 
-    pub fn shutdown(&self) {
-        unsafe {
-            closesocket(self.socket.0);
-            WSACleanup();
-        };
+    pub fn token(&self) -> usize {
+        self.socket.0 .0
     }
 }
 
-unsafe impl Send for UnixListener {}
-unsafe impl Sync for UnixListener {}
-
 impl Drop for UnixListener {
     fn drop(&mut self) {
-        unsafe {
-            closesocket(self.socket.0);
-            WSACleanup();
-        };
+        unsafe { closesocket(self.socket.0) };
     }
 }
 
 pub struct UnixStream {
     pub socket: UnixDomainSocket,
+    pub buffer: Vec<u8>,
+    pub overlapped: Box<OVERLAPPED>,
+    pub flags: u32,
 }
 
 unsafe impl Send for UnixStream {}
 unsafe impl Sync for UnixStream {}
 
 impl UnixStream {
-    pub fn read(&mut self, lpoutputbuffer: &mut [u8]) -> anyhow::Result<()> {
+    pub fn read(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<()> {
+        self.buffer = outputbuffer;
         self.socket
-            .read(lpoutputbuffer, &mut OVERLAPPED::default(), &mut 0)
+            .read(&mut self.buffer, self.overlapped.as_mut(), &mut self.flags)
+    }
+
+    pub fn token(&self) -> usize {
+        self.socket.0 .0
     }
 }
 
@@ -86,7 +106,8 @@ impl Drop for UnixStream {
     }
 }
 
-pub struct UnixDomainSocket(pub SOCKET);
+#[derive(Debug, Default, Clone)]
+pub struct UnixDomainSocket(SOCKET);
 
 unsafe impl Send for UnixDomainSocket {}
 unsafe impl Sync for UnixDomainSocket {}
@@ -150,36 +171,35 @@ impl UnixDomainSocket {
         Ok(())
     }
 
-    pub fn accept(&mut self, lpoverlapped: &mut OVERLAPPED) -> anyhow::Result<UnixDomainSocket> {
+    pub fn accept(
+        &mut self,
+        lpoutputbuffer: &mut [u8],
+        lpoverlapped: &mut OVERLAPPED,
+    ) -> anyhow::Result<UnixDomainSocket> {
         let client_socket = UnixDomainSocket::new()?;
         let mut bytes_received = 0u32;
-
-        let unix_addr_len = mem::size_of_val(&SOCKADDR_UN::default().sun_path) as u32;
 
         if !unsafe {
             AcceptEx(
                 self.0,
                 client_socket.0,
-                // We choose not to receive any data here, so buffer can be whatever
-                &mut [0u8; 1] as *mut _ as *mut _,
+                lpoutputbuffer as *mut _ as *mut _,
                 0,
                 // We add 16 to the address length because MSDN says so
-                unix_addr_len + 16,
-                unix_addr_len + 16,
+                UNIX_ADDR_LEN + 16,
+                UNIX_ADDR_LEN + 16,
                 &mut bytes_received,
                 lpoverlapped,
             )
         }
         .as_bool()
         {
-            // TODO: get_queued_completion_status crashes when i use io::Error::last_os_error()
-            let last_error = unsafe { WSAGetLastError() };
+            let last_error = io::Error::last_os_error();
 
-            // WSA_IO_PENDING just means it will complete at a later time (async)
-            if last_error != WSA_IO_PENDING {
+            if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
                 unsafe {
                     closesocket(self.0);
-                    closesocket(client_socket.0);
+                    //drop(client_socket);
                 }
                 return Err(anyhow!(
                     "could not accept client socket connection: {:?}",
@@ -198,7 +218,7 @@ impl UnixDomainSocket {
         lpflags: &mut u32,
     ) -> anyhow::Result<()> {
         let lpbuffers = WSABUF {
-            len: 8192,
+            len: lpoutputbuffer.len() as u32,
             buf: PSTR(lpoutputbuffer.as_mut_ptr()),
         };
 
@@ -224,11 +244,15 @@ impl UnixDomainSocket {
 
         Ok(())
     }
+
+    pub fn to_handle(&self) -> HANDLE {
+        HANDLE(self.0 .0 as _)
+    }
 }
 
-impl Drop for UnixDomainSocket {
-    fn drop(&mut self) {
-        unsafe { closesocket(self.0) };
+impl From<UnixDomainSocket> for HANDLE {
+    fn from(value: UnixDomainSocket) -> Self {
+        Self(value.0 .0 as _)
     }
 }
 
@@ -262,10 +286,12 @@ impl CompletionPort {
         Ok(())
     }
 
-    pub fn get_queued_completion_status(
+    #[allow(unused)]
+    pub fn poll_single(
         &self,
         timeout: Option<time::Duration>,
-    ) -> anyhow::Result<OVERLAPPED_ENTRY> {
+        entry: &mut OVERLAPPED_ENTRY,
+    ) -> anyhow::Result<()> {
         let mut bytes_transferred = 0u32;
         let mut completion_key = 0usize;
         let mut lpoverlapped: *mut OVERLAPPED = ptr::null_mut();
@@ -285,17 +311,53 @@ impl CompletionPort {
             )
         }
         .context(format!(
-            "could not get queued completion status: {:?}",
+            "could not get queued completion status: {}",
             io::Error::last_os_error(),
         ))?;
 
-        let overlapped_entry = OVERLAPPED_ENTRY {
+        *entry = OVERLAPPED_ENTRY {
             lpCompletionKey: completion_key,
             lpOverlapped: lpoverlapped,
-            Internal: usize::default(),
+            Internal: 0,
             dwNumberOfBytesTransferred: bytes_transferred,
         };
 
-        Ok(overlapped_entry)
+        Ok(())
+    }
+
+    #[allow(unused)]
+    pub fn poll_many(
+        &self,
+        timeout: Option<time::Duration>,
+        entries: &mut [OVERLAPPED_ENTRY],
+    ) -> anyhow::Result<u32> {
+        let mut num_entries_removed = 0u32;
+
+        let timeout_ms = match timeout {
+            Some(duration) => duration.as_millis() as u32,
+            None => INFINITE,
+        };
+
+        unsafe {
+            GetQueuedCompletionStatusEx(
+                self.iocp_handle,
+                entries,
+                &mut num_entries_removed,
+                timeout_ms,
+                false,
+            )
+        }
+        .context(format!(
+            "could not get queued completion status: {}",
+            io::Error::last_os_error(),
+        ))?;
+
+        Ok(num_entries_removed)
+    }
+}
+
+impl Drop for CompletionPort {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.iocp_handle) }.log_if_err();
     }
 }
