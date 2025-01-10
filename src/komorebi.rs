@@ -18,7 +18,7 @@ use crate::iocp::{UnixListener, UnixStream};
 use crate::utils::{get_foreground_window, post_message_w, LogIfErr, WM_APP_KOMOREBI};
 use crate::APP_STATE;
 
-const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(300);
+const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(600);
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 pub struct KomorebiColorsConfig {
@@ -64,32 +64,33 @@ impl KomorebiIntegration {
             fs::remove_file(&socket_path)?;
         }
 
-        let mut listener = UnixListener::bind(&socket_path)?;
+        // Right now our tokens are just pointers, so we use Box to ensure the structs dont move
+        // TODO: if i dont use the pointers, I should change the tokens to smth else
+        let mut listener = Box::new(UnixListener::bind(&socket_path)?);
         listener.listen()?;
 
         let port = CompletionPort::new(2)?;
-        port.associate_handle(listener.socket.to_handle())?;
+        port.associate_handle(listener.socket.to_handle(), listener.token())?;
 
         // Prevent overriding already existing sockets
         if self.listen_socket.is_none() {
             self.listen_socket = Some(listener.socket.clone());
+        } else {
+            return Err(anyhow!("found existing socket; cannot assign"));
         }
 
-        // Get a reference to the mutex because I don't think we can pass 'self' into threads
         let focus_state = self.focus_state.clone();
 
         let _ = thread::spawn(move || {
             move || -> anyhow::Result<()> {
-                let mut entries = [OVERLAPPED_ENTRY::default(); 8];
-                let mut bufferpool = VecDeque::<Vec<u8>>::new();
-
-                let mut accept_streams = HashMap::<usize, Box<UnixStream>>::new();
-                let mut read_streams = HashMap::<usize, Box<UnixStream>>::new();
+                let mut entries = vec![OVERLAPPED_ENTRY::default(); 8];
+                let mut buffer_pool = VecDeque::<Vec<u8>>::new();
+                let mut streams_queue = VecDeque::<(usize, Box<UnixStream>)>::new();
 
                 // Queue up our first accept I/O operation.
                 let stream = Box::new(listener.accept()?);
-                port.associate_handle(stream.socket.to_handle())?;
-                accept_streams.insert(listener.token(), stream);
+                port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                streams_queue.push_back((stream.token(), stream));
 
                 let mut now = time::Instant::now();
 
@@ -97,36 +98,40 @@ impl KomorebiIntegration {
                     // Clear the buffer pool after the refresh interval has elapsed
                     if now.elapsed() > BUFFER_POOL_REFRESH_INTERVAL {
                         debug!("cleaning up buffer pool for komorebic socket");
-                        bufferpool.clear();
+                        buffer_pool.clear();
                         now = time::Instant::now();
                     }
 
                     // This will block until an I/O operation has completed (accept or read)
                     let num_removed = port.poll_many(None, &mut entries)?;
 
-                    // Now we can iterate through the completed I/O operations
                     for entry in entries[..num_removed as usize].iter() {
-                        if let Some(mut stream) = accept_streams.remove(&entry.lpCompletionKey) {
+                        if entry.lpCompletionKey == listener.token() {
                             // Stream has been accepted; ready to read
+                            let stream =
+                                &mut streams_queue.back_mut().context("could not get stream")?.1;
 
                             // Attempt to retrieve a buffer from the bufferpool
-                            // NOTE: we use unwrap_or_else() because it is lazily evaluated
-                            let outputbuffer = bufferpool.pop_front().unwrap_or_else(|| {
+                            let outputbuffer = buffer_pool.pop_front().unwrap_or_else(|| {
                                 debug!("creating new buffer for komorebic socket");
-                                vec![0u8; 8192]
+                                vec![0u8; 16384]
                             });
                             stream.read(outputbuffer)?;
 
-                            // The stream has now begun its read operation, so place it in read_streams
-                            read_streams.insert(stream.token(), stream);
-
                             // Queue up a new accept I/O operation.
                             let stream = Box::new(listener.accept()?);
-                            port.associate_handle(stream.socket.to_handle())?;
-                            accept_streams.insert(listener.token(), stream);
-                        } else if let Some(mut stream) = read_streams.remove(&entry.lpCompletionKey)
-                        {
+                            port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                            streams_queue.push_back((stream.token(), stream));
+                        } else {
                             // Stream has been read; ready to process
+                            let position = streams_queue
+                                .iter()
+                                .position(|(token, _)| *token == entry.lpCompletionKey)
+                                .context("could not find stream")?;
+                            let mut stream = streams_queue
+                                .remove(position)
+                                .context("could not remove stream from queue")?
+                                .1;
 
                             Self::process_komorebi_notification(
                                 focus_state.clone(),
@@ -135,9 +140,7 @@ impl KomorebiIntegration {
                             );
 
                             // We don't need this stream anymore, so place its buffer into the pool
-                            bufferpool.push_back(stream.take_buffer());
-                        } else {
-                            error!("invalid completion key found");
+                            buffer_pool.push_back(stream.take_buffer());
                         }
                     }
                 }

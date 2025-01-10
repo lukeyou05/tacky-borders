@@ -19,8 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::ptr;
-use std::thread;
+use std::{ptr, thread};
 
 use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
 use crate::window_border::WindowBorder;
@@ -40,15 +39,10 @@ pub trait LogIfErr {
     fn log_if_err(&self);
 }
 
-impl LogIfErr for anyhow::Result<()> {
-    fn log_if_err(&self) {
-        if let Err(e) = self {
-            error!("{e:#}");
-        }
-    }
-}
-
-impl LogIfErr for windows::core::Result<()> {
+impl<T> LogIfErr for Result<(), T>
+where
+    T: std::fmt::Display,
+{
     fn log_if_err(&self) {
         if let Err(e) = self {
             error!("{e:#}");

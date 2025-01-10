@@ -56,9 +56,9 @@ impl UnixListener {
         // (double i assume because there's both the local and remote address)
         let mut client_stream = UnixStream {
             socket: UnixDomainSocket::default(),
+            buffer: vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize],
             overlapped: Box::new(OVERLAPPED::default()),
             flags: 0,
-            buffer: vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize],
         };
 
         client_stream.socket = self
@@ -69,7 +69,7 @@ impl UnixListener {
     }
 
     pub fn token(&self) -> usize {
-        self.socket.0 .0
+        self as *const _ as usize
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -104,7 +104,7 @@ impl UnixStream {
     }
 
     pub fn token(&self) -> usize {
-        self.socket.0 .0
+        self as *const _ as usize
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -290,11 +290,10 @@ impl CompletionPort {
         Ok(Self { iocp_handle })
     }
 
-    pub fn associate_handle(&self, handle: HANDLE) -> anyhow::Result<()> {
+    pub fn associate_handle(&self, handle: HANDLE, token: usize) -> anyhow::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ =
-            unsafe { CreateIoCompletionPort(handle, Some(self.iocp_handle), handle.0 as usize, 0) }
-                .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
+        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.iocp_handle), token, 0) }
+            .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
 
         Ok(())
     }
