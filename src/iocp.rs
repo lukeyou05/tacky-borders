@@ -47,7 +47,7 @@ impl UnixListener {
     }
 
     pub fn listen(&self) -> anyhow::Result<()> {
-        self.socket.listen()
+        self.socket.listen(SOMAXCONN as i32)
     }
 
     pub fn accept(&mut self) -> anyhow::Result<UnixStream> {
@@ -173,8 +173,8 @@ impl UnixDomainSocket {
         Ok(())
     }
 
-    pub fn listen(&self) -> anyhow::Result<()> {
-        if unsafe { listen(self.0, SOMAXCONN as i32) } == SOCKET_ERROR {
+    pub fn listen(&self, backlog: i32) -> anyhow::Result<()> {
+        if unsafe { listen(self.0, backlog) } == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
             unsafe { closesocket(self.0) };
             return Err(anyhow!("could not listen to socket: {:?}", last_error));

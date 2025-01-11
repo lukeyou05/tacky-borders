@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use utils::{get_foreground_window, get_last_error};
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, D2D1_FACTORY_TYPE_MULTI_THREADED,
@@ -23,9 +23,9 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, RegisterClassExW, TranslateMessage,
-    EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
-    WM_NCDESTROY, WNDCLASSEXW,
+    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, MessageBoxW, RegisterClassExW,
+    TranslateMessage, EVENT_MAX, EVENT_MIN, IDC_ARROW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND,
+    MB_TOPMOST, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
 
 mod anim_timer;
@@ -38,7 +38,6 @@ mod komorebi;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
-mod windows_api;
 
 use crate::border_config::{Config, ConfigWatcher, EnableMode};
 use crate::utils::{
@@ -91,7 +90,9 @@ impl AppState {
                 config
             }
             Err(err) => {
-                error!("could not read config.yaml: {err:#}");
+                error!("could not read config: {err:#}");
+                display_error_box(format!("could not read config: {err:#}"));
+
                 Config::default()
             }
         };
@@ -252,6 +253,25 @@ fn reload_borders() {
     APP_STATE.initial_windows.lock().unwrap().clear();
 
     enum_windows().log_if_err();
+}
+
+fn display_error_box<T: std::fmt::Display>(err: T) {
+    let error_vec: Vec<u16> = err
+        .to_string()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let _ = std::thread::spawn(move || {
+        let _ = unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(error_vec.as_ptr()),
+                w!("Error!"),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
+            )
+        };
+    });
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {

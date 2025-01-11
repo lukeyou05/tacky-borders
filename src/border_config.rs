@@ -2,7 +2,7 @@ use crate::animations::AnimationsConfig;
 use crate::colors::ColorConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
-use crate::{reload_borders, APP_STATE};
+use crate::{display_error_box, reload_borders, APP_STATE};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -213,6 +213,8 @@ impl Config {
             }
             Err(err) => {
                 error!("could not reload config: {err:#}");
+                display_error_box(format!("could not reload config: {err:#}"));
+
                 Config::default()
             }
         };
