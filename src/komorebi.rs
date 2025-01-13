@@ -91,11 +91,10 @@ impl KomorebiIntegration {
         port.associate_handle(listener.socket.to_handle(), listener.token())?;
 
         // Prevent overriding already existing sockets
-        if self.listen_socket.is_none() {
-            self.listen_socket = Some(listener.socket.clone());
-        } else {
-            return Err(anyhow!("found existing socket; cannot assign"));
+        if self.listen_socket.is_some() {
+            return Err(anyhow!("found existing socket; cannot reassign"));
         }
+        self.listen_socket = Some(listener.socket.clone());
 
         let focus_state = self.focus_state.clone();
 
@@ -211,7 +210,7 @@ impl KomorebiIntegration {
         buffer: &[u8],
         bytes_received: u32,
     ) {
-        let notification: serde_json::Value =
+        let notification: serde_json_borrow::Value =
             match serde_json::from_slice(&buffer[..bytes_received as usize]) {
                 Ok(event) => event,
                 Err(err) => {
@@ -222,22 +221,28 @@ impl KomorebiIntegration {
 
         let previous_focus_state = (*focus_state_mutex.lock().unwrap()).clone();
 
-        // TODO: replace all the unwrap with unwrap_or_default later, rn we just do it to test. also
-        // use filter() on some of the Option values
-        let monitors = &notification["state"]["monitors"];
-        let focused_monitor_idx = monitors["focused"].as_u64().unwrap() as usize;
+        let monitors = notification.get("state").get("monitors");
+        let focused_monitor_idx = monitors.get("focused").as_u64().unwrap() as usize;
         let foreground_window = get_foreground_window();
 
-        for (monitor_idx, m) in monitors["elements"].as_array().unwrap().iter().enumerate() {
+        for (monitor_idx, m) in monitors
+            .get("elements")
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
             // Only operate on the focused workspace of each monitor
-            if let Some(ws) = m["workspaces"]["elements"]
+            if let Some(ws) = m
+                .get("workspaces")
+                .get("elements")
                 .as_array()
                 .unwrap()
-                .get(m["workspaces"]["focused"].as_u64().unwrap() as usize)
+                .get(m.get("workspaces").get("focused").as_u64().unwrap() as usize)
             {
                 // Handle the monocle container separately
-                if let Some(monocole) = ws.get("monocle_container").filter(|value| !value.is_null())
-                {
+                let monocle = ws.get("monocle_container");
+                if !monocle.is_null() {
                     let new_focus_state = if monitor_idx != focused_monitor_idx {
                         WindowKind::Unfocused
                     } else {
@@ -247,7 +252,8 @@ impl KomorebiIntegration {
                         let mut focus_state = focus_state_mutex.lock().unwrap();
                         focus_state.insert(
                             // NOTE: if this is a monocole, I assume there's only 1 window in "windows"
-                            monocole["windows"]["elements"].as_array().unwrap()[0]["hwnd"]
+                            monocle.get("windows").get("elements").as_array().unwrap()[0]
+                                .get("hwnd")
                                 .as_i64()
                                 .unwrap() as isize,
                             new_focus_state,
@@ -257,26 +263,30 @@ impl KomorebiIntegration {
 
                 let foreground_hwnd = get_foreground_window();
 
-                for (idx, c) in ws["containers"]["elements"]
+                for (idx, c) in ws
+                    .get("containers")
+                    .get("elements")
                     .as_array()
                     .unwrap()
                     .iter()
                     .enumerate()
                 {
                     let new_focus_state = if idx
-                        != ws["containers"]["focused"].as_i64().unwrap() as usize
+                        != ws.get("containers").get("focused").as_i64().unwrap() as usize
                         || monitor_idx != focused_monitor_idx
-                        || c["windows"]["elements"]
+                        || c.get("windows")
+                            .get("elements")
                             .as_array()
                             .unwrap()
-                            .get(c["windows"]["focused"].as_u64().unwrap() as usize)
+                            .get(c.get("windows").get("focused").as_u64().unwrap() as usize)
                             .map(|w| {
-                                w["hwnd"].as_i64().unwrap() as isize != foreground_hwnd.0 as isize
+                                w.get("hwnd").as_i64().unwrap() as isize
+                                    != foreground_hwnd.0 as isize
                             })
                             .unwrap_or_default()
                     {
                         WindowKind::Unfocused
-                    } else if c["windows"]["elements"].as_array().unwrap().len() > 1 {
+                    } else if c.get("windows").get("elements").as_array().unwrap().len() > 1 {
                         WindowKind::Stack
                     } else {
                         WindowKind::Single
@@ -286,8 +296,9 @@ impl KomorebiIntegration {
                     {
                         let mut focus_state = focus_state_mutex.lock().unwrap();
                         let _ = focus_state.insert(
-                            c["windows"]["elements"].as_array().unwrap()
-                                [c["windows"]["focused"].as_u64().unwrap() as usize]["hwnd"]
+                            c.get("windows").get("elements").as_array().unwrap()
+                                [c.get("windows").get("focused").as_u64().unwrap() as usize]
+                                .get("hwnd")
                                 .as_i64()
                                 .unwrap() as isize,
                             new_focus_state,
@@ -295,18 +306,21 @@ impl KomorebiIntegration {
                     }
                 }
                 {
-                    for window in ws["floating_windows"].as_array().unwrap() {
+                    for window in ws.get("floating_windows").as_array().unwrap() {
                         let mut new_focus_state = WindowKind::Unfocused;
 
-                        if foreground_window.0 as isize == window["hwnd"].as_i64().unwrap() as isize
+                        if foreground_window.0 as isize
+                            == window.get("hwnd").as_i64().unwrap() as isize
                         {
                             new_focus_state = WindowKind::Floating;
                         }
 
                         {
                             let mut focus_state = focus_state_mutex.lock().unwrap();
-                            let _ = focus_state
-                                .insert(window["hwnd"].as_i64().unwrap() as isize, new_focus_state);
+                            let _ = focus_state.insert(
+                                window.get("hwnd").as_i64().unwrap() as isize,
+                                new_focus_state,
+                            );
                         }
                     }
                 }
@@ -339,9 +353,6 @@ impl KomorebiIntegration {
                     .log_if_err();
             }
         }
-
-        //let focus_state = FOCUS_STATE.lock().unwrap();
-        //println!("focus_states: {:?}", focus_state);
     }
 }
 
