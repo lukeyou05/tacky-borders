@@ -720,9 +720,12 @@ impl WindowBorder {
                 let focus_state = komorebi_integration.focus_state.lock().unwrap();
 
                 // TODO: idk what to do with None so i just do unwrap_or() rn
-                let window_kind = focus_state
+                let window_kind = *focus_state
                     .get(&(self.tracking_window.0 as isize))
                     .unwrap_or(&WindowKind::Single);
+
+                drop(focus_state);
+                drop(komorebi_integration);
 
                 let active_color_config = window_rule
                     .active_color
