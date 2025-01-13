@@ -79,11 +79,11 @@ impl AppState {
 
         let config = match Config::create() {
             Ok(config) => {
-                if config.watch_config_changes {
+                if config_watcher.is_enabled(&config) {
                     config_watcher.start().log_if_err();
                 }
 
-                if config.enable_komorebi_integration {
+                if komorebi_integration.is_enabled(&config) {
                     komorebi_integration.start().log_if_err();
                 }
 

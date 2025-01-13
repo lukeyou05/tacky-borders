@@ -201,7 +201,10 @@ impl WindowBorder {
         self.current_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
             0.0 => {
                 self.exit_border_thread();
-                return Err(anyhow!("received invalid dpi of 0 from GetDpiForWindow"));
+                return Err(anyhow!(
+                    "received invalid dpi of 0 from GetDpiForWindow for {:?}",
+                    self.tracking_window
+                ));
             }
             valid_dpi => valid_dpi,
         };
@@ -567,7 +570,10 @@ impl WindowBorder {
                 // TODO: idk what might cause GetDpiForWindow to return 0
                 let new_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
                     0.0 => {
-                        error!("received invalid dpi of 0 from GetDpiForWindow");
+                        error!(
+                            "received invalid dpi of 0 from GetDpiForWindow for {:?}",
+                            self.tracking_window
+                        );
                         self.exit_border_thread();
                         return LRESULT(0);
                     }
@@ -694,7 +700,20 @@ impl WindowBorder {
                 }
             }
             WM_APP_KOMOREBI => {
-                // TODO: awful, bad, unefficient, i should just cache the color brushes somewhere
+                let window_rule = get_window_rule(self.tracking_window);
+                let global = &APP_STATE.config.read().unwrap().global;
+
+                // Exit if komorebi colors are disabled for this tracking window
+                // TODO: it might be better to store komorebi_colors in this WindowBorder struct
+                if !window_rule
+                    .komorebi_colors
+                    .as_ref()
+                    .map(|komocolors| komocolors.enabled)
+                    .unwrap_or(global.komorebi_colors.enabled)
+                {
+                    return LRESULT(0);
+                }
+
                 let old_active_opacity = self.active_color.get_opacity().unwrap_or_default();
 
                 let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
@@ -704,9 +723,6 @@ impl WindowBorder {
                 let window_kind = focus_state
                     .get(&(self.tracking_window.0 as isize))
                     .unwrap_or(&WindowKind::Single);
-
-                let window_rule = get_window_rule(self.tracking_window);
-                let global = &APP_STATE.config.read().unwrap().global;
 
                 let active_color_config = window_rule
                     .active_color
@@ -720,10 +736,22 @@ impl WindowBorder {
                 // TODO: having WindowKind::Unfocused here is weird lol
                 self.active_color = match window_kind {
                     WindowKind::Single => active_color_config.to_color(true),
-                    WindowKind::Stack => komorebi_colors_config.stack_color.to_color(true),
-                    WindowKind::Monocle => komorebi_colors_config.monocle_color.to_color(true),
+                    WindowKind::Stack => komorebi_colors_config
+                        .stack_color
+                        .as_ref()
+                        .unwrap_or(active_color_config)
+                        .to_color(true),
+                    WindowKind::Monocle => komorebi_colors_config
+                        .monocle_color
+                        .as_ref()
+                        .unwrap_or(active_color_config)
+                        .to_color(true),
                     WindowKind::Unfocused => self.active_color.clone(),
-                    WindowKind::Floating => komorebi_colors_config.floating_color.to_color(true),
+                    WindowKind::Floating => komorebi_colors_config
+                        .floating_color
+                        .as_ref()
+                        .unwrap_or(active_color_config)
+                        .to_color(true),
                 };
 
                 let Some(ref render_target) = self.render_target else {

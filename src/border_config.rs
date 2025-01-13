@@ -29,8 +29,6 @@ const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 pub struct Config {
     #[serde(default)]
     pub watch_config_changes: bool,
-    #[serde(default)]
-    pub enable_komorebi_integration: bool,
     #[serde(default = "serde_default_global")]
     pub global: Global,
     #[serde(default)]
@@ -85,6 +83,10 @@ pub fn serde_default_i32<const V: i32>() -> i32 {
 // f32 cannot be a const, so we have to do the following instead
 pub fn serde_default_f32<const V: i32>() -> f32 {
     V as f32
+}
+
+pub fn serde_default_bool<const V: bool>() -> bool {
+    V
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -203,11 +205,25 @@ impl Config {
             Ok(config) => {
                 let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
 
-                if config.watch_config_changes && !config_watcher.is_running() {
+                if config_watcher.is_enabled(&config) && !config_watcher.is_running() {
                     config_watcher.start().log_if_err();
-                } else if !config.watch_config_changes && config_watcher.is_running() {
+                } else if !config_watcher.is_enabled(&config) && config_watcher.is_running() {
                     config_watcher.stop().log_if_err();
                 }
+
+                drop(config_watcher);
+
+                let mut komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+
+                if komorebi_integration.is_enabled(&config) && !komorebi_integration.is_running() {
+                    komorebi_integration.start().log_if_err();
+                } else if !komorebi_integration.is_enabled(&config)
+                    && komorebi_integration.is_running()
+                {
+                    komorebi_integration.stop().log_if_err();
+                }
+
+                drop(komorebi_integration);
 
                 config
             }
@@ -249,6 +265,10 @@ impl ConfigWatcher {
             callback_fn,
             config_dir_handle: None,
         }
+    }
+
+    pub fn is_enabled(&mut self, config: &Config) -> bool {
+        config.watch_config_changes
     }
 
     pub fn start(&mut self) -> anyhow::Result<()> {
@@ -304,8 +324,6 @@ impl ConfigWatcher {
             let mut buffer = [0u8; 1024];
             let mut bytes_returned = 0u32;
 
-            let mut now = time::Instant::now();
-
             loop {
                 if let Err(e) = ReadDirectoryChangesW(
                     dir_handle,
@@ -321,13 +339,12 @@ impl ConfigWatcher {
                     break;
                 }
 
-                // Prevent too many directory checks in quick succession
-                if now.elapsed() < debounce_time {
-                    thread::sleep(debounce_time - now.elapsed());
-                }
-
                 Self::process_dir_change_notifs(&buffer, bytes_returned, &config_name, callback_fn);
-                now = time::Instant::now();
+
+                // Prevent too many directory checks in quick succession
+                // NOTE: if any dir changes are made while the thread is asleep, the OS will hold
+                // the operations in queue, so we can immediately check them again after looping
+                thread::sleep(debounce_time);
             }
 
             debug!("exiting config watcher thread");

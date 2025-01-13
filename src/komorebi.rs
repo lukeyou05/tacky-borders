@@ -12,6 +12,7 @@ use windows::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
 
+use crate::border_config::{serde_default_bool, Config};
 use crate::colors::ColorConfig;
 use crate::iocp::{CompletionPort, UnixDomainSocket};
 use crate::iocp::{UnixListener, UnixStream};
@@ -21,10 +22,13 @@ use crate::APP_STATE;
 const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(600);
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct KomorebiColorsConfig {
-    pub stack_color: ColorConfig,
-    pub monocle_color: ColorConfig,
-    pub floating_color: ColorConfig,
+    pub stack_color: Option<ColorConfig>,
+    pub monocle_color: Option<ColorConfig>,
+    pub floating_color: Option<ColorConfig>,
+    #[serde(default = "serde_default_bool::<true>")]
+    pub enabled: bool,
 }
 
 pub struct KomorebiIntegration {
@@ -41,10 +45,24 @@ impl KomorebiIntegration {
         }
     }
 
+    pub fn is_enabled(&mut self, config: &Config) -> bool {
+        config.global.komorebi_colors.enabled
+            || config.window_rules.iter().any(|rule| {
+                rule.komorebi_colors
+                    .as_ref()
+                    .map(|komocolors| komocolors.enabled)
+                    .unwrap_or(false)
+            })
+    }
+
     // Frankly, this is just a really crappy, Windows-only, version of something like compio.
     // Good learning experience though.
     pub fn start(&mut self) -> anyhow::Result<()> {
         debug!("starting komorebic integration");
+
+        if self.is_running() {
+            return Err(anyhow!("komorebi integration is already running"));
+        }
 
         // Start the WinSock service
         let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
@@ -160,15 +178,21 @@ impl KomorebiIntegration {
     }
 
     pub fn stop(&mut self) -> anyhow::Result<()> {
+        debug!("stopping komorebi integration");
+
         // If this is Some, it means WinSock is (most likely) running, so we need to cleanup
         if self.listen_socket.is_some() {
             unsafe { WSACleanup() };
 
-            // I assume setting this to None will drop the socket, which also calls closesocket()
+            // I assume setting this to None calls drop(), which also calls closesocket()
             self.listen_socket = None;
         }
 
         Ok(())
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.listen_socket.is_some()
     }
 
     pub fn get_komorebic_socket_path() -> anyhow::Result<PathBuf> {
