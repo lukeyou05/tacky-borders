@@ -59,7 +59,6 @@ pub struct Global {
     pub active_color: ColorConfig,
     #[serde(default)]
     pub inactive_color: ColorConfig,
-    // TODO: should i use an Option here instead?
     #[serde(default)]
     pub komorebi_colors: KomorebiColorsConfig,
     #[serde(default)]

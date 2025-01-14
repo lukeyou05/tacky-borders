@@ -23,8 +23,6 @@ const UNIX_ADDR_LEN: u32 = mem::size_of::<SOCKADDR_UN>() as u32;
 pub struct UnixListener {
     pub socket: UnixDomainSocket,
     pub buffer: Vec<u8>,
-    // TODO: im not sure if i need Box, would depend on how exactly GetQueuedCompletionStatus gets
-    // the OVERLAPPED struct pointer
     pub overlapped: Box<OVERLAPPED>,
     pub flags: u32,
 }
@@ -51,9 +49,8 @@ impl UnixListener {
     }
 
     pub fn accept(&mut self) -> anyhow::Result<UnixStream> {
-        // TODO: should i create the buffer in here or in read()
-        // ALSO im not sure why this addr len works, but it's just double the len used in AcceptEx
-        // (double i assume because there's both the local and remote address)
+        // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
+        // in AcceptEx (double I assume because there's both the local and remote addresses)
         let mut client_stream = UnixStream {
             socket: UnixDomainSocket::default(),
             buffer: vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize],
@@ -69,7 +66,7 @@ impl UnixListener {
     }
 
     pub fn token(&self) -> usize {
-        self as *const _ as usize
+        self.socket.0 .0
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -86,6 +83,8 @@ impl Drop for UnixListener {
 pub struct UnixStream {
     pub socket: UnixDomainSocket,
     pub buffer: Vec<u8>,
+    // I'm not sure if I need the Box, but I'll keep in just in case because I don't if
+    // GetQueuedCompletionStatus can get the OVERLAPPED pointers if the structs move in memory.
     pub overlapped: Box<OVERLAPPED>,
     pub flags: u32,
 }
@@ -104,7 +103,7 @@ impl UnixStream {
     }
 
     pub fn token(&self) -> usize {
-        self as *const _ as usize
+        self.socket.0 .0
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {

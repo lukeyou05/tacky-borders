@@ -82,9 +82,7 @@ impl KomorebiIntegration {
             fs::remove_file(&socket_path)?;
         }
 
-        // Right now our tokens are just pointers, so we use Box to ensure the structs dont move
-        // TODO: if i dont use the pointers, I should change the tokens to smth else
-        let mut listener = Box::new(UnixListener::bind(&socket_path)?);
+        let mut listener = UnixListener::bind(&socket_path)?;
         listener.listen()?;
 
         let port = CompletionPort::new(2)?;
@@ -131,7 +129,7 @@ impl KomorebiIntegration {
                             // Attempt to retrieve a buffer from the bufferpool
                             let outputbuffer = buffer_pool.pop_front().unwrap_or_else(|| {
                                 debug!("creating new buffer for komorebic socket");
-                                vec![0u8; 16384]
+                                vec![0u8; 32768]
                             });
                             stream.read(outputbuffer)?;
 

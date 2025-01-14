@@ -714,8 +714,6 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                let old_active_opacity = self.active_color.get_opacity().unwrap_or_default();
-
                 let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
                 let focus_state = komorebi_integration.focus_state.lock().unwrap();
 
@@ -727,6 +725,11 @@ impl WindowBorder {
                 drop(focus_state);
                 drop(komorebi_integration);
 
+                // Ignore Unfocused window kind
+                if window_kind == WindowKind::Unfocused {
+                    return LRESULT(0);
+                }
+
                 let active_color_config = window_rule
                     .active_color
                     .as_ref()
@@ -736,7 +739,8 @@ impl WindowBorder {
                     .as_ref()
                     .unwrap_or(&global.komorebi_colors);
 
-                // TODO: having WindowKind::Unfocused here is weird lol
+                let old_active_opacity = self.active_color.get_opacity().unwrap_or_default();
+
                 self.active_color = match window_kind {
                     WindowKind::Single => active_color_config.to_color(true),
                     WindowKind::Stack => komorebi_colors_config
@@ -749,12 +753,15 @@ impl WindowBorder {
                         .as_ref()
                         .unwrap_or(active_color_config)
                         .to_color(true),
-                    WindowKind::Unfocused => self.active_color.clone(),
                     WindowKind::Floating => komorebi_colors_config
                         .floating_color
                         .as_ref()
                         .unwrap_or(active_color_config)
                         .to_color(true),
+                    WindowKind::Unfocused => {
+                        debug!("what."); // It shouldn't be possible to reach this match branch
+                        return LRESULT(0);
+                    }
                 };
 
                 let Some(ref render_target) = self.render_target else {
