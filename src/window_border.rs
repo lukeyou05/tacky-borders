@@ -1,10 +1,11 @@
 use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::border_config::WindowRule;
 use crate::colors::Color;
+use crate::komorebi::WindowKind;
 use crate::utils::{
     are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
     is_rect_visible, is_window_minimized, is_window_visible, post_message_w, LogIfErr,
-    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_LOCATIONCHANGE,
+    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE,
     WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
 };
 use crate::APP_STATE;
@@ -32,7 +33,6 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
@@ -94,7 +94,7 @@ impl WindowBorder {
                 CW_USEDEFAULT,
                 None,
                 None,
-                GetModuleHandleW(None)?,
+                None,
                 Some(ptr::addr_of!(*self) as _),
             )?;
         }
@@ -152,7 +152,7 @@ impl WindowBorder {
             // TODO: maybe put this in a better spot but idk where
             if is_window_minimized(self.tracking_window) {
                 post_message_w(
-                    self.border_window,
+                    Some(self.border_window),
                     WM_APP_MINIMIZESTART,
                     WPARAM(0),
                     LPARAM(0),
@@ -162,7 +162,7 @@ impl WindowBorder {
             }
 
             let mut message = MSG::default();
-            while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+            while GetMessageW(&mut message, None, 0, 0).into() {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
@@ -201,7 +201,10 @@ impl WindowBorder {
         self.current_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
             0.0 => {
                 self.exit_border_thread();
-                return Err(anyhow!("received invalid dpi of 0 from GetDpiForWindow"));
+                return Err(anyhow!(
+                    "received invalid dpi of 0 from GetDpiForWindow for {:?}",
+                    self.tracking_window
+                ));
             }
             valid_dpi => valid_dpi,
         };
@@ -250,8 +253,9 @@ impl WindowBorder {
             pixelSize: Default::default(),
             presentOptions: D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS | D2D1_PRESENT_OPTIONS_IMMEDIATELY,
         };
+        // We will adjust opacity later. For now, we set it to 0.
         let brush_properties = D2D1_BRUSH_PROPERTIES {
-            opacity: 1.0,
+            opacity: 0.0,
             transform: Matrix3x2::identity(),
         };
 
@@ -326,7 +330,7 @@ impl WindowBorder {
 
             if let Err(e) = SetWindowPos(
                 self.border_window,
-                hwnd_above_tracking.unwrap_or(HWND_TOP),
+                Some(hwnd_above_tracking.unwrap_or(HWND_TOP)),
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
@@ -414,7 +418,7 @@ impl WindowBorder {
                 .Resize(&pixel_size)
                 .context("could not resize render_target")?;
 
-            // Determine which color/rectangle should be drawn on top
+            // Determine which color should be drawn on top (for color fade animation)
             let (bottom_color, top_color) = match self.is_active_window {
                 true => (&self.inactive_color, &self.active_color),
                 false => (&self.active_color, &self.inactive_color),
@@ -567,7 +571,10 @@ impl WindowBorder {
                 // TODO: idk what might cause GetDpiForWindow to return 0
                 let new_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
                     0.0 => {
-                        error!("received invalid dpi of 0 from GetDpiForWindow");
+                        error!(
+                            "received invalid dpi of 0 from GetDpiForWindow for {:?}",
+                            self.tracking_window
+                        );
                         self.exit_border_thread();
                         return LRESULT(0);
                     }
@@ -693,8 +700,88 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
             }
+            WM_APP_KOMOREBI => {
+                let window_rule = get_window_rule(self.tracking_window);
+                let global = &APP_STATE.config.read().unwrap().global;
+
+                // Exit if komorebi colors are disabled for this tracking window
+                // TODO: it might be better to store komorebi_colors in this WindowBorder struct
+                if !window_rule
+                    .komorebi_colors
+                    .as_ref()
+                    .map(|komocolors| komocolors.enabled)
+                    .unwrap_or(global.komorebi_colors.enabled)
+                {
+                    return LRESULT(0);
+                }
+
+                let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                let focus_state = komorebi_integration.focus_state.lock().unwrap();
+
+                // TODO: idk what to do with None so i just do unwrap_or() rn
+                let window_kind = *focus_state
+                    .get(&(self.tracking_window.0 as isize))
+                    .unwrap_or(&WindowKind::Single);
+
+                drop(focus_state);
+                drop(komorebi_integration);
+
+                // Ignore Unfocused window kind
+                if window_kind == WindowKind::Unfocused {
+                    return LRESULT(0);
+                }
+
+                let active_color_config = window_rule
+                    .active_color
+                    .as_ref()
+                    .unwrap_or(&global.active_color);
+                let komorebi_colors_config = window_rule
+                    .komorebi_colors
+                    .as_ref()
+                    .unwrap_or(&global.komorebi_colors);
+
+                let old_opacity = self.active_color.get_opacity().unwrap_or_default();
+                let old_transform = self.active_color.get_transform().unwrap_or_default();
+
+                self.active_color = match window_kind {
+                    WindowKind::Single => active_color_config.to_color(true),
+                    WindowKind::Stack => komorebi_colors_config
+                        .stack_color
+                        .as_ref()
+                        .unwrap_or(active_color_config)
+                        .to_color(true),
+                    WindowKind::Monocle => komorebi_colors_config
+                        .monocle_color
+                        .as_ref()
+                        .unwrap_or(active_color_config)
+                        .to_color(true),
+                    WindowKind::Floating => komorebi_colors_config
+                        .floating_color
+                        .as_ref()
+                        .unwrap_or(active_color_config)
+                        .to_color(true),
+                    WindowKind::Unfocused => {
+                        debug!("what."); // It shouldn't be possible to reach this match branch
+                        return LRESULT(0);
+                    }
+                };
+
+                let Some(ref render_target) = self.render_target else {
+                    error!("render target has not been set yet");
+                    return LRESULT(0);
+                };
+
+                let brush_properties = D2D1_BRUSH_PROPERTIES {
+                    opacity: old_opacity,
+                    transform: old_transform,
+                };
+
+                self.active_color
+                    .init_brush(render_target, &self.window_rect, &brush_properties)
+                    .log_if_err();
+            }
             WM_PAINT => {
-                let _ = ValidateRect(window, None);
+                let _ = ValidateRect(Some(window), None);
             }
             WM_NCDESTROY => {
                 // TODO not actually sure if we need to set GWLP_USERDATA to 0 here

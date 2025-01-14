@@ -1,7 +1,8 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorConfig;
+use crate::komorebi::KomorebiColorsConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
-use crate::{reload_borders, APP_STATE};
+use crate::{display_error_box, reload_borders, APP_STATE};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::{iter, ptr, slice, thread, time};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, FALSE, HANDLE, HWND};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::Graphics::Dwm::{
     DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
 };
@@ -59,6 +60,8 @@ pub struct Global {
     #[serde(default)]
     pub inactive_color: ColorConfig,
     #[serde(default)]
+    pub komorebi_colors: KomorebiColorsConfig,
+    #[serde(default)]
     pub animations: AnimationsConfig,
     #[serde(alias = "init_delay")]
     #[serde(default = "serde_default_u64::<250>")]
@@ -81,6 +84,10 @@ pub fn serde_default_f32<const V: i32>() -> f32 {
     V as f32
 }
 
+pub fn serde_default_bool<const V: bool>() -> bool {
+    V
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct WindowRule {
@@ -93,6 +100,7 @@ pub struct WindowRule {
     pub border_radius: Option<RadiusConfig>,
     pub active_color: Option<ColorConfig>,
     pub inactive_color: Option<ColorConfig>,
+    pub komorebi_colors: Option<KomorebiColorsConfig>,
     pub enabled: Option<EnableMode>,
     pub animations: Option<AnimationsConfig>,
     #[serde(alias = "init_delay")]
@@ -142,7 +150,7 @@ impl RadiusConfig {
             RadiusConfig::Square => 0.0,
             RadiusConfig::Round => get_adjusted_radius(8.0, dpi, border_width),
             RadiusConfig::RoundSmall => get_adjusted_radius(4.0, dpi, border_width),
-            RadiusConfig::Custom(radius) => radius * dpi / 96.0,
+            RadiusConfig::Custom(radius) => get_adjusted_radius(*radius, dpi, border_width),
         }
     }
 }
@@ -196,16 +204,32 @@ impl Config {
             Ok(config) => {
                 let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
 
-                if config.watch_config_changes && !config_watcher.is_running() {
+                if config_watcher.is_enabled(&config) && !config_watcher.is_running() {
                     config_watcher.start().log_if_err();
-                } else if !config.watch_config_changes && config_watcher.is_running() {
+                } else if !config_watcher.is_enabled(&config) && config_watcher.is_running() {
                     config_watcher.stop().log_if_err();
                 }
+
+                drop(config_watcher);
+
+                let mut komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+
+                if komorebi_integration.is_enabled(&config) && !komorebi_integration.is_running() {
+                    komorebi_integration.start().log_if_err();
+                } else if !komorebi_integration.is_enabled(&config)
+                    && komorebi_integration.is_running()
+                {
+                    komorebi_integration.stop().log_if_err();
+                }
+
+                drop(komorebi_integration);
 
                 config
             }
             Err(err) => {
                 error!("could not reload config: {err:#}");
+                display_error_box(format!("could not reload config: {err:#}"));
+
                 Config::default()
             }
         };
@@ -242,6 +266,10 @@ impl ConfigWatcher {
         }
     }
 
+    pub fn is_enabled(&mut self, config: &Config) -> bool {
+        config.watch_config_changes
+    }
+
     pub fn start(&mut self) -> anyhow::Result<()> {
         debug!("starting config watcher");
 
@@ -268,7 +296,7 @@ impl ConfigWatcher {
                 None,
                 OPEN_EXISTING,
                 FILE_FLAG_BACKUP_SEMANTICS,
-                HANDLE::default(),
+                None,
             )
             .context("could not create dir handle for config watcher")?
         };
@@ -295,14 +323,12 @@ impl ConfigWatcher {
             let mut buffer = [0u8; 1024];
             let mut bytes_returned = 0u32;
 
-            let mut now = time::Instant::now();
-
             loop {
                 if let Err(e) = ReadDirectoryChangesW(
                     dir_handle,
                     buffer.as_mut_ptr() as _,
                     buffer.len() as u32,
-                    FALSE,
+                    false,
                     FILE_NOTIFY_CHANGE_LAST_WRITE,
                     Some(ptr::addr_of_mut!(bytes_returned)),
                     None,
@@ -312,13 +338,12 @@ impl ConfigWatcher {
                     break;
                 }
 
-                // Prevent too many directory checks in quick succession
-                if now.elapsed() < debounce_time {
-                    thread::sleep(debounce_time - now.elapsed());
-                }
-
                 Self::process_dir_change_notifs(&buffer, bytes_returned, &config_name, callback_fn);
-                now = time::Instant::now();
+
+                // Prevent too many directory checks in quick succession
+                // NOTE: if any dir changes are made while the thread is asleep, the OS will hold
+                // the operations in queue, so we can immediately check them again after looping
+                thread::sleep(debounce_time);
             }
 
             debug!("exiting config watcher thread");

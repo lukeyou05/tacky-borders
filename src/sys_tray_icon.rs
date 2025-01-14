@@ -64,11 +64,12 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
 
             let unhook_bool = UnhookWinEvent(hwineventhook).as_bool();
             let stop_res = APP_STATE.config_watcher.lock().unwrap().stop();
+            let close_res = APP_STATE.komorebi_integration.lock().unwrap().stop();
 
-            if unhook_bool && stop_res.is_ok() {
+            if unhook_bool && stop_res.is_ok() && close_res.is_ok() {
                 PostQuitMessage(0);
             } else {
-                error!("attempt to unhook win event: {unhook_bool:?}; attempt to stop config watcher: {stop_res:?}");
+                error!("attempt to unhook win event: {unhook_bool:?}; attempt to stop config watcher: {stop_res:?}; attempt to close socket: {close_res:?}");
             }
         },
         _ => {}

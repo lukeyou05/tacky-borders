@@ -8,13 +8,14 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{anyhow, Context};
+use komorebi::KomorebiIntegration;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
-use utils::get_foreground_window;
-use windows::core::w;
-use windows::Win32::Foundation::{GetLastError, BOOL, HWND, LPARAM, TRUE, WPARAM};
+use utils::{get_foreground_window, get_last_error};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, D2D1_FACTORY_TYPE_MULTI_THREADED,
 };
@@ -22,9 +23,9 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, RegisterClassExW, TranslateMessage,
-    EVENT_MAX, EVENT_MIN, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
-    WM_NCDESTROY, WNDCLASSEXW,
+    DispatchMessageW, EnumWindows, GetMessageW, LoadCursorW, MessageBoxW, RegisterClassExW,
+    TranslateMessage, EVENT_MAX, EVENT_MIN, IDC_ARROW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND,
+    MB_TOPMOST, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
 
 mod anim_timer;
@@ -32,6 +33,8 @@ mod animations;
 mod border_config;
 mod colors;
 mod event_hook;
+mod iocp;
+mod komorebi;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
@@ -54,7 +57,11 @@ struct AppState {
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
     render_factory: ID2D1Factory,
+    komorebi_integration: Mutex<KomorebiIntegration>,
 }
+
+unsafe impl Send for AppState {}
+unsafe impl Sync for AppState {}
 
 impl AppState {
     fn new() -> Self {
@@ -67,15 +74,25 @@ impl AppState {
             Config::config_watcher_callback,
         );
 
+        // NOTE: experimental
+        let mut komorebi_integration = KomorebiIntegration::new();
+
         let config = match Config::create() {
             Ok(config) => {
-                if config.watch_config_changes {
+                if config_watcher.is_enabled(&config) {
                     config_watcher.start().log_if_err();
                 }
+
+                if komorebi_integration.is_enabled(&config) {
+                    komorebi_integration.start().log_if_err();
+                }
+
                 config
             }
             Err(err) => {
-                error!("could not read config.yaml: {err:#}");
+                error!("could not read config: {err:#}");
+                display_error_box(format!("could not read config: {err:#}"));
+
                 Config::default()
             }
         };
@@ -95,6 +112,7 @@ impl AppState {
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
             render_factory,
+            komorebi_integration: Mutex::new(komorebi_integration),
         }
     }
 
@@ -138,7 +156,7 @@ fn main() {
 
     unsafe {
         let mut message = MSG::default();
-        while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+        while GetMessageW(&mut message, None, 0, 0).into() {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
@@ -155,12 +173,6 @@ fn create_logger() -> anyhow::Result<()> {
     };
 
     CombinedLogger::init(vec![
-        TermLogger::new(
-            LevelFilter::Warn,
-            sp_log::Config::default(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        ),
         TermLogger::new(
             LevelFilter::Debug,
             sp_log::Config::default(),
@@ -192,7 +204,7 @@ fn register_window_class() -> windows::core::Result<()> {
 
         let result = RegisterClassExW(&window_class);
         if result == 0 {
-            let last_error = GetLastError();
+            let last_error = get_last_error();
             error!("could not register window class: {last_error:?}");
         }
     }
@@ -228,7 +240,7 @@ fn reload_borders() {
     // Send destroy messages to all the border windows
     for value in borders.values() {
         let border_window = HWND(*value as _);
-        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+        post_message_w(Some(border_window), WM_NCDESTROY, WPARAM(0), LPARAM(0))
             .context("reload_borders")
             .log_if_err();
     }
@@ -241,6 +253,25 @@ fn reload_borders() {
     APP_STATE.initial_windows.lock().unwrap().clear();
 
     enum_windows().log_if_err();
+}
+
+fn display_error_box<T: std::fmt::Display>(err: T) {
+    let error_vec: Vec<u16> = err
+        .to_string()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let _ = std::thread::spawn(move || {
+        let _ = unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(error_vec.as_ptr()),
+                w!("Error!"),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
+            )
+        };
+    });
 }
 
 unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {

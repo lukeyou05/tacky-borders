@@ -5,7 +5,7 @@ use std::time;
 use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
-use crate::border_config::serde_default_i32;
+use crate::border_config::{serde_default_bool, serde_default_i32};
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 
@@ -18,28 +18,34 @@ pub struct AnimationsConfig {
     pub inactive: Vec<AnimParamsConfig>,
     #[serde(default = "serde_default_i32::<60>")]
     pub fps: i32,
+    #[serde(default = "serde_default_bool::<true>")]
+    pub enabled: bool,
 }
 
 impl AnimationsConfig {
     pub fn to_animations(&self) -> Animations {
-        Animations {
-            active: self
-                .active
-                .iter()
-                .map(|params_config| params_config.to_anim_params())
-                .collect(),
-            inactive: self
-                .inactive
-                .iter()
-                .map(|params_config| params_config.to_anim_params())
-                .collect(),
-            fps: self.fps,
-            ..Default::default()
+        if self.enabled {
+            Animations {
+                active: self
+                    .active
+                    .iter()
+                    .map(|params_config| params_config.to_anim_params())
+                    .collect(),
+                inactive: self
+                    .inactive
+                    .iter()
+                    .map(|params_config| params_config.to_anim_params())
+                    .collect(),
+                fps: self.fps,
+                ..Default::default()
+            }
+        } else {
+            Animations::default()
         }
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct Animations {
     pub active: Vec<AnimParams>,
     pub inactive: Vec<AnimParams>,

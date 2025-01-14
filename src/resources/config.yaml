@@ -50,6 +50,16 @@ global:
       start: [0.0, 1.0]
       end: [1.0, 0.0]
 
+  # komorebi_colors: Additional colors for komorebi's special window kinds.
+  #   - active_color is used for komorebi's "Single" window kind.
+  #   - inactive_color is used for komorebi's "Unfocused" window kind.
+  # NOTE: these only apply when enable_komorebi_integration is set to True
+  komorebi_colors:
+    stack_color: "#e762b7"
+    monocle_color: "#62e793"
+    floating_color: "#f5f5a5"
+    enabled: True
+
   # initialize_delay: Time (in ms) before the border appears after opening a new window
   # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
   #
@@ -82,17 +92,26 @@ global:
   #
   # NOTE: Spiral animations may be resource-intensive on low-end systems.
   animations:
-    fps: 60
-
     active:
+      - type: ReverseSpiral
+        duration: 1800
+        easing: EaseInOutQuad
+
       - type: Fade
         duration: 200
         easing: EaseInOutQuad
 
     inactive:
+      - type: Spiral
+        duration: 1800
+        easing: EaseInOutQuad
+
       - type: Fade
         duration: 200
         easing: EaseInOutQuad
+
+    fps: 60
+    enabled: True
 
 # Per-application configuration overrides
 window_rules:
@@ -125,7 +144,7 @@ window_rules:
   # - match: Class                   # Match based on Class or Title
   #   name: "MozillaWindowClass"     # Class or title name to match
   #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
-  #   enabled: True                  # Enable mode: True, False, or Auto (default: Auto)
+  #   enabled: True                  # Border enabled: True, False, or Auto (default: Auto)
   #
   # Notes:
   #   - Any option in the global config can also be defined in window_rules.

@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
@@ -227,7 +227,6 @@ impl Color {
                 let id2d1_brush =
                     render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
-                id2d1_brush.SetOpacity(0.0);
                 solid.brush = Some(id2d1_brush);
 
                 Ok(())
@@ -261,7 +260,6 @@ impl Color {
                     &gradient_stop_collection,
                 )?;
 
-                id2d1_brush.SetOpacity(0.0);
                 gradient.brush = Some(id2d1_brush);
 
                 Ok(())
@@ -311,18 +309,31 @@ impl Color {
         match self {
             Color::Solid(solid) => {
                 if let Some(ref id2d1_brush) = solid.brush {
-                    unsafe {
-                        id2d1_brush.SetTransform(transform);
-                    }
+                    unsafe { id2d1_brush.SetTransform(transform) };
                 }
             }
             Color::Gradient(gradient) => {
                 if let Some(ref id2d1_brush) = gradient.brush {
-                    unsafe {
-                        id2d1_brush.SetTransform(transform);
-                    }
+                    unsafe { id2d1_brush.SetTransform(transform) };
                 }
             }
+        }
+    }
+
+    pub fn get_transform(&self) -> Option<Matrix3x2> {
+        match self {
+            Color::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| {
+                let mut transform = Matrix3x2::default();
+                unsafe { id2d1_brush.GetTransform(&mut transform) };
+
+                transform
+            }),
+            Color::Gradient(gradient) => gradient.brush.as_ref().map(|id2d1_brush| {
+                let mut transform = Matrix3x2::default();
+                unsafe { id2d1_brush.GetTransform(&mut transform) };
+
+                transform
+            }),
         }
     }
 }
@@ -385,62 +396,57 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 }
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
-    if !matches!(hex.len(), 7 | 9 | 4 | 5) || !hex.starts_with('#') {
-        error!("invalid hex color format: {hex}");
-        return D2D1_COLOR_F {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
+    let s = hex.strip_prefix("#").unwrap_or_default();
+    parse_hex(s).unwrap_or_else(|err| {
+        error!("could not parse hex: {err}");
+        D2D1_COLOR_F::default()
+    })
+}
+
+fn parse_hex(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
+    if !matches!(s.len(), 3 | 4 | 6 | 8) || !s[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!("invalid hex: {s}"));
     }
-    // Expand shorthand hex formats (#RGB or #RGBA to #RRGGBB or #RRGGBBAA)
-    let expanded_hex = match hex.len() {
-        4 => format!(
-            "#{}{}{}{}{}{}",
-            &hex[1..2],
-            &hex[1..2],
-            &hex[2..3],
-            &hex[2..3],
-            &hex[3..4],
-            &hex[3..4]
-        ),
-        5 => format!(
-            "#{}{}{}{}{}{}{}{}",
-            &hex[1..2],
-            &hex[1..2],
-            &hex[2..3],
-            &hex[2..3],
-            &hex[3..4],
-            &hex[3..4],
-            &hex[4..5],
-            &hex[4..5]
-        ),
-        _ => hex.to_string(),
+
+    let n = s.len();
+
+    let parse_digit = |digit: &str, single: bool| -> anyhow::Result<f32> {
+        u8::from_str_radix(digit, 16)
+            .map(|n| {
+                if single {
+                    ((n << 4) | n) as f32 / 255.0
+                } else {
+                    n as f32 / 255.0
+                }
+            })
+            .map_err(|_| anyhow!("invalid hex: {s}"))
     };
 
-    // Convert each color component to f32 between 0.0 and 1.0, handling errors
-    let parse_component = |s: &str| -> f32 {
-        match u8::from_str_radix(s, 16) {
-            Ok(val) => val as f32 / 255.0,
-            Err(_) => {
-                error!("invalid component '{s}' in hex: {expanded_hex}");
-                0.0
-            }
-        }
-    };
+    if n == 3 || n == 4 {
+        let r = parse_digit(&s[0..1], true)?;
+        let g = parse_digit(&s[1..2], true)?;
+        let b = parse_digit(&s[2..3], true)?;
 
-    // Parse RGB values
-    let r = parse_component(&expanded_hex[1..3]);
-    let g = parse_component(&expanded_hex[3..5]);
-    let b = parse_component(&expanded_hex[5..7]);
+        let a = if n == 4 {
+            parse_digit(&s[3..4], true)?
+        } else {
+            1.0
+        };
 
-    // Parse alpha value if present
-    let a = if expanded_hex.len() == 9 {
-        parse_component(&expanded_hex[7..9])
+        Ok(D2D1_COLOR_F { r, g, b, a })
+    } else if n == 6 || n == 8 {
+        let r = parse_digit(&s[0..2], false)?;
+        let g = parse_digit(&s[2..4], false)?;
+        let b = parse_digit(&s[4..6], false)?;
+
+        let a = if n == 8 {
+            parse_digit(&s[6..8], false)?
+        } else {
+            1.0
+        };
+
+        Ok(D2D1_COLOR_F { r, g, b, a })
     } else {
-        1.0
-    };
-
-    D2D1_COLOR_F { r, g, b, a }
+        Err(anyhow!("invalid hex: {s}"))
+    }
 }

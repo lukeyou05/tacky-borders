@@ -49,22 +49,22 @@ pub extern "system" fn process_win_event(
             for value in APP_STATE.borders.lock().unwrap().values() {
                 let border_window = HWND(*value as _);
                 if is_window_visible(border_window) {
-                    post_message_w(border_window, WM_APP_REORDER, WPARAM(0), LPARAM(0))
+                    post_message_w(Some(border_window), WM_APP_REORDER, WPARAM(0), LPARAM(0))
                         .context("EVENT_OBJECT_REORDER")
                         .log_if_err();
                 }
             }
         }
-        // Both the HWND passed by the event and the one returned by GetForegroundWindow() should
-        // refer to the same "active" window, but they don't.
+        // Neither the HWND passed by this event nor the one returned by GetForegroundWindow() are
+        // accurate 100% of the time. I tried finding workarounds without polling, but gave up.
         EVENT_SYSTEM_FOREGROUND => {
             let potential_active_hwnd = get_foreground_window();
 
-            // I GIVE UP I ACTUALLY GIVE UP im just gonna poll
-            if potential_active_hwnd != _hwnd && !APP_STATE.is_polling_active_window() {
-                poll_active_window_with_limit(3);
-            } else {
-                handle_foreground_event(potential_active_hwnd, _hwnd);
+            // Immediately try these HWNDs, and if they're wrong, hope that polling works.
+            handle_foreground_event(potential_active_hwnd, _hwnd);
+
+            if !APP_STATE.is_polling_active_window() {
+                poll_active_window_with_limit(2);
             }
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
@@ -79,14 +79,14 @@ pub extern "system" fn process_win_event(
         }
         EVENT_SYSTEM_MINIMIZESTART => {
             if let Some(border) = get_border_for_window(_hwnd) {
-                post_message_w(border, WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0))
+                post_message_w(Some(border), WM_APP_MINIMIZESTART, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MINIMIZESTART")
                     .log_if_err();
             }
         }
         EVENT_SYSTEM_MINIMIZEEND => {
             if let Some(border) = get_border_for_window(_hwnd) {
-                post_message_w(border, WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
+                post_message_w(Some(border), WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MINIMIZEEND")
                     .log_if_err();
             }
@@ -105,14 +105,14 @@ fn poll_active_window_with_limit(max_polls: u32) {
 
     let _ = thread::spawn(move || {
         for _ in 0..max_polls {
+            thread::sleep(time::Duration::from_millis(50));
+
             let current_active_hwnd = HWND(*APP_STATE.active_window.lock().unwrap() as _);
             let new_active_hwnd = get_foreground_window();
 
             if new_active_hwnd != current_active_hwnd && !new_active_hwnd.is_invalid() {
                 handle_foreground_event(new_active_hwnd, current_active_hwnd);
             }
-
-            thread::sleep(time::Duration::from_millis(50));
         }
 
         APP_STATE.set_polling_active_window(false);
@@ -132,7 +132,7 @@ fn handle_foreground_event(potential_active_hwnd: HWND, event_hwnd: HWND) {
         // NOTE: some apps can become foreground even if they're not visible, so we also
         // have to check the keys against the active_window HWND from earlier
         if is_window_visible(border_window) || *key == new_active_window {
-            post_message_w(border_window, WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
+            post_message_w(Some(border_window), WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                 .context("EVENT_OBJECT_FOCUS")
                 .log_if_err();
         }

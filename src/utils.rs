@@ -1,6 +1,6 @@
 use windows::Win32::Foundation::{
     GetLastError, SetLastError, BOOL, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE,
-    ERROR_SUCCESS, FALSE, HWND, LPARAM, RECT, WPARAM,
+    ERROR_SUCCESS, FALSE, HWND, LPARAM, RECT, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -19,8 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::ptr;
-use std::thread;
+use std::{ptr, thread};
 
 use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
 use crate::window_border::WindowBorder;
@@ -34,20 +33,16 @@ pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 4;
 pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
+pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 
 pub trait LogIfErr {
     fn log_if_err(&self);
 }
 
-impl LogIfErr for anyhow::Result<()> {
-    fn log_if_err(&self) {
-        if let Err(e) = self {
-            error!("{e:#}");
-        }
-    }
-}
-
-impl LogIfErr for windows::core::Result<()> {
+impl<T> LogIfErr for Result<(), T>
+where
+    T: std::fmt::Display,
+{
     fn log_if_err(&self) {
         if let Err(e) = self {
             error!("{e:#}");
@@ -79,7 +74,7 @@ pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
     let mut title_arr: [u16; 256] = [0; 256];
 
     if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
-        let last_error = unsafe { GetLastError() };
+        let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
         // TODO figure out whats with the invalid window handles
@@ -101,7 +96,7 @@ pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
     let mut class_arr: [u16; 256] = [0; 256];
 
     if unsafe { RealGetWindowClassW(hwnd, &mut class_arr) } == 0 {
-        let last_error = unsafe { GetLastError() };
+        let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
         // TODO figure out whats with the invalid window handles
@@ -215,7 +210,7 @@ pub fn is_window_minimized(hwnd: HWND) -> bool {
 }
 
 pub fn post_message_w(
-    hwnd: HWND,
+    hwnd: Option<HWND>,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
@@ -319,7 +314,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) {
     {
         let border_window = HWND(border_isize as _);
 
-        post_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
+        post_message_w(Some(border_window), WM_NCDESTROY, WPARAM(0), LPARAM(0))
             .context("destroy_border_for_window")
             .log_if_err();
     }
@@ -343,7 +338,7 @@ pub fn show_border_for_window(hwnd: HWND) {
     // If the border already exists, simply post a 'SHOW' message to its message queue. Otherwise,
     // create a new border.
     if let Some(border) = get_border_for_window(hwnd) {
-        post_message_w(border, WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
+        post_message_w(Some(border), WM_APP_SHOWUNCLOAKED, WPARAM(0), LPARAM(0))
             .context("show_border_for_window")
             .log_if_err();
     } else if is_window_top_level(hwnd) && is_window_visible(hwnd) && !is_window_cloaked(hwnd) {
@@ -366,11 +361,15 @@ pub fn hide_border_for_window(hwnd: HWND) {
         let hwnd = HWND(hwnd_isize as _);
 
         if let Some(border) = get_border_for_window(hwnd) {
-            post_message_w(border, WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
+            post_message_w(Some(border), WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
                 .context("hide_border_for_window")
                 .log_if_err();
         }
     });
+}
+
+pub fn get_last_error() -> WIN32_ERROR {
+    unsafe { GetLastError() }
 }
 
 // Bezier curve algorithm together with @0xJWLabs
