@@ -253,8 +253,9 @@ impl WindowBorder {
             pixelSize: Default::default(),
             presentOptions: D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS | D2D1_PRESENT_OPTIONS_IMMEDIATELY,
         };
+        // We will adjust opacity later. For now, we set it to 0.
         let brush_properties = D2D1_BRUSH_PROPERTIES {
-            opacity: 1.0,
+            opacity: 0.0,
             transform: Matrix3x2::identity(),
         };
 
@@ -739,7 +740,8 @@ impl WindowBorder {
                     .as_ref()
                     .unwrap_or(&global.komorebi_colors);
 
-                let old_active_opacity = self.active_color.get_opacity().unwrap_or_default();
+                let old_opacity = self.active_color.get_opacity().unwrap_or_default();
+                let old_transform = self.active_color.get_transform().unwrap_or_default();
 
                 self.active_color = match window_kind {
                     WindowKind::Single => active_color_config.to_color(true),
@@ -770,15 +772,13 @@ impl WindowBorder {
                 };
 
                 let brush_properties = D2D1_BRUSH_PROPERTIES {
-                    opacity: 1.0,
-                    transform: Matrix3x2::identity(),
+                    opacity: old_opacity,
+                    transform: old_transform,
                 };
 
                 self.active_color
                     .init_brush(render_target, &self.window_rect, &brush_properties)
                     .log_if_err();
-
-                self.active_color.set_opacity(old_active_opacity);
             }
             WM_PAINT => {
                 let _ = ValidateRect(Some(window), None);

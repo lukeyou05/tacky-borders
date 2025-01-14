@@ -227,7 +227,6 @@ impl Color {
                 let id2d1_brush =
                     render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
-                id2d1_brush.SetOpacity(0.0);
                 solid.brush = Some(id2d1_brush);
 
                 Ok(())
@@ -261,7 +260,6 @@ impl Color {
                     &gradient_stop_collection,
                 )?;
 
-                id2d1_brush.SetOpacity(0.0);
                 gradient.brush = Some(id2d1_brush);
 
                 Ok(())
@@ -311,18 +309,31 @@ impl Color {
         match self {
             Color::Solid(solid) => {
                 if let Some(ref id2d1_brush) = solid.brush {
-                    unsafe {
-                        id2d1_brush.SetTransform(transform);
-                    }
+                    unsafe { id2d1_brush.SetTransform(transform) };
                 }
             }
             Color::Gradient(gradient) => {
                 if let Some(ref id2d1_brush) = gradient.brush {
-                    unsafe {
-                        id2d1_brush.SetTransform(transform);
-                    }
+                    unsafe { id2d1_brush.SetTransform(transform) };
                 }
             }
+        }
+    }
+
+    pub fn get_transform(&self) -> Option<Matrix3x2> {
+        match self {
+            Color::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| {
+                let mut transform = Matrix3x2::default();
+                unsafe { id2d1_brush.GetTransform(&mut transform) };
+
+                transform
+            }),
+            Color::Gradient(gradient) => gradient.brush.as_ref().map(|id2d1_brush| {
+                let mut transform = Matrix3x2::default();
+                unsafe { id2d1_brush.GetTransform(&mut transform) };
+
+                transform
+            }),
         }
     }
 }
