@@ -20,6 +20,7 @@ use crate::utils::{get_foreground_window, post_message_w, LogIfErr, WM_APP_KOMOR
 use crate::APP_STATE;
 
 const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(600);
+const BUFFER_SIZE: usize = 32768;
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -129,7 +130,7 @@ impl KomorebiIntegration {
                             // Attempt to retrieve a buffer from the bufferpool
                             let outputbuffer = buffer_pool.pop_front().unwrap_or_else(|| {
                                 debug!("creating new buffer for komorebic socket");
-                                vec![0u8; 32768]
+                                vec![0u8; BUFFER_SIZE]
                             });
                             stream.read(outputbuffer)?;
 

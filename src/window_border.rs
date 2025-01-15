@@ -59,11 +59,8 @@ pub struct WindowBorder {
     pub border_window: HWND,
     pub tracking_window: HWND,
     pub is_active_window: bool,
-    // TODO: rename these RECTs to make their purpose more clear
-    // window_rect: RECT of border window
-    // rounded_rect: RECT used to render
     pub window_rect: RECT,
-    pub rounded_rect: D2D1_ROUNDED_RECT,
+    pub render_rect: D2D1_ROUNDED_RECT,
     pub border_width: i32,
     pub border_offset: i32,
     pub border_radius: f32,
@@ -336,7 +333,7 @@ impl WindowBorder {
             transform: Matrix3x2::identity(),
         };
 
-        self.rounded_rect = D2D1_ROUNDED_RECT {
+        self.render_rect = D2D1_ROUNDED_RECT {
             rect: Default::default(),
             radiusX: self.border_radius,
             radiusY: self.border_radius,
@@ -526,7 +523,7 @@ impl WindowBorder {
         let border_width = self.border_width as f32;
         let border_offset = self.border_offset as f32;
 
-        self.rounded_rect.rect = D2D_RECT_F {
+        self.render_rect.rect = D2D_RECT_F {
             left: border_width / 2.0 - border_offset,
             top: border_width / 2.0 - border_offset,
             right: (self.window_rect.right - self.window_rect.left) as f32 - border_width / 2.0
@@ -605,13 +602,13 @@ impl WindowBorder {
         unsafe {
             match self.border_radius {
                 0.0 => d2d_context.DrawRectangle(
-                    &self.rounded_rect.rect,
+                    &self.render_rect.rect,
                     brush,
                     self.border_width as f32,
                     None,
                 ),
                 _ => d2d_context.DrawRoundedRectangle(
-                    &self.rounded_rect,
+                    &self.render_rect,
                     brush,
                     self.border_width as f32,
                     None,

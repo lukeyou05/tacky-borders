@@ -26,8 +26,7 @@ use windows::Win32::Graphics::Direct3D::{
     D3D_FEATURE_LEVEL_9_3,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
-    D3D11_SDK_VERSION,
+    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -121,7 +120,7 @@ impl AppState {
                     )
                 };
 
-                let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
+                let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
                 let feature_levels = [
                     D3D_FEATURE_LEVEL_11_1,
