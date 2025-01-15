@@ -167,8 +167,21 @@ impl Config {
         let config_dir = Self::get_dir()?;
         let config_path = config_dir.join("config.yaml");
 
+        // When saving files with a text editor like VSCode or Neovim, there may be a small period
+        // where the target file is empty or doesn't exist, so we use 2 retries as a workaround.
+        let mut exists = fs::exists(&config_path).context("could not check if config exists")?;
+        for _ in 0..2 {
+            if !exists {
+                debug!("config does not exist; attempting to check again");
+                thread::sleep(time::Duration::from_millis(20));
+                exists = fs::exists(&config_path).context("could not check if config exists")?;
+            } else {
+                break;
+            }
+        }
+
         // If the config.yaml does not exist, try to create it
-        if !fs::exists(&config_path).context("could not check if config path exists")? {
+        if !exists {
             let default_contents = DEFAULT_CONFIG.as_bytes();
             fs::write(&config_path, default_contents)
                 .context("could not create default config.yaml")?;
@@ -176,8 +189,19 @@ impl Config {
             info!("generating default config in {}", config_dir.display());
         }
 
-        let contents = fs::read_to_string(&config_path).context("could not read config.yaml")?;
+        // We implement retries here for the same reasons listed earlier
+        let mut contents = fs::read_to_string(&config_path).context("could not read config")?;
+        for _ in 0..2 {
+            if contents.is_empty() {
+                debug!("config is empty; attempting to read again");
+                thread::sleep(time::Duration::from_millis(20));
+                contents = fs::read_to_string(&config_path).context("could not read config")?;
+            } else {
+                break;
+            }
+        }
 
+        // Deserialize the config.yaml file
         serde_yml::from_str(&contents).map_err(anyhow::Error::new)
     }
 
@@ -391,10 +415,13 @@ impl ConfigWatcher {
             let dir_handle = HANDLE(dir_handle_isize as _);
 
             // Cancel all pending I/O operations on the handle
-            unsafe { CancelIoEx(dir_handle, None) }.log_if_err();
+            unsafe { CancelIoEx(dir_handle, None) }
+                .context("could not cancel config watcher I/O operation")
+                .log_if_err();
 
             // Close the handle for cleanup. This should automatically exit the watcher thread.
-            let res = unsafe { CloseHandle(dir_handle) }.map_err(anyhow::Error::new);
+            let res =
+                unsafe { CloseHandle(dir_handle) }.context("could not close config watcher handle");
 
             // Reset the config dir handle if we successfully closed it
             if res.is_ok() {
