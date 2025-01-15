@@ -6,6 +6,9 @@ use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWM_WINDOW_CORNER_PREFERENCE,
 };
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
 };
@@ -301,8 +304,33 @@ pub fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_
     corner_preference
 }
 
-pub fn get_dpi_for_window(hwnd: HWND) -> u32 {
-    unsafe { GetDpiForWindow(hwnd) }
+// TODO: idk what might cause GetDpiForWindow to return 0
+pub fn get_dpi_for_window(hwnd: HWND) -> anyhow::Result<u32> {
+    match unsafe { GetDpiForWindow(hwnd) } {
+        0 => Err(anyhow!("received invalid dpi of 0 for {hwnd:?}")),
+        valid_dpi => Ok(valid_dpi),
+    }
+}
+
+pub fn monitor_from_window(hwnd: HWND) -> HMONITOR {
+    unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }
+}
+
+pub fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFO> {
+    let mut mi = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+
+    if !unsafe { GetMonitorInfoW(hmonitor, &mut mi) }.as_bool() {
+        return Err(anyhow!(
+            "could not get monitor info for {:?}: {:?}",
+            hmonitor,
+            get_last_error()
+        ));
+    };
+
+    Ok(mi)
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) {
