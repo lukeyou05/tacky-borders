@@ -50,25 +50,14 @@ global:
       start: [0.0, 1.0]
       end: [1.0, 0.0]
 
-  # komorebi_colors: Additional colors for komorebi's special window kinds.
+  # komorebi_colors: Additional integration for komorebi's special window kinds.
   #   - active_color is used for komorebi's "Single" window kind.
   #   - inactive_color is used for komorebi's "Unfocused" window kind.
-  # NOTE: these only apply when enable_komorebi_integration is set to True
   komorebi_colors:
     stack_color: "#e762b7"
     monocle_color: "#62e793"
     floating_color: "#f5f5a5"
-    enabled: True
-
-  # initialize_delay: Time (in ms) before the border appears after opening a new window
-  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
-  #
-  # These settings help accommodate window animations (e.g., open or unminimize animations).
-  # If window animations are disabled, set these to 0.
-  #
-  # These can also be used to accomodate border animations (e.g., fade animations).
-  initialize_delay: 200
-  unminimize_delay: 150
+    enabled: False
 
   # animations: Configure animation behavior for window borders
   #   fps: Animation frame rate
@@ -111,7 +100,17 @@ global:
         easing: EaseInOutQuad
 
     fps: 60
-    enabled: True
+    enabled: False
+
+  # initialize_delay: Time (in ms) before the border appears after opening a new window
+  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
+  #
+  # These settings help accommodate window animations (e.g., open or unminimize animations).
+  # If window animations are disabled, set these to 0.
+  #
+  # These can also be used to accomodate border animations (e.g., fade animations).
+  initialize_delay: 200
+  unminimize_delay: 150
 
 # Per-application configuration overrides
 window_rules:
