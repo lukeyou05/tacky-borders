@@ -26,7 +26,8 @@ use windows::Win32::Graphics::Direct3D::{
     D3D_FEATURE_LEVEL_9_3,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
+    D3D11_SDK_VERSION,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -66,6 +67,7 @@ struct AppState {
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
+    factory: ID2D1Factory8,
     device: ID3D11Device,
     dxgi_device: IDXGIDevice,
     d2d_device: ID2D1Device7,
@@ -109,61 +111,62 @@ impl AppState {
             }
         };
 
-        let create_directx_devices =
-            || -> anyhow::Result<(ID3D11Device, IDXGIDevice, ID2D1Device7)> {
-                let render_factory: ID2D1Factory8 = unsafe {
-                    D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(
-                        |err| {
-                            error!("could not create ID2D1Factory: {err}");
-                            panic!()
-                        },
-                    )
-                };
+        let factory: ID2D1Factory8 = unsafe {
+            D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
+                error!("could not create ID2D1Factory: {err}");
+                panic!()
+            })
+        };
 
-                let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+        let create_directx_devices = |factory: &ID2D1Factory8| -> anyhow::Result<(
+            ID3D11Device,
+            IDXGIDevice,
+            ID2D1Device7,
+        )> {
+            let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
 
-                let feature_levels = [
-                    D3D_FEATURE_LEVEL_11_1,
-                    D3D_FEATURE_LEVEL_11_0,
-                    D3D_FEATURE_LEVEL_10_1,
-                    D3D_FEATURE_LEVEL_10_0,
-                    D3D_FEATURE_LEVEL_9_3,
-                    D3D_FEATURE_LEVEL_9_2,
-                    D3D_FEATURE_LEVEL_9_1,
-                ];
+            let feature_levels = [
+                D3D_FEATURE_LEVEL_11_1,
+                D3D_FEATURE_LEVEL_11_0,
+                D3D_FEATURE_LEVEL_10_1,
+                D3D_FEATURE_LEVEL_10_0,
+                D3D_FEATURE_LEVEL_9_3,
+                D3D_FEATURE_LEVEL_9_2,
+                D3D_FEATURE_LEVEL_9_1,
+            ];
 
-                let mut device_opt: Option<ID3D11Device> = None;
-                let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
+            let mut device_opt: Option<ID3D11Device> = None;
+            let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
 
-                unsafe {
-                    D3D11CreateDevice(
-                        None,
-                        D3D_DRIVER_TYPE_HARDWARE,
-                        HMODULE::default(),
-                        creation_flags,
-                        Some(&feature_levels),
-                        D3D11_SDK_VERSION,
-                        Some(&mut device_opt),
-                        Some(&mut feature_level),
-                        None,
-                    )
-                }?;
+            unsafe {
+                D3D11CreateDevice(
+                    None,
+                    D3D_DRIVER_TYPE_HARDWARE,
+                    HMODULE::default(),
+                    creation_flags,
+                    Some(&feature_levels),
+                    D3D11_SDK_VERSION,
+                    Some(&mut device_opt),
+                    Some(&mut feature_level),
+                    None,
+                )
+            }?;
 
-                debug!("directx feature_level: {feature_level:X?}");
+            debug!("directx feature_level: {feature_level:X?}");
 
-                let device = device_opt.context("could not get d3d11 device")?;
-                let dxgi_device: IDXGIDevice = device.cast().context("id3d11device cast")?;
-                let d2d_device =
-                    unsafe { render_factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+            let device = device_opt.context("could not get d3d11 device")?;
+            let dxgi_device: IDXGIDevice = device.cast().context("id3d11device cast")?;
+            let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
 
-                Ok((device, dxgi_device, d2d_device))
-            };
+            Ok((device, dxgi_device, d2d_device))
+        };
         // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
-        let (device, dxgi_device, d2d_device) = create_directx_devices().unwrap_or_else(|err| {
-            error!("could not create directx devices: {err}");
-            println!("could not create directx devices: {err}");
-            panic!("could not create directx devices: {err}");
-        });
+        let (device, dxgi_device, d2d_device) =
+            create_directx_devices(&factory).unwrap_or_else(|err| {
+                error!("could not create directx devices: {err}");
+                println!("could not create directx devices: {err}");
+                panic!("could not create directx devices: {err}");
+            });
 
         AppState {
             borders: Mutex::new(HashMap::new()),
@@ -172,6 +175,7 @@ impl AppState {
             is_polling_active_window: AtomicBool::new(false),
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
+            factory,
             device,
             dxgi_device,
             d2d_device,
