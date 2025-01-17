@@ -46,6 +46,7 @@ mod colors;
 mod event_hook;
 mod iocp;
 mod komorebi;
+mod render_resources;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
