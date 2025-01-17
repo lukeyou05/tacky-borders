@@ -5,7 +5,7 @@ use std::time;
 use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
-use crate::border_config::{serde_default_bool, serde_default_i32};
+use crate::config::{serde_default_bool, serde_default_i32};
 use crate::utils::cubic_bezier;
 use crate::window_border::WindowBorder;
 

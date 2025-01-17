@@ -41,8 +41,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 mod anim_timer;
 mod animations;
-mod border_config;
 mod colors;
+mod config;
+mod effects;
 mod event_hook;
 mod iocp;
 mod komorebi;
@@ -51,7 +52,7 @@ mod sys_tray_icon;
 mod utils;
 mod window_border;
 
-use crate::border_config::{Config, ConfigWatcher, EnableMode};
+use crate::config::{Config, ConfigWatcher, EnableMode};
 use crate::utils::{
     create_border_for_window, get_window_rule, has_filtered_style, imm_disable_ime,
     is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,

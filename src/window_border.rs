@@ -8,10 +8,13 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{
     COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, S_OK, TRUE, WPARAM,
 };
+use windows::Win32::Graphics::Direct2D::CLSID_D2D1Shadow;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
     D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
+use windows::Win32::Graphics::Direct2D::D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION;
+use windows::Win32::Graphics::Direct2D::D2D1_SHADOW_PROP_OPTIMIZATION;
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1AlphaMask, CLSID_D2D1Composite, CLSID_D2D1GaussianBlur, ID2D1Brush,
     ID2D1DeviceContext7, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
@@ -45,8 +48,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::animations::{self, AnimType, AnimVec, Animations};
-use crate::border_config::WindowRule;
 use crate::colors::Color;
+use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_resources::RenderResources;
 use crate::utils::{
@@ -59,6 +62,7 @@ use crate::utils::{
 use crate::APP_STATE;
 
 const BLUR_EFFECT_STANDARD_DEVIATION: f32 = 8.0;
+const SHADOW_EFFECT_STANDARD_DEVIATION: f32 = 8.0;
 
 #[derive(Debug, Default)]
 pub struct WindowBorder {
@@ -440,6 +444,26 @@ impl WindowBorder {
             // Set the command list as the target so we can begin recording
             d2d_context.SetTarget(&command_list);
 
+            // Create the shadow effect and link it to the border_bitmap
+            let shadow_effect = d2d_context
+                .CreateEffect(&CLSID_D2D1Shadow)
+                .context("shadow_effect")?;
+            shadow_effect.SetInput(0, border_bitmap, false);
+            shadow_effect
+                .SetValue(
+                    D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION.0 as u32,
+                    D2D1_PROPERTY_TYPE_FLOAT,
+                    &SHADOW_EFFECT_STANDARD_DEVIATION.to_le_bytes(),
+                )
+                .context("shadow_effect.SetValue() std deviation")?;
+            shadow_effect
+                .SetValue(
+                    D2D1_SHADOW_PROP_OPTIMIZATION.0 as u32,
+                    D2D1_PROPERTY_TYPE_ENUM,
+                    &D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED.0.to_le_bytes(),
+                )
+                .context("shadow_effect.SetValue() optimization")?;
+
             // Create the blur effect and link it to the border_bitmap
             let blur_effect = d2d_context
                 .CreateEffect(&CLSID_D2D1GaussianBlur)
@@ -460,40 +484,51 @@ impl WindowBorder {
                 )
                 .context("blur_effect.SetValue() optimization")?;
 
-            // Create an alpha mask effect to mask out the inner glow
-            let mask_effect = d2d_context
-                .CreateEffect(&CLSID_D2D1AlphaMask)
-                .context("mask_effect")?;
-            mask_effect.SetInput(
+            // Create a composite effect and link it to the above effects
+            let composite_effect = d2d_context
+                .CreateEffect(&CLSID_D2D1Composite)
+                .context("composite_effect")?;
+            composite_effect
+                .SetInputCount(3)
+                .context("could not set composite effect input count")?;
+            composite_effect.SetInput(
                 0,
+                &shadow_effect
+                    .GetOutput()
+                    .context("could not get shadow output")?,
+                false,
+            );
+            composite_effect.SetInput(
+                1,
                 &blur_effect
                     .GetOutput()
                     .context("could not get blur output")?,
                 false,
             );
-            mask_effect.SetInput(1, mask_bitmap, false);
+            composite_effect.SetInput(2, border_bitmap, false);
 
-            // Create a composite effect and link it to the effect(s) and border_bitmap
-            let composite_effect = d2d_context
-                .CreateEffect(&CLSID_D2D1Composite)
-                .context("composite_effect")?;
-            composite_effect.SetInput(
+            // Create an alpha mask effect to mask out the inner rect
+            let mask_effect = d2d_context
+                .CreateEffect(&CLSID_D2D1AlphaMask)
+                .context("mask_effect")?;
+            mask_effect.SetInput(
                 0,
-                &mask_effect
-                    .GetOutput()
-                    .context("could not get mask output")?,
-                false,
-            );
-            composite_effect.SetInput(1, border_bitmap, false);
-
-            d2d_context.BeginDraw();
-            d2d_context.Clear(None);
-
-            // Draw the composite effect (recorded by the command list)
-            d2d_context.DrawImage(
                 &composite_effect
                     .GetOutput()
                     .context("could not get composite output")?,
+                false,
+            );
+            mask_effect.SetInput(1, mask_bitmap, false);
+
+            // Begin recording commands to the command list
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            // Record the composite effect
+            d2d_context.DrawImage(
+                &mask_effect
+                    .GetOutput()
+                    .context("could not get mask output")?,
                 None,
                 None,
                 D2D1_INTERPOLATION_MODE_LINEAR,
@@ -720,9 +755,20 @@ impl WindowBorder {
             d2d_context.SetTarget(mask_bitmap);
 
             // Create our mask geometry (masks out inner glow/blur)
+            let render_rect_adjusted = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: self.render_rect.rect.left + (self.border_width as f32 / 2.0),
+                    top: self.render_rect.rect.top + (self.border_width as f32 / 2.0),
+                    right: self.render_rect.rect.right - (self.border_width as f32 / 2.0),
+                    bottom: self.render_rect.rect.bottom - (self.border_width as f32 / 2.0),
+                },
+                radiusX: self.border_radius - (self.border_width as f32 / 2.0),
+                radiusY: self.border_radius - (self.border_width as f32 / 2.0),
+            };
+
             let render_rect_geometry = APP_STATE
                 .factory
-                .CreateRoundedRectangleGeometry(&self.render_rect)
+                .CreateRoundedRectangleGeometry(&render_rect_adjusted)
                 .context("render_rect_geometry")?;
             let window_rect_geometry = APP_STATE
                 .factory
@@ -816,7 +862,7 @@ impl WindowBorder {
 
     fn draw_rectangle(&self, d2d_context: &ID2D1DeviceContext7, brush: &ID2D1Brush) {
         unsafe {
-            match self.border_radius {
+            /*match self.border_radius {
                 0.0 => d2d_context.DrawRectangle(
                     &self.render_rect.rect,
                     brush,
@@ -829,6 +875,21 @@ impl WindowBorder {
                     self.border_width as f32,
                     None,
                 ),
+            }*/
+            let render_rect_adjusted = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: self.render_rect.rect.left - (self.border_width as f32 / 2.0),
+                    top: self.render_rect.rect.top - (self.border_width as f32 / 2.0),
+                    right: self.render_rect.rect.right + (self.border_width as f32 / 2.0),
+                    bottom: self.render_rect.rect.bottom + (self.border_width as f32 / 2.0),
+                },
+                radiusX: self.border_radius + (self.border_width as f32 / 2.0),
+                radiusY: self.border_radius + (self.border_width as f32 / 2.0),
+            };
+
+            match self.border_radius {
+                0.0 => d2d_context.FillRectangle(&render_rect_adjusted.rect, brush),
+                _ => d2d_context.FillRoundedRectangle(&render_rect_adjusted, brush),
             }
         }
     }

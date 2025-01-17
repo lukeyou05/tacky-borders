@@ -24,7 +24,7 @@ use anyhow::{anyhow, Context};
 use regex::Regex;
 use std::{ptr, thread};
 
-use crate::border_config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
+use crate::config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
 use crate::window_border::WindowBorder;
 use crate::APP_STATE;
 

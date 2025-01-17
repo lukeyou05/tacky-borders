@@ -12,8 +12,8 @@ use windows::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
 
-use crate::border_config::{serde_default_bool, Config};
 use crate::colors::ColorConfig;
+use crate::config::{serde_default_bool, Config};
 use crate::iocp::{CompletionPort, UnixDomainSocket};
 use crate::iocp::{UnixListener, UnixStream};
 use crate::utils::{get_foreground_window, post_message_w, LogIfErr, WM_APP_KOMOREBI};
