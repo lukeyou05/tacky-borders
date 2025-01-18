@@ -1,6 +1,6 @@
 use anyhow::Context;
 use windows::Win32::Graphics::{
-    Direct2D::{ID2D1Bitmap1, ID2D1CommandList, ID2D1DeviceContext7},
+    Direct2D::{ID2D1Bitmap1, ID2D1DeviceContext7},
     DirectComposition::{IDCompositionDevice, IDCompositionTarget, IDCompositionVisual},
     Dxgi::IDXGISwapChain1,
 };
@@ -12,7 +12,6 @@ pub struct RenderResources {
     pub target_bitmap: Option<ID2D1Bitmap1>,
     pub border_bitmap: Option<ID2D1Bitmap1>,
     pub mask_bitmap: Option<ID2D1Bitmap1>,
-    pub command_list: Option<ID2D1CommandList>,
     pub d_comp_device: Option<IDCompositionDevice>,
     pub d_comp_target: Option<IDCompositionTarget>,
     pub d_comp_visual: Option<IDCompositionVisual>,
@@ -45,11 +44,5 @@ impl RenderResources {
         self.mask_bitmap
             .as_ref()
             .context("could not get mask_bitmap")
-    }
-
-    pub fn command_list(&self) -> anyhow::Result<&ID2D1CommandList> {
-        self.command_list
-            .as_ref()
-            .context("could not get command_list")
     }
 }

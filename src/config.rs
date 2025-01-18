@@ -1,5 +1,6 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorConfig;
+use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
 use crate::{display_error_box, reload_borders, APP_STATE};
@@ -63,6 +64,8 @@ pub struct Global {
     pub komorebi_colors: KomorebiColorsConfig,
     #[serde(default)]
     pub animations: AnimationsConfig,
+    #[serde(default)]
+    pub effects: EffectsConfig,
     #[serde(alias = "init_delay")]
     #[serde(default = "serde_default_u64::<250>")]
     pub initialize_delay: u64, // Adjust delay when creating new windows/borders
@@ -103,6 +106,7 @@ pub struct WindowRule {
     pub komorebi_colors: Option<KomorebiColorsConfig>,
     pub enabled: Option<EnableMode>,
     pub animations: Option<AnimationsConfig>,
+    pub effects: Option<EffectsConfig>,
     #[serde(alias = "init_delay")]
     pub initialize_delay: Option<u64>,
     #[serde(alias = "restore_delay")]

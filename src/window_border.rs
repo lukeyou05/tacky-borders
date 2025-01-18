@@ -8,21 +8,15 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{
     COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, S_OK, TRUE, WPARAM,
 };
-use windows::Win32::Graphics::Direct2D::CLSID_D2D1Shadow;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
     D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
-use windows::Win32::Graphics::Direct2D::D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION;
-use windows::Win32::Graphics::Direct2D::D2D1_SHADOW_PROP_OPTIMIZATION;
 use windows::Win32::Graphics::Direct2D::{
-    CLSID_D2D1AlphaMask, CLSID_D2D1Composite, CLSID_D2D1GaussianBlur, ID2D1Brush,
-    ID2D1DeviceContext7, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-    D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1, D2D1_BRUSH_PROPERTIES,
-    D2D1_COMBINE_MODE_XOR, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-    D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED, D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
-    D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, D2D1_INTERPOLATION_MODE_LINEAR,
-    D2D1_PROPERTY_TYPE_ENUM, D2D1_PROPERTY_TYPE_FLOAT, D2D1_ROUNDED_RECT,
+    ID2D1Brush, ID2D1DeviceContext7, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
+    D2D1_BRUSH_PROPERTIES, D2D1_COMBINE_MODE_XOR, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice, IDCompositionDevice};
 use windows::Win32::Graphics::Dwm::{
@@ -50,6 +44,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::animations::{self, AnimType, AnimVec, Animations};
 use crate::colors::Color;
 use crate::config::WindowRule;
+use crate::effects::Effects;
 use crate::komorebi::WindowKind;
 use crate::render_resources::RenderResources;
 use crate::utils::{
@@ -60,9 +55,6 @@ use crate::utils::{
     WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
 };
 use crate::APP_STATE;
-
-const BLUR_EFFECT_STANDARD_DEVIATION: f32 = 8.0;
-const SHADOW_EFFECT_STANDARD_DEVIATION: f32 = 8.0;
 
 #[derive(Debug, Default)]
 pub struct WindowBorder {
@@ -81,6 +73,7 @@ pub struct WindowBorder {
     pub active_color: Color,
     pub inactive_color: Color,
     pub animations: Animations,
+    pub effects: Effects,
     pub last_render_time: Option<time::Instant>,
     pub last_anim_time: Option<time::Instant>,
     pub initialize_delay: u64,
@@ -220,10 +213,7 @@ impl WindowBorder {
             .animations
             .as_ref()
             .unwrap_or(&global.animations);
-
-        // TODO: change this to smth else
-        // 3 standard deviations gets us 99.7% coverage, which should be good enough
-        self.window_padding = (BLUR_EFFECT_STANDARD_DEVIATION * 3.0) as i32;
+        let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
 
         self.active_color = active_color_config.to_color(true);
         self.inactive_color = inactive_color_config.to_color(false);
@@ -244,6 +234,51 @@ impl WindowBorder {
             radius_config.to_radius(self.border_width, self.current_dpi, self.tracking_window);
 
         self.animations = animations_config.to_animations();
+        self.effects = effects_config.to_effects();
+
+        // Try to find how much window padding we should add
+        let max_active_padding = self
+            .effects
+            .active
+            .iter()
+            .max_by_key(|params| {
+                // Try to find the effect params with the largest required padding
+                let max_std_dev = params.std_dev;
+                let max_translation = (params.translation.x).max(params.translation.y);
+
+                ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+            })
+            .map(|params| {
+                // Now that we found it, go ahead and calculate it as an f32
+                let max_std_dev = params.std_dev;
+                let max_translation = (params.translation.x).max(params.translation.y);
+
+                (max_std_dev * 3.0).ceil() + max_translation.ceil()
+            })
+            .unwrap_or(0.0);
+        let max_inactive_padding = self
+            .effects
+            .inactive
+            .iter()
+            .max_by_key(|params| {
+                // Try to find the effect params with the largest required padding
+                let max_std_dev = params.std_dev;
+                let max_translation = (params.translation.x).max(params.translation.y);
+
+                // 3 standard deviations gets us 99.7% coverage, which should be good enough
+                ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+            })
+            .map(|params| {
+                // Now that we found it, go ahead and calculate it as an f32
+                let max_std_dev = params.std_dev;
+                let max_translation = (params.translation.x).max(params.translation.y);
+
+                // 3 standard deviations gets us 99.7% coverage, which should be good enough
+                (max_std_dev * 3.0).ceil() + max_translation.ceil()
+            })
+            .unwrap_or(0.0);
+
+        self.window_padding = max_active_padding.max(max_inactive_padding).ceil() as i32;
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
@@ -430,124 +465,6 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn create_command_list(&mut self) -> anyhow::Result<()> {
-        let d2d_context = self.render_resources.d2d_context()?;
-        let border_bitmap = self.render_resources.border_bitmap()?;
-        let mask_bitmap = self.render_resources.mask_bitmap()?;
-
-        unsafe {
-            // Open a command list to record draw operations
-            let command_list = d2d_context
-                .CreateCommandList()
-                .context("d2d_context.CreateCommandList()")?;
-
-            // Set the command list as the target so we can begin recording
-            d2d_context.SetTarget(&command_list);
-
-            // Create the shadow effect and link it to the border_bitmap
-            let shadow_effect = d2d_context
-                .CreateEffect(&CLSID_D2D1Shadow)
-                .context("shadow_effect")?;
-            shadow_effect.SetInput(0, border_bitmap, false);
-            shadow_effect
-                .SetValue(
-                    D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION.0 as u32,
-                    D2D1_PROPERTY_TYPE_FLOAT,
-                    &SHADOW_EFFECT_STANDARD_DEVIATION.to_le_bytes(),
-                )
-                .context("shadow_effect.SetValue() std deviation")?;
-            shadow_effect
-                .SetValue(
-                    D2D1_SHADOW_PROP_OPTIMIZATION.0 as u32,
-                    D2D1_PROPERTY_TYPE_ENUM,
-                    &D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED.0.to_le_bytes(),
-                )
-                .context("shadow_effect.SetValue() optimization")?;
-
-            // Create the blur effect and link it to the border_bitmap
-            let blur_effect = d2d_context
-                .CreateEffect(&CLSID_D2D1GaussianBlur)
-                .context("blur_effect")?;
-            blur_effect.SetInput(0, border_bitmap, false);
-            blur_effect
-                .SetValue(
-                    D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0 as u32,
-                    D2D1_PROPERTY_TYPE_FLOAT,
-                    &BLUR_EFFECT_STANDARD_DEVIATION.to_le_bytes(),
-                )
-                .context("blur_effect.SetValue() std deviation")?;
-            blur_effect
-                .SetValue(
-                    D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION.0 as u32,
-                    D2D1_PROPERTY_TYPE_ENUM,
-                    &D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED.0.to_le_bytes(),
-                )
-                .context("blur_effect.SetValue() optimization")?;
-
-            // Create a composite effect and link it to the above effects
-            let composite_effect = d2d_context
-                .CreateEffect(&CLSID_D2D1Composite)
-                .context("composite_effect")?;
-            composite_effect
-                .SetInputCount(3)
-                .context("could not set composite effect input count")?;
-            composite_effect.SetInput(
-                0,
-                &shadow_effect
-                    .GetOutput()
-                    .context("could not get shadow output")?,
-                false,
-            );
-            composite_effect.SetInput(
-                1,
-                &blur_effect
-                    .GetOutput()
-                    .context("could not get blur output")?,
-                false,
-            );
-            composite_effect.SetInput(2, border_bitmap, false);
-
-            // Create an alpha mask effect to mask out the inner rect
-            let mask_effect = d2d_context
-                .CreateEffect(&CLSID_D2D1AlphaMask)
-                .context("mask_effect")?;
-            mask_effect.SetInput(
-                0,
-                &composite_effect
-                    .GetOutput()
-                    .context("could not get composite output")?,
-                false,
-            );
-            mask_effect.SetInput(1, mask_bitmap, false);
-
-            // Begin recording commands to the command list
-            d2d_context.BeginDraw();
-            d2d_context.Clear(None);
-
-            // Record the composite effect
-            d2d_context.DrawImage(
-                &mask_effect
-                    .GetOutput()
-                    .context("could not get mask output")?,
-                None,
-                None,
-                D2D1_INTERPOLATION_MODE_LINEAR,
-                D2D1_COMPOSITE_MODE_SOURCE_OVER,
-            );
-
-            d2d_context
-                .EndDraw(None, None)
-                .unwrap_or_else(|err| self.handle_end_draw_error(err));
-
-            // Close the command list to tell it we are done recording
-            command_list.Close().context("command_list.Close()")?;
-
-            self.render_resources.command_list = Some(command_list);
-        }
-
-        Ok(())
-    }
-
     fn update_window_rect(&mut self) -> anyhow::Result<()> {
         if let Err(e) = unsafe {
             DwmGetWindowAttribute(
@@ -686,6 +603,87 @@ impl WindowBorder {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
+        // TODO: idk if this is a good place to put this but it's fine for now
+        if self.effects.is_enabled() {
+            self.render_with_effects()?;
+            return Ok(());
+        }
+
+        self.last_render_time = Some(time::Instant::now());
+
+        let d2d_context = self.render_resources.d2d_context()?;
+
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
+        let window_padding = self.window_padding as f32;
+
+        self.render_rect.rect = D2D_RECT_F {
+            left: border_width / 2.0 + window_padding - border_offset,
+            top: border_width / 2.0 + window_padding - border_offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+        };
+
+        unsafe {
+            // Determine which color should be drawn on top (for color fade animation)
+            let (bottom_color, top_color) = match self.is_active_window {
+                true => (&self.inactive_color, &self.active_color),
+                false => (&self.active_color, &self.inactive_color),
+            };
+
+            // Set the d2d_context target to the target_bitmap
+            let target_bitmap = self.render_resources.target_bitmap()?;
+            d2d_context.SetTarget(target_bitmap);
+
+            // Draw to the target_bitmap
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            if bottom_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = bottom_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match bottom_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                }
+            }
+            if top_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = top_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match top_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    None => debug!("ID2D1Brush for top_color has not been created yet"),
+                }
+            }
+
+            d2d_context
+                .EndDraw(None, None)
+                .unwrap_or_else(|err| self.handle_end_draw_error(err));
+
+            // Present the swap chain buffer
+            let hresult = self
+                .render_resources
+                .swap_chain()?
+                .Present(1, DXGI_PRESENT::default());
+            if hresult != S_OK {
+                return Err(anyhow!("could not present swap_chain: {hresult}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_with_effects(&mut self) -> anyhow::Result<()> {
         self.last_render_time = Some(time::Instant::now());
 
         let d2d_context = self.render_resources.d2d_context()?;
@@ -728,7 +726,7 @@ impl WindowBorder {
                 }
 
                 match bottom_color.get_brush() {
-                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    Some(id2d1_brush) => self.fill_rectangle(d2d_context, id2d1_brush),
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
@@ -738,7 +736,7 @@ impl WindowBorder {
                 }
 
                 match top_color.get_brush() {
-                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    Some(id2d1_brush) => self.fill_rectangle(d2d_context, id2d1_brush),
                     None => debug!("ID2D1Brush for top_color has not been created yet"),
                 }
             }
@@ -828,7 +826,7 @@ impl WindowBorder {
             d2d_context.SetTarget(target_bitmap);
 
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
-            let command_list = self.render_resources.command_list()?;
+            let command_list = self.get_current_command_list()?;
 
             // Draw to the target_bitmap
             d2d_context.BeginDraw();
@@ -860,9 +858,10 @@ impl WindowBorder {
         Ok(())
     }
 
+    // Used with render()
     fn draw_rectangle(&self, d2d_context: &ID2D1DeviceContext7, brush: &ID2D1Brush) {
         unsafe {
-            /*match self.border_radius {
+            match self.border_radius {
                 0.0 => d2d_context.DrawRectangle(
                     &self.render_rect.rect,
                     brush,
@@ -875,7 +874,13 @@ impl WindowBorder {
                     self.border_width as f32,
                     None,
                 ),
-            }*/
+            }
+        }
+    }
+
+    // Used with render_with_effects()
+    fn fill_rectangle(&self, d2d_context: &ID2D1DeviceContext7, brush: &ID2D1Brush) {
+        unsafe {
             let render_rect_adjusted = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
                     left: self.render_rect.rect.left - (self.border_width as f32 / 2.0),
