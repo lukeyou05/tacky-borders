@@ -1,3 +1,5 @@
+use crate::config::{serde_default_bool, serde_default_f32};
+use crate::window_border::WindowBorder;
 use anyhow::Context;
 use serde::Deserialize;
 use std::slice;
@@ -15,12 +17,14 @@ use windows::{
     },
 };
 
-use crate::{config::serde_default_f32, window_border::WindowBorder};
-
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct EffectsConfig {
+    #[serde(default)]
     pub active: Vec<EffectParamsConfig>,
+    #[serde(default)]
     pub inactive: Vec<EffectParamsConfig>,
+    #[serde(default = "serde_default_bool::<true>")]
     pub enabled: bool,
 }
 
@@ -105,6 +109,13 @@ pub struct Translation {
 }
 
 impl WindowBorder {
+    pub fn get_current_effects(&self) -> &Vec<EffectParams> {
+        match self.is_active_window {
+            true => &self.effects.active,
+            false => &self.effects.inactive,
+        }
+    }
+
     pub fn get_current_command_list(&self) -> anyhow::Result<&ID2D1CommandList> {
         match self.is_active_window {
             true => self
@@ -235,7 +246,6 @@ impl WindowBorder {
                     }
 
                     // Create a composite effect and link it to the above effects
-                    // TODO: if no effects are selected, I will get an invalid graph config error
                     let composite_effect = d2d_context
                         .CreateEffect(&CLSID_D2D1Composite)
                         .context("composite_effect")?;

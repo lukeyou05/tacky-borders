@@ -8,6 +8,7 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{
     COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, S_OK, TRUE, WPARAM,
 };
+use windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_XOR;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
     D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
@@ -15,8 +16,8 @@ use windows::Win32::Graphics::Direct2D::Common::{
 use windows::Win32::Graphics::Direct2D::{
     ID2D1Brush, ID2D1DeviceContext7, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
     D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-    D2D1_BRUSH_PROPERTIES, D2D1_COMBINE_MODE_XOR, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT,
+    D2D1_BRUSH_PROPERTIES, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_INTERPOLATION_MODE_LINEAR,
+    D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice, IDCompositionDevice};
 use windows::Win32::Graphics::Dwm::{
@@ -445,6 +446,16 @@ impl WindowBorder {
         .context("border_bitmap")?;
 
         // Aaaand yet another for the mask
+        let bitmap_properties = D2D1_BITMAP_PROPERTIES1 {
+            bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            colorContext: ManuallyDrop::new(None),
+        };
         let mask_bitmap = unsafe {
             d2d_context.CreateBitmap(
                 D2D_SIZE_U {
@@ -458,9 +469,24 @@ impl WindowBorder {
         }
         .context("mask_bitmap")?;
 
+        // Aaaaaaand yet another for the mask helper
+        let mask_helper_bitmap = unsafe {
+            d2d_context.CreateBitmap(
+                D2D_SIZE_U {
+                    width: screen_width + ((self.border_width + self.window_padding) * 2) as u32,
+                    height: screen_height + ((self.border_width + self.window_padding) * 2) as u32,
+                },
+                None,
+                0,
+                &bitmap_properties,
+            )
+        }
+        .context("mask_helper_bitmap")?;
+
         self.render_resources.target_bitmap = Some(target_bitmap);
         self.render_resources.border_bitmap = Some(border_bitmap);
         self.render_resources.mask_bitmap = Some(mask_bitmap);
+        self.render_resources.mask_helper_bitmap = Some(mask_helper_bitmap);
 
         Ok(())
     }
@@ -604,7 +630,7 @@ impl WindowBorder {
 
     fn render(&mut self) -> anyhow::Result<()> {
         // TODO: idk if this is a good place to put this but it's fine for now
-        if self.effects.is_enabled() {
+        if !self.get_current_effects().is_empty() {
             self.render_with_effects()?;
             return Ok(());
         }
@@ -712,6 +738,18 @@ impl WindowBorder {
                 false => (&self.active_color, &self.inactive_color),
             };
 
+            // Create a rect that covers up to the outer edge of the border
+            let render_rect_adjusted = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: self.render_rect.rect.left - (self.border_width as f32 / 2.0),
+                    top: self.render_rect.rect.top - (self.border_width as f32 / 2.0),
+                    right: self.render_rect.rect.right + (self.border_width as f32 / 2.0),
+                    bottom: self.render_rect.rect.bottom + (self.border_width as f32 / 2.0),
+                },
+                radiusX: self.border_radius + (self.border_width as f32 / 2.0),
+                radiusY: self.border_radius + (self.border_width as f32 / 2.0),
+            };
+
             // Set the d2d_context target to the border_bitmap
             let border_bitmap = self.render_resources.border_bitmap()?;
             d2d_context.SetTarget(border_bitmap);
@@ -726,7 +764,9 @@ impl WindowBorder {
                 }
 
                 match bottom_color.get_brush() {
-                    Some(id2d1_brush) => self.fill_rectangle(d2d_context, id2d1_brush),
+                    Some(id2d1_brush) => {
+                        self.fill_rectangle(&render_rect_adjusted, d2d_context, id2d1_brush)
+                    }
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
@@ -736,7 +776,9 @@ impl WindowBorder {
                 }
 
                 match top_color.get_brush() {
-                    Some(id2d1_brush) => self.fill_rectangle(d2d_context, id2d1_brush),
+                    Some(id2d1_brush) => {
+                        self.fill_rectangle(&render_rect_adjusted, d2d_context, id2d1_brush)
+                    }
                     None => debug!("ID2D1Brush for top_color has not been created yet"),
                 }
             }
@@ -748,11 +790,13 @@ impl WindowBorder {
             // Get d2d_context again to satisfy Rust's borrow checker
             let d2d_context = self.render_resources.d2d_context()?;
 
-            // Set the d2d_context target to the mask_bitmap so we can create an alpha mask
-            let mask_bitmap = self.render_resources.mask_bitmap()?;
-            d2d_context.SetTarget(mask_bitmap);
+            // Set the d2d_context target to the mask_helper_bitmap to help create an alpha mask
+            let mask_helper_bitmap = self.render_resources.mask_helper_bitmap()?;
+            d2d_context.SetTarget(mask_helper_bitmap);
 
-            // Create our mask geometry (masks out inner glow/blur)
+            // Create a rect that covers up to the inner edge of the border
+            // This rect is used to mask out the inner portion of the window
+            // Note this is different from the earlier render_rect_adjusted
             let render_rect_adjusted = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
                     left: self.render_rect.rect.left + (self.border_width as f32 / 2.0),
@@ -763,37 +807,6 @@ impl WindowBorder {
                 radiusX: self.border_radius - (self.border_width as f32 / 2.0),
                 radiusY: self.border_radius - (self.border_width as f32 / 2.0),
             };
-
-            let render_rect_geometry = APP_STATE
-                .factory
-                .CreateRoundedRectangleGeometry(&render_rect_adjusted)
-                .context("render_rect_geometry")?;
-            let window_rect_geometry = APP_STATE
-                .factory
-                .CreateRectangleGeometry(&D2D_RECT_F {
-                    left: 0.0,
-                    top: 0.0,
-                    right: (self.window_rect.right - self.window_rect.left) as f32,
-                    bottom: (self.window_rect.bottom - self.window_rect.top) as f32,
-                })
-                .context("window_rect_geometry")?;
-
-            // Combine the two geometries
-            let path_geometry = APP_STATE
-                .factory
-                .CreatePathGeometry()
-                .context("path_geometry")?;
-            let geometry_sink = path_geometry.Open().context("geometry_sink")?;
-            render_rect_geometry
-                .CombineWithGeometry(
-                    &window_rect_geometry,
-                    D2D1_COMBINE_MODE_XOR,
-                    None,
-                    0.5,
-                    &geometry_sink,
-                )
-                .context("render_rect_geometry.CombineWithGeometry()")?;
-            geometry_sink.Close().context("geometry_sink.Close()")?;
 
             // Create a 100% opaque brush because our active/inactive colors' brushes might not be
             let opaque_brush = d2d_context
@@ -808,11 +821,41 @@ impl WindowBorder {
                 )
                 .context("opaque_brush")?;
 
-            // Draw to the mask_bitmap
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
-            d2d_context.FillGeometry(&path_geometry, &opaque_brush, None);
+            self.fill_rectangle(&render_rect_adjusted, d2d_context, &opaque_brush);
+
+            d2d_context
+                .EndDraw(None, None)
+                .unwrap_or_else(|err| self.handle_end_draw_error(err));
+
+            // Get d2d_context again to satisfy Rust's borrow checker
+            let d2d_context = self.render_resources.d2d_context()?;
+
+            // We will use this bitmap to XOR out our mask
+            let mask_helper_bitmap = self.render_resources.mask_helper_bitmap()?;
+
+            // Set the d2d_context target to the mask_bitmap
+            let mask_bitmap = self.render_resources.mask_bitmap()?;
+            d2d_context.SetTarget(mask_bitmap);
+
+            d2d_context.BeginDraw();
+            d2d_context.Clear(Some(&D2D1_COLOR_F {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            }));
+
+            // Use XOR to make the middle area transparent but keep the outside area opaque
+            d2d_context.DrawImage(
+                mask_helper_bitmap,
+                None,
+                None,
+                D2D1_INTERPOLATION_MODE_LINEAR,
+                D2D1_COMPOSITE_MODE_XOR,
+            );
 
             d2d_context
                 .EndDraw(None, None)
@@ -879,22 +922,16 @@ impl WindowBorder {
     }
 
     // Used with render_with_effects()
-    fn fill_rectangle(&self, d2d_context: &ID2D1DeviceContext7, brush: &ID2D1Brush) {
+    fn fill_rectangle(
+        &self,
+        rounded_rect: &D2D1_ROUNDED_RECT,
+        d2d_context: &ID2D1DeviceContext7,
+        brush: &ID2D1Brush,
+    ) {
         unsafe {
-            let render_rect_adjusted = D2D1_ROUNDED_RECT {
-                rect: D2D_RECT_F {
-                    left: self.render_rect.rect.left - (self.border_width as f32 / 2.0),
-                    top: self.render_rect.rect.top - (self.border_width as f32 / 2.0),
-                    right: self.render_rect.rect.right + (self.border_width as f32 / 2.0),
-                    bottom: self.render_rect.rect.bottom + (self.border_width as f32 / 2.0),
-                },
-                radiusX: self.border_radius + (self.border_width as f32 / 2.0),
-                radiusY: self.border_radius + (self.border_width as f32 / 2.0),
-            };
-
             match self.border_radius {
-                0.0 => d2d_context.FillRectangle(&render_rect_adjusted.rect, brush),
-                _ => d2d_context.FillRoundedRectangle(&render_rect_adjusted, brush),
+                0.0 => d2d_context.FillRectangle(&rounded_rect.rect, brush),
+                _ => d2d_context.FillRoundedRectangle(rounded_rect, brush),
             }
         }
     }
