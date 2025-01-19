@@ -1,8 +1,8 @@
 use crate::config::{serde_default_bool, serde_default_f32};
-use crate::window_border::WindowBorder;
 use anyhow::Context;
 use serde::Deserialize;
 use std::slice;
+use windows::Win32::Graphics::Direct2D::{ID2D1Bitmap1, ID2D1DeviceContext7};
 use windows::{
     Foundation::Numerics::Matrix3x2,
     Win32::Graphics::Direct2D::{
@@ -63,79 +63,40 @@ impl Effects {
     pub fn is_enabled(&self) -> bool {
         !self.active.is_empty() || !self.inactive.is_empty()
     }
-}
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct EffectParamsConfig {
-    #[serde(alias = "type")]
-    pub effect_type: EffectType,
-    #[serde(default = "serde_default_f32::<8>")]
-    pub std_dev: f32,
-    #[serde(default = "serde_default_f32::<1>")]
-    pub opacity: f32,
-    #[serde(default)]
-    pub translation: Translation,
-}
-
-impl EffectParamsConfig {
-    pub fn to_effect_params(&self) -> EffectParams {
-        EffectParams {
-            effect_type: self.effect_type,
-            opacity: self.opacity,
-            std_dev: self.std_dev,
-            translation: self.translation,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct EffectParams {
-    pub effect_type: EffectType,
-    pub std_dev: f32,
-    pub opacity: f32,
-    pub translation: Translation,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-pub enum EffectType {
-    Glow,
-    Shadow,
-}
-
-#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
-pub struct Translation {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl WindowBorder {
-    pub fn get_current_effects(&self) -> &Vec<EffectParams> {
-        match self.is_active_window {
-            true => &self.effects.active,
-            false => &self.effects.inactive,
+    pub fn get_current_vec(&self, is_active_window: bool) -> &Vec<EffectParams> {
+        match is_active_window {
+            true => &self.active,
+            false => &self.inactive,
         }
     }
 
-    pub fn get_current_command_list(&self) -> anyhow::Result<&ID2D1CommandList> {
-        match self.is_active_window {
+    pub fn get_current_command_list(
+        &self,
+        is_active_window: bool,
+    ) -> anyhow::Result<&ID2D1CommandList> {
+        match is_active_window {
             true => self
-                .effects
                 .active_command_list
                 .as_ref()
                 .context("could not get active_command_list"),
             false => self
-                .effects
                 .inactive_command_list
                 .as_ref()
                 .context("could not get inactive_command_list"),
         }
     }
 
-    // TODO: put under impl Effects instead
-    pub fn create_command_list(&mut self) -> anyhow::Result<()> {
-        let d2d_context = self.render_resources.d2d_context()?;
-        let border_bitmap = self.render_resources.border_bitmap()?;
-        let mask_bitmap = self.render_resources.mask_bitmap()?;
+    pub fn create_command_lists_if_enabled(
+        &mut self,
+        d2d_context: &ID2D1DeviceContext7,
+        border_bitmap: &ID2D1Bitmap1,
+        mask_bitmap: &ID2D1Bitmap1,
+    ) -> anyhow::Result<()> {
+        // If not enabled, then ignore everything here
+        if !self.is_enabled() {
+            return Ok(());
+        }
 
         let create_single_list =
             |effect_params_vec: &Vec<EffectParams>| -> anyhow::Result<ID2D1CommandList> {
@@ -302,13 +263,56 @@ impl WindowBorder {
             };
 
         let active_command_list =
-            create_single_list(&self.effects.active).context("active_command_list")?;
+            create_single_list(&self.active).context("active_command_list")?;
         let inactive_command_list =
-            create_single_list(&self.effects.inactive).context("inactive_command_list")?;
+            create_single_list(&self.inactive).context("inactive_command_list")?;
 
-        self.effects.active_command_list = Some(active_command_list);
-        self.effects.inactive_command_list = Some(inactive_command_list);
+        self.active_command_list = Some(active_command_list);
+        self.inactive_command_list = Some(inactive_command_list);
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct EffectParamsConfig {
+    #[serde(alias = "type")]
+    pub effect_type: EffectType,
+    #[serde(default = "serde_default_f32::<8>")]
+    pub std_dev: f32,
+    #[serde(default = "serde_default_f32::<1>")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub translation: Translation,
+}
+
+impl EffectParamsConfig {
+    pub fn to_effect_params(&self) -> EffectParams {
+        EffectParams {
+            effect_type: self.effect_type,
+            opacity: self.opacity,
+            std_dev: self.std_dev,
+            translation: self.translation,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectParams {
+    pub effect_type: EffectType,
+    pub std_dev: f32,
+    pub opacity: f32,
+    pub translation: Translation,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub enum EffectType {
+    Glow,
+    Shadow,
+}
+
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
+pub struct Translation {
+    pub x: f32,
+    pub y: f32,
 }
