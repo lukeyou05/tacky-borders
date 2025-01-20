@@ -1,7 +1,5 @@
-use std::mem::ManuallyDrop;
-
-use crate::{utils::get_monitor_info, APP_STATE};
 use anyhow::Context;
+use std::mem::ManuallyDrop;
 use windows::Win32::Foundation::FALSE;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -25,6 +23,8 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Gdi::HMONITOR;
 
+use crate::{utils::get_monitor_info, APP_STATE};
+
 #[derive(Debug, Default)]
 pub struct RenderResources {
     pub d2d_context: Option<ID2D1DeviceContext7>,
@@ -41,7 +41,6 @@ pub struct Bitmaps {
     pub target_bitmap: Option<ID2D1Bitmap1>,
     pub border_bitmap: Option<ID2D1Bitmap1>,
     pub mask_bitmap: Option<ID2D1Bitmap1>,
-    pub mask_helper_bitmap: Option<ID2D1Bitmap1>,
 }
 
 impl RenderResources {
@@ -74,13 +73,6 @@ impl RenderResources {
             .mask_bitmap
             .as_ref()
             .context("could not get mask_bitmap")
-    }
-
-    pub fn mask_helper_bitmap(&self) -> anyhow::Result<&ID2D1Bitmap1> {
-        self.bitmaps
-            .mask_helper_bitmap
-            .as_ref()
-            .context("could not get mask_help_bitmap")
     }
 
     pub fn create(
@@ -176,7 +168,6 @@ impl RenderResources {
         self.bitmaps.target_bitmap = None;
         self.bitmaps.border_bitmap = None;
         self.bitmaps.mask_bitmap = None;
-        self.bitmaps.mask_helper_bitmap = None;
 
         let d2d_context = self.d2d_context()?;
         let swap_chain = self.swap_chain()?;
@@ -295,24 +286,9 @@ impl Bitmaps {
         }
         .context("mask_bitmap")?;
 
-        // Aaaaaaand yet another for the mask helper
-        let mask_helper_bitmap = unsafe {
-            d2d_context.CreateBitmap(
-                D2D_SIZE_U {
-                    width: screen_width + ((border_width + window_padding) * 2) as u32,
-                    height: screen_height + ((border_width + window_padding) * 2) as u32,
-                },
-                None,
-                0,
-                &bitmap_properties,
-            )
-        }
-        .context("mask_helper_bitmap")?;
-
         self.target_bitmap = Some(target_bitmap);
         self.border_bitmap = Some(border_bitmap);
         self.mask_bitmap = Some(mask_bitmap);
-        self.mask_helper_bitmap = Some(mask_helper_bitmap);
 
         Ok(())
     }

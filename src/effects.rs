@@ -1,21 +1,20 @@
-use crate::config::{serde_default_bool, serde_default_f32};
 use anyhow::Context;
 use serde::Deserialize;
 use std::slice;
-use windows::Win32::Graphics::Direct2D::{ID2D1Bitmap1, ID2D1DeviceContext7};
-use windows::{
-    Foundation::Numerics::Matrix3x2,
-    Win32::Graphics::Direct2D::{
-        CLSID_D2D12DAffineTransform, CLSID_D2D1AlphaMask, CLSID_D2D1Composite,
-        CLSID_D2D1GaussianBlur, CLSID_D2D1Opacity, CLSID_D2D1Shadow,
-        Common::D2D1_COMPOSITE_MODE_SOURCE_OVER, ID2D1CommandList, ID2D1Effect,
-        D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED,
-        D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
-        D2D1_INTERPOLATION_MODE_LINEAR, D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_ENUM,
-        D2D1_PROPERTY_TYPE_FLOAT, D2D1_PROPERTY_TYPE_MATRIX_3X2,
-        D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_OPTIMIZATION,
-    },
+use windows::Foundation::Numerics::Matrix3x2;
+use windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_DESTINATION_OUT;
+use windows::Win32::Graphics::Direct2D::{
+    CLSID_D2D12DAffineTransform, CLSID_D2D1Composite, CLSID_D2D1GaussianBlur, CLSID_D2D1Opacity,
+    CLSID_D2D1Shadow, Common::D2D1_COMPOSITE_MODE_SOURCE_OVER, ID2D1Bitmap1, ID2D1CommandList,
+    ID2D1DeviceContext7, ID2D1Effect, D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX,
+    D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED, D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
+    D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, D2D1_INTERPOLATION_MODE_LINEAR,
+    D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_ENUM, D2D1_PROPERTY_TYPE_FLOAT,
+    D2D1_PROPERTY_TYPE_MATRIX_3X2, D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
+    D2D1_SHADOW_PROP_OPTIMIZATION,
 };
+
+use crate::config::{serde_default_bool, serde_default_f32};
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +108,7 @@ impl Effects {
                     // Set the command list as the target so we can begin recording
                     d2d_context.SetTarget(&command_list);
 
+                    // Create a vec to store the output effects
                     let mut effects_vec: Vec<ID2D1Effect> = Vec::new();
 
                     for effect_params in effect_params_vec.iter() {
@@ -225,32 +225,28 @@ impl Effects {
                     }
                     composite_effect.SetInput(effects_vec.len() as u32, border_bitmap, false);
 
-                    // Create an alpha mask effect to mask out the inner rect
-                    let mask_effect = d2d_context
-                        .CreateEffect(&CLSID_D2D1AlphaMask)
-                        .context("mask_effect")?;
-                    mask_effect.SetInput(
-                        0,
-                        &composite_effect
-                            .GetOutput()
-                            .context("could not get composite output")?,
-                        false,
-                    );
-                    mask_effect.SetInput(1, mask_bitmap, false);
-
                     // Begin recording commands to the command list
                     d2d_context.BeginDraw();
                     d2d_context.Clear(None);
 
                     // Record the composite effect
                     d2d_context.DrawImage(
-                        &mask_effect
+                        &composite_effect
                             .GetOutput()
-                            .context("could not get mask output")?,
+                            .context("could not get composite output")?,
                         None,
                         None,
                         D2D1_INTERPOLATION_MODE_LINEAR,
                         D2D1_COMPOSITE_MODE_SOURCE_OVER,
+                    );
+
+                    // Use COMPOSITE_MODE_DESTINATION_OUT to inverse mask out the inner rect
+                    d2d_context.DrawImage(
+                        mask_bitmap,
+                        None,
+                        None,
+                        D2D1_INTERPOLATION_MODE_LINEAR,
+                        D2D1_COMPOSITE_MODE_DESTINATION_OUT,
                     );
 
                     d2d_context.EndDraw(None, None)?;
@@ -297,6 +293,7 @@ impl EffectParamsConfig {
     }
 }
 
+// TODO: if i dont add any additional struct fields, then i don't need EffectParamsConfig
 #[derive(Debug, Clone)]
 pub struct EffectParams {
     pub effect_type: EffectType,

@@ -57,7 +57,6 @@ pub struct Animations {
     pub should_fade: bool,
     pub spiral_progress: f32,
     pub spiral_angle: f32,
-    pub last_anim_time: Option<time::Instant>,
 }
 
 impl Animations {
@@ -159,12 +158,16 @@ impl Animations {
         }
     }
 
-    pub fn set_timer_if_enabled(&mut self, border_window: HWND) {
+    pub fn set_timer_if_enabled(
+        &mut self,
+        border_window: HWND,
+        last_anim_time: &mut Option<time::Instant>,
+    ) {
         if (!self.active.is_empty() || !self.inactive.is_empty()) && self.timer.is_none() {
             let timer_duration = (1000.0 / self.fps as f32) as u64;
             self.timer = Some(AnimationTimer::start(border_window, timer_duration));
 
-            self.last_anim_time = Some(time::Instant::now());
+            *last_anim_time = Some(time::Instant::now());
         }
     }
 

@@ -7,7 +7,6 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{
     COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, S_OK, TRUE, WPARAM,
 };
-use windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_XOR;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D_RECT_F,
 };
@@ -65,6 +64,7 @@ pub struct WindowBorder {
     pub animations: Animations,
     pub effects: Effects,
     pub last_render_time: Option<time::Instant>,
+    pub last_anim_time: Option<time::Instant>,
     pub initialize_delay: u64,
     pub unminimize_delay: u64,
     pub is_paused: bool,
@@ -188,7 +188,8 @@ impl WindowBorder {
                 self.render().log_if_err();
             }
 
-            self.animations.set_timer_if_enabled(self.border_window);
+            self.animations
+                .set_timer_if_enabled(self.border_window, &mut self.last_anim_time);
 
             // Handle the case where the tracking window is already minimized
             // TODO: maybe put this in a better spot but idk where
@@ -510,9 +511,10 @@ impl WindowBorder {
                 }
             }
 
-            d2d_context
-                .EndDraw(None, None)
-                .unwrap_or_else(|err| self.handle_end_draw_error(err));
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
 
             // Present the swap chain buffer
             let hresult = self
@@ -601,16 +603,14 @@ impl WindowBorder {
                 }
             }
 
-            d2d_context
-                .EndDraw(None, None)
-                .unwrap_or_else(|err| self.handle_end_draw_error(err));
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
 
-            // Get d2d_context again to satisfy Rust's borrow checker
-            let d2d_context = self.render_resources.d2d_context()?;
-
-            // Set the d2d_context target to the mask_helper_bitmap to help create an alpha mask
-            let mask_helper_bitmap = self.render_resources.mask_helper_bitmap()?;
-            d2d_context.SetTarget(mask_helper_bitmap);
+            // Set the d2d_context target to the mask_bitmap to create an alpha mask
+            let mask_bitmap = self.render_resources.mask_bitmap()?;
+            d2d_context.SetTarget(mask_bitmap);
 
             // Create a rect that covers up to the inner edge of the border
             // This rect is used to mask out the inner portion of the window
@@ -644,43 +644,10 @@ impl WindowBorder {
 
             self.fill_rectangle(&render_rect_adjusted, d2d_context, &opaque_brush);
 
-            d2d_context
-                .EndDraw(None, None)
-                .unwrap_or_else(|err| self.handle_end_draw_error(err));
-
-            // Get d2d_context again to satisfy Rust's borrow checker
-            let d2d_context = self.render_resources.d2d_context()?;
-
-            // We will use this bitmap to XOR out our mask
-            let mask_helper_bitmap = self.render_resources.mask_helper_bitmap()?;
-
-            // Set the d2d_context target to the mask_bitmap
-            let mask_bitmap = self.render_resources.mask_bitmap()?;
-            d2d_context.SetTarget(mask_bitmap);
-
-            d2d_context.BeginDraw();
-            d2d_context.Clear(Some(&D2D1_COLOR_F {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            }));
-
-            // Use XOR to make the middle area transparent but keep the outside area opaque
-            d2d_context.DrawImage(
-                mask_helper_bitmap,
-                None,
-                None,
-                D2D1_INTERPOLATION_MODE_LINEAR,
-                D2D1_COMPOSITE_MODE_XOR,
-            );
-
-            d2d_context
-                .EndDraw(None, None)
-                .unwrap_or_else(|err| self.handle_end_draw_error(err));
-
-            // Get d2d_context again to satisfy Rust's borrow checker
-            let d2d_context = self.render_resources.d2d_context()?;
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
 
             // Set d2d_context's target back to the target_bitmap so we can draw to the display
             let target_bitmap = self.render_resources.target_bitmap()?;
@@ -704,9 +671,10 @@ impl WindowBorder {
                 D2D1_COMPOSITE_MODE_SOURCE_OVER,
             );
 
-            d2d_context
-                .EndDraw(None, None)
-                .unwrap_or_else(|err| self.handle_end_draw_error(err));
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
 
             // Present the swap chain buffer
             let hresult = self
@@ -953,7 +921,8 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.animations.set_timer_if_enabled(self.border_window);
+                self.animations
+                    .set_timer_if_enabled(self.border_window, &mut self.last_anim_time);
                 self.is_paused = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
@@ -984,7 +953,8 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.animations.set_timer_if_enabled(self.border_window);
+                self.animations
+                    .set_timer_if_enabled(self.border_window, &mut self.last_anim_time);
                 self.is_paused = false;
             }
             WM_APP_ANIMATE => {
@@ -993,16 +963,13 @@ impl WindowBorder {
                 }
 
                 let anim_elapsed = self
-                    .animations
                     .last_anim_time
-                    .unwrap_or(time::Instant::now())
-                    .elapsed();
+                    .map(|instant| instant.elapsed())
+                    .unwrap_or_default();
                 let render_elapsed = self
                     .last_render_time
-                    .unwrap_or(time::Instant::now())
-                    .elapsed();
-
-                self.animations.last_anim_time = Some(time::Instant::now());
+                    .map(|instant| instant.elapsed())
+                    .unwrap_or_default();
 
                 let mut update = false;
 
@@ -1049,6 +1016,8 @@ impl WindowBorder {
                         }
                     }
                 }
+
+                self.last_anim_time = Some(time::Instant::now());
 
                 let render_interval = 1.0 / self.animations.fps as f32;
                 let time_diff = render_elapsed.as_secs_f32() - render_interval;
