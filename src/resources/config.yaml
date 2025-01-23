@@ -57,7 +57,7 @@ global:
     stack_color: "#e762b7"
     monocle_color: "#62e793"
     floating_color: "#f5f5a5"
-    enabled: True
+    enabled: False
 
   # animations: Configure animation behavior for window borders
   #   active: Animations for active windows
@@ -100,7 +100,17 @@ global:
         easing: EaseInOutQuad
 
     fps: 60
-    enabled: True
+    enabled: False
+
+  # initialize_delay: Time (in ms) before the border appears after opening a new window
+  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
+  #
+  # These settings help accommodate window animations (e.g., open or unminimize animations).
+  # If window animations are disabled, set these to 0.
+  #
+  # These can also be used to accomodate border animations (e.g., fade animations).
+  initialize_delay: 200
+  unminimize_delay: 150
 
   # effects: Configure Direct2D effects for the window
   #   active: Effects for active windows
