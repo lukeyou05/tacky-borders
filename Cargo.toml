@@ -1,18 +1,18 @@
 [package]
 name = "tacky-borders"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 
 [dependencies]
 serde = "1.0.217"
 serde_yml = "0.0.12"
-serde_json = "1.0.135"
+serde_json = "1.0.137"
 serde_json_borrow = "0.7.1"
 tray-icon = "0.19.2"
 open = "5.3.2"
 dirs = "6.0.0"
 regex = "1.11.1"
-log = "0.4.22"
+log = "0.4.25"
 sp_log = "0.2.1"
 anyhow = "1.0.95"
 
