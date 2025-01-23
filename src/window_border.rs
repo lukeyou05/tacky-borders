@@ -444,7 +444,6 @@ impl WindowBorder {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        // TODO: idk if this is a good place to put this but it's fine for now
         if !self
             .effects
             .get_current_vec(self.is_active_window)
@@ -662,7 +661,6 @@ impl WindowBorder {
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
-            // Draw using the command list
             d2d_context.DrawImage(
                 command_list,
                 None,

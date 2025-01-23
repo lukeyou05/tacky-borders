@@ -92,7 +92,7 @@ impl Effects {
         border_bitmap: &ID2D1Bitmap1,
         mask_bitmap: &ID2D1Bitmap1,
     ) -> anyhow::Result<()> {
-        // If not enabled, then ignore everything here
+        // If not enabled, then don't create the command lists
         if !self.is_enabled() {
             return Ok(());
         }
@@ -105,7 +105,6 @@ impl Effects {
                         .CreateCommandList()
                         .context("d2d_context.CreateCommandList()")?;
 
-                    // Set the command list as the target so we can begin recording
                     d2d_context.SetTarget(&command_list);
 
                     // Create a vec to store the output effects
@@ -229,7 +228,6 @@ impl Effects {
                     d2d_context.BeginDraw();
                     d2d_context.Clear(None);
 
-                    // Record the composite effect
                     d2d_context.DrawImage(
                         &composite_effect
                             .GetOutput()
@@ -240,7 +238,7 @@ impl Effects {
                         D2D1_COMPOSITE_MODE_SOURCE_OVER,
                     );
 
-                    // Use COMPOSITE_MODE_DESTINATION_OUT to inverse mask out the inner rect
+                    // We use COMPOSITE_MODE_DESTINATION_OUT to inverse mask out the inner rect
                     d2d_context.DrawImage(
                         mask_bitmap,
                         None,

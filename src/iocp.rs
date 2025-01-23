@@ -210,7 +210,6 @@ impl UnixDomainSocket {
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
                 unsafe {
                     closesocket(self.0);
-                    //drop(client_socket);
                 }
                 return Err(anyhow!(
                     "could not accept client socket connection: {:?}",

@@ -102,16 +102,6 @@ global:
     fps: 60
     enabled: False
 
-  # initialize_delay: Time (in ms) before the border appears after opening a new window
-  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
-  #
-  # These settings help accommodate window animations (e.g., open or unminimize animations).
-  # If window animations are disabled, set these to 0.
-  #
-  # These can also be used to accomodate border animations (e.g., fade animations).
-  initialize_delay: 200
-  unminimize_delay: 150
-
   # effects: Configure Direct2D effects for the window
   #   active: Effects for active windows
   #   inactive: Effects for inactive windows
