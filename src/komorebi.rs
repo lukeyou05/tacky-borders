@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::{fs, thread, time};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
+use windows::Win32::Networking::WinSock::{closesocket, WSACleanup, WSAStartup, WSADATA};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
 
@@ -164,13 +164,18 @@ impl KomorebiIntegration {
             .log_if_err();
         });
 
-        // Subscribe to komorebic
-        Command::new("komorebic")
+        // Attempt to subscribe to komorebic, stopping integration if subscription fails
+        if !Command::new("komorebic")
             .arg("subscribe-socket")
             .arg(socket_file)
             .creation_flags(CREATE_NO_WINDOW.0)
-            .spawn()
-            .context("could not subscribe to komorebic socket")?;
+            .status()
+            .context("could not get komorebic subscribe-socket exit status")?
+            .success()
+        {
+            error!("could not subscribe to komorebic socket; stopping integration");
+            self.stop().context("could not stop komorebi integration")?;
+        }
 
         Ok(())
     }
@@ -178,11 +183,12 @@ impl KomorebiIntegration {
     pub fn stop(&mut self) -> anyhow::Result<()> {
         debug!("stopping komorebi integration");
 
-        // If this is Some, it means WinSock is (most likely) running, so we need to cleanup
-        if self.listen_socket.is_some() {
+        // If this is Some, it means WinSock is (most likely) running, so we need to cleanup. Doing
+        // so should also cause the socket worker thread to automatically exit.
+        if let Some(ref socket) = self.listen_socket {
             unsafe { WSACleanup() };
 
-            // I assume setting this to None calls drop(), which also calls closesocket()
+            unsafe { closesocket(socket.0) };
             self.listen_socket = None;
         }
 
