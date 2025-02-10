@@ -5,26 +5,26 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_DESTINATION_OUT;
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D12DAffineTransform, CLSID_D2D1Composite, CLSID_D2D1GaussianBlur, CLSID_D2D1Opacity,
-    CLSID_D2D1Shadow, Common::D2D1_COMPOSITE_MODE_SOURCE_OVER, ID2D1Bitmap1, ID2D1CommandList,
-    ID2D1DeviceContext7, ID2D1Effect, D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX,
-    D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED, D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
-    D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, D2D1_INTERPOLATION_MODE_LINEAR,
-    D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_ENUM, D2D1_PROPERTY_TYPE_FLOAT,
-    D2D1_PROPERTY_TYPE_MATRIX_3X2, D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
-    D2D1_SHADOW_PROP_OPTIMIZATION,
+    CLSID_D2D1Shadow, Common::D2D1_COMPOSITE_MODE_SOURCE_OVER, ID2D1CommandList, ID2D1Effect,
+    D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED,
+    D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_OPACITY_PROP_OPACITY, D2D1_PROPERTY_TYPE_ENUM,
+    D2D1_PROPERTY_TYPE_FLOAT, D2D1_PROPERTY_TYPE_MATRIX_3X2,
+    D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_OPTIMIZATION,
 };
 
 use crate::config::{serde_default_bool, serde_default_f32};
+use crate::render_resources::RenderResources;
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EffectsConfig {
     #[serde(default)]
-    pub active: Vec<EffectParamsConfig>,
+    active: Vec<EffectParamsConfig>,
     #[serde(default)]
-    pub inactive: Vec<EffectParamsConfig>,
+    inactive: Vec<EffectParamsConfig>,
     #[serde(default = "serde_default_bool::<true>")]
-    pub enabled: bool,
+    enabled: bool,
 }
 
 impl EffectsConfig {
@@ -54,8 +54,8 @@ impl EffectsConfig {
 pub struct Effects {
     pub active: Vec<EffectParams>,
     pub inactive: Vec<EffectParams>,
-    pub active_command_list: Option<ID2D1CommandList>,
-    pub inactive_command_list: Option<ID2D1CommandList>,
+    active_command_list: Option<ID2D1CommandList>,
+    inactive_command_list: Option<ID2D1CommandList>,
 }
 
 impl Effects {
@@ -88,14 +88,16 @@ impl Effects {
 
     pub fn create_command_lists_if_enabled(
         &mut self,
-        d2d_context: &ID2D1DeviceContext7,
-        border_bitmap: &ID2D1Bitmap1,
-        mask_bitmap: &ID2D1Bitmap1,
+        render_resources: &RenderResources,
     ) -> anyhow::Result<()> {
         // If not enabled, then don't create the command lists
         if !self.is_enabled() {
             return Ok(());
         }
+
+        let d2d_context = render_resources.d2d_context()?;
+        let border_bitmap = render_resources.border_bitmap()?;
+        let mask_bitmap = render_resources.mask_bitmap()?;
 
         let create_single_list =
             |effect_params_vec: &Vec<EffectParams>| -> anyhow::Result<ID2D1CommandList> {
@@ -271,13 +273,13 @@ impl Effects {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct EffectParamsConfig {
     #[serde(alias = "type")]
-    pub effect_type: EffectType,
+    effect_type: EffectType,
     #[serde(default = "serde_default_f32::<8>")]
-    pub std_dev: f32,
+    std_dev: f32,
     #[serde(default = "serde_default_f32::<1>")]
-    pub opacity: f32,
+    opacity: f32,
     #[serde(default)]
-    pub translation: Translation,
+    translation: Translation,
 }
 
 impl EffectParamsConfig {
@@ -291,7 +293,9 @@ impl EffectParamsConfig {
     }
 }
 
-// TODO: if i dont add any additional struct fields, then i don't need EffectParamsConfig
+// Technically we don't need this since EffectParams and EffectParamsConfig have the same fields,
+// but I'll keep it just so it's consistent with the other config structs. This means
+// to_effect_params() basically acts like clone(), and cloning is something we need to do anyways.
 #[derive(Debug, Clone)]
 pub struct EffectParams {
     pub effect_type: EffectType,

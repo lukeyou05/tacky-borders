@@ -265,12 +265,15 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
         // Otherwise, continue creating the border window
         let mut border = WindowBorder::new(tracking_window);
 
-        if let Err(e) = border.create_window() {
-            error!("could not create border window: {e}");
-            return;
+        let border_window = match border.create_window() {
+            Ok(hwnd) => hwnd,
+            Err(err) => {
+                error!("could not create border window: {err}");
+                return;
+            }
         };
 
-        borders_hashmap.insert(tracking_window_isize, border.border_window.0 as isize);
+        borders_hashmap.insert(tracking_window_isize, border_window.0 as isize);
 
         drop(borders_hashmap);
 

@@ -14,13 +14,13 @@ use crate::utils::cubic_bezier;
 #[serde(deny_unknown_fields)]
 pub struct AnimationsConfig {
     #[serde(default)]
-    pub active: Vec<AnimParamsConfig>,
+    active: Vec<AnimParamsConfig>,
     #[serde(default)]
-    pub inactive: Vec<AnimParamsConfig>,
+    inactive: Vec<AnimParamsConfig>,
     #[serde(default = "serde_default_i32::<60>")]
-    pub fps: i32,
+    fps: i32,
     #[serde(default = "serde_default_bool::<true>")]
-    pub enabled: bool,
+    enabled: bool,
 }
 
 impl AnimationsConfig {

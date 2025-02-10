@@ -58,7 +58,6 @@ use crate::utils::{
     set_process_dpi_awareness_context, LogIfErr,
 };
 
-// TODO: dunno if I should pass an Arc ptr of this to other functions/structs
 static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
 
 struct AppState {
@@ -88,7 +87,6 @@ impl AppState {
             Config::config_watcher_callback,
         );
 
-        // NOTE: experimental
         let mut komorebi_integration = KomorebiIntegration::new();
 
         let config = match Config::create() {
@@ -123,8 +121,8 @@ impl AppState {
             IDXGIDevice,
             ID2D1Device7,
         )> {
-            // TODO: if you add D3D11CreateDevice here, be sure to remove it or else it will crash
-            // on computers without the Graphics Tools feature installed
+            // NOTE: if you add D3D11_CREATE_DEVICE_DEBUG here, be sure to remove it once done or
+            // else it will crash on computers without the Graphics Tools feature installed
             let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
             let feature_levels = [

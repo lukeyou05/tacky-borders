@@ -47,27 +47,27 @@ use crate::APP_STATE;
 
 #[derive(Debug, Default)]
 pub struct WindowBorder {
-    pub border_window: HWND,
-    pub tracking_window: HWND,
-    pub is_active_window: bool,
-    pub window_rect: RECT,
-    pub window_padding: i32,
-    pub render_rect: D2D1_ROUNDED_RECT,
-    pub border_width: i32,
-    pub border_offset: i32,
-    pub border_radius: f32,
-    pub current_monitor: HMONITOR,
-    pub current_dpi: f32,
-    pub render_resources: RenderResources,
-    pub active_color: Color,
-    pub inactive_color: Color,
-    pub animations: Animations,
-    pub effects: Effects,
-    pub last_render_time: Option<time::Instant>,
-    pub last_anim_time: Option<time::Instant>,
-    pub initialize_delay: u64,
-    pub unminimize_delay: u64,
-    pub is_paused: bool,
+    border_window: HWND,
+    tracking_window: HWND,
+    is_active_window: bool,
+    window_rect: RECT,
+    window_padding: i32,
+    render_rect: D2D1_ROUNDED_RECT,
+    border_width: i32,
+    border_offset: i32,
+    border_radius: f32,
+    current_monitor: HMONITOR,
+    current_dpi: f32,
+    render_resources: RenderResources,
+    active_color: Color,
+    inactive_color: Color,
+    animations: Animations,
+    effects: Effects,
+    last_render_time: Option<time::Instant>,
+    last_anim_time: Option<time::Instant>,
+    initialize_delay: u64,
+    unminimize_delay: u64,
+    is_paused: bool,
 }
 
 impl WindowBorder {
@@ -78,7 +78,7 @@ impl WindowBorder {
         }
     }
 
-    pub fn create_window(&mut self) -> windows::core::Result<()> {
+    pub fn create_window(&mut self) -> windows::core::Result<HWND> {
         let title: Vec<u16> = format!(
             "tacky-border | {} | {:?}\0",
             get_window_title(self.tracking_window).unwrap_or_default(),
@@ -104,7 +104,7 @@ impl WindowBorder {
             )?;
         }
 
-        Ok(())
+        Ok(self.border_window)
     }
 
     pub fn init(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
@@ -140,17 +140,16 @@ impl WindowBorder {
                     self.border_width,
                     self.window_padding,
                     self.border_window,
+                    self.effects.is_enabled(),
                 )
                 .context("could not create render resources in init()")?;
 
-            let d2d_context = self.render_resources.d2d_context()?;
-            let border_bitmap = self.render_resources.border_bitmap()?;
-            let mask_bitmap = self.render_resources.mask_bitmap()?;
-
             // Initialize the command lists used to draw effects
             self.effects
-                .create_command_lists_if_enabled(d2d_context, border_bitmap, mask_bitmap)
+                .create_command_lists_if_enabled(&self.render_resources)
                 .context("could not create command list")?;
+
+            let d2d_context = self.render_resources.d2d_context()?;
 
             // We will adjust opacity later. For now, we set it to 0.
             let brush_properties = D2D1_BRUSH_PROPERTIES {
@@ -206,13 +205,15 @@ impl WindowBorder {
 
             // TODO: testing; remove when done
             self.render_resources
-                .update(self.current_monitor, self.border_width, self.window_padding)
+                .update(
+                    self.current_monitor,
+                    self.border_width,
+                    self.window_padding,
+                    self.effects.is_enabled(),
+                )
                 .log_if_err();
-            let d2d_context = self.render_resources.d2d_context()?;
-            let border_bitmap = self.render_resources.border_bitmap()?;
-            let mask_bitmap = self.render_resources.mask_bitmap()?;
             self.effects
-                .create_command_lists_if_enabled(d2d_context, border_bitmap, mask_bitmap)
+                .create_command_lists_if_enabled(&self.render_resources)
                 .context("could not create effects command list")?;
 
             let mut message = MSG::default();
@@ -481,11 +482,6 @@ impl WindowBorder {
                 false => (&self.active_color, &self.inactive_color),
             };
 
-            // Set the d2d_context target to the target_bitmap
-            let target_bitmap = self.render_resources.target_bitmap()?;
-            d2d_context.SetTarget(target_bitmap);
-
-            // Draw to the target_bitmap
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
@@ -733,28 +729,17 @@ impl WindowBorder {
                 self.border_width,
                 self.window_padding,
                 self.border_window,
+                self.effects.is_enabled(),
             ) {
                 error!("could not recreate render target; exiting thread: {err_2}");
                 self.cleanup_and_queue_exit();
                 return;
             }
 
-            // This really should not fail. If it does, I messed up somewhere.
-            let (Ok(d2d_context), Ok(border_bitmap), Ok(mask_bitmap)) = (
-                self.render_resources.d2d_context(),
-                self.render_resources.border_bitmap(),
-                self.render_resources.mask_bitmap(),
-            ) else {
-                error!("could not get render resources even after recreating them; exiting thread");
-                self.cleanup_and_queue_exit();
-                return;
-            };
-
-            if let Err(err_3) = self.effects.create_command_lists_if_enabled(
-                d2d_context,
-                border_bitmap,
-                mask_bitmap,
-            ) {
+            if let Err(err_3) = self
+                .effects
+                .create_command_lists_if_enabled(&self.render_resources)
+            {
                 error!("could not recreate effects command lists; exiting thread: {err_3}");
                 self.cleanup_and_queue_exit();
                 return;
@@ -847,25 +832,18 @@ impl WindowBorder {
                     self.current_monitor = new_monitor;
 
                     self.render_resources
-                        .update(self.current_monitor, self.border_width, self.window_padding)
+                        .update(
+                            self.current_monitor,
+                            self.border_width,
+                            self.window_padding,
+                            self.effects.is_enabled(),
+                        )
                         .context("could not update render resources")
                         .log_if_err();
 
-                    if let (Ok(d2d_context), Ok(border_bitmap), Ok(mask_bitmap)) = (
-                        self.render_resources.d2d_context(),
-                        self.render_resources.border_bitmap(),
-                        self.render_resources.mask_bitmap(),
-                    ) {
-                        self.effects
-                            .create_command_lists_if_enabled(
-                                d2d_context,
-                                border_bitmap,
-                                mask_bitmap,
-                            )
-                            .log_if_err();
-                    } else {
-                        error!("could not get resources to create effects command list");
-                    }
+                    self.effects
+                        .create_command_lists_if_enabled(&self.render_resources)
+                        .log_if_err();
 
                     let new_dpi = match get_dpi_for_window(self.tracking_window) {
                         Ok(dpi) => dpi as f32,
@@ -1089,7 +1067,7 @@ impl WindowBorder {
                     }
                 };
 
-                let Some(ref d2d_context) = self.render_resources.d2d_context else {
+                let Ok(d2d_context) = self.render_resources.d2d_context() else {
                     error!("render target has not been set yet");
                     return LRESULT(0);
                 };
