@@ -118,7 +118,7 @@ impl Drop for UnixStream {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct UnixDomainSocket(SOCKET);
+pub struct UnixDomainSocket(pub SOCKET);
 
 unsafe impl Send for UnixDomainSocket {}
 unsafe impl Sync for UnixDomainSocket {}
