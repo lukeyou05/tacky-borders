@@ -271,9 +271,11 @@ impl Effects {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct EffectParamsConfig {
     #[serde(alias = "type")]
     effect_type: EffectType,
+    #[serde(alias = "radius")]
     #[serde(default = "serde_default_f32::<8>")]
     std_dev: f32,
     #[serde(default = "serde_default_f32::<1>")]
