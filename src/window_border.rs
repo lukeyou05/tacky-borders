@@ -278,49 +278,56 @@ impl WindowBorder {
         self.animations = animations_config.to_animations();
         self.effects = effects_config.to_effects();
 
+        self.render_resources.renderer_type = config.renderer_type;
+
         // Try to find how much window padding we should add
-        let max_active_padding = self
-            .effects
-            .active
-            .iter()
-            .max_by_key(|params| {
-                // Try to find the effect params with the largest required padding
-                let max_std_dev = params.std_dev;
-                let max_translation = (params.translation.x).max(params.translation.y);
+        self.window_padding = match self.render_resources.renderer_type {
+            RendererType::New => {
+                let max_active_padding = self
+                    .effects
+                    .active
+                    .iter()
+                    .max_by_key(|params| {
+                        // Try to find the effect params with the largest required padding
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
 
-                ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
-            })
-            .map(|params| {
-                // Now that we found it, go ahead and calculate it as an f32
-                let max_std_dev = params.std_dev;
-                let max_translation = (params.translation.x).max(params.translation.y);
+                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                    })
+                    .map(|params| {
+                        // Now that we found it, go ahead and calculate it as an f32
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
 
-                (max_std_dev * 3.0).ceil() + max_translation.ceil()
-            })
-            .unwrap_or(0.0);
-        let max_inactive_padding = self
-            .effects
-            .inactive
-            .iter()
-            .max_by_key(|params| {
-                // Try to find the effect params with the largest required padding
-                let max_std_dev = params.std_dev;
-                let max_translation = (params.translation.x).max(params.translation.y);
+                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                    })
+                    .unwrap_or(0.0);
+                let max_inactive_padding = self
+                    .effects
+                    .inactive
+                    .iter()
+                    .max_by_key(|params| {
+                        // Try to find the effect params with the largest required padding
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
 
-                // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
-            })
-            .map(|params| {
-                // Now that we found it, go ahead and calculate it as an f32
-                let max_std_dev = params.std_dev;
-                let max_translation = (params.translation.x).max(params.translation.y);
+                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
+                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                    })
+                    .map(|params| {
+                        // Now that we found it, go ahead and calculate it as an f32
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
 
-                // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                (max_std_dev * 3.0).ceil() + max_translation.ceil()
-            })
-            .unwrap_or(0.0);
+                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
+                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                    })
+                    .unwrap_or(0.0);
 
-        self.window_padding = max_active_padding.max(max_inactive_padding).ceil() as i32;
+                max_active_padding.max(max_inactive_padding).ceil() as i32
+            }
+            RendererType::Legacy => 0,
+        };
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
@@ -338,8 +345,6 @@ impl WindowBorder {
         self.unminimize_delay = window_rule
             .unminimize_delay
             .unwrap_or(global.unminimize_delay);
-
-        self.render_resources.renderer_type = config.renderer_type.clone();
 
         Ok(())
     }
@@ -541,21 +546,16 @@ impl WindowBorder {
 
                 let border_width = self.border_width as f32;
                 let border_offset = self.border_offset as f32;
-                let window_padding = self.window_padding as f32;
 
-                // TODO: instead of having to add window_padding here, I should just check the
-                // renderer_type in self.load_from_config before I set window_padding
                 self.render_rect.rect = D2D_RECT_F {
-                    left: border_width / 2.0 - border_offset + window_padding,
-                    top: border_width / 2.0 - border_offset + window_padding,
+                    left: border_width / 2.0 - border_offset,
+                    top: border_width / 2.0 - border_offset,
                     right: (self.window_rect.right - self.window_rect.left) as f32
                         - border_width / 2.0
-                        + border_offset
-                        - window_padding,
+                        + border_offset,
                     bottom: (self.window_rect.bottom - self.window_rect.top) as f32
                         - border_width / 2.0
-                        + border_offset
-                        - window_padding,
+                        + border_offset,
                 };
 
                 unsafe {
@@ -593,7 +593,6 @@ impl WindowBorder {
                         }
                     }
 
-                    // TODO: i dont think this is gonna work. i need to update handle_end_draw_error
                     if let Err(err) = render_target.EndDraw(None, None) {
                         self.handle_end_draw_error(err.clone());
                         return Err(err.into());

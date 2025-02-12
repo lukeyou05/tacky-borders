@@ -38,7 +38,7 @@ pub struct Config {
     pub window_rules: Vec<WindowRule>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum RendererType {
     #[default]
     New,

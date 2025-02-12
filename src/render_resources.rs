@@ -29,12 +29,12 @@ use windows::Win32::Graphics::Gdi::HMONITOR;
 use crate::config::RendererType;
 use crate::{utils::get_monitor_info, APP_STATE};
 
-// TODO: remove the allow(dead_code)
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 pub struct RenderResources {
     new_renderer: Option<NewRenderer>,
     legacy_renderer: Option<LegacyRenderer>,
+    // The renderer_type is actually in the Config, but it's behind a RwLock, so we'll move it here
+    // so we don't have to lock the Config as often.
     pub renderer_type: RendererType,
 }
 
@@ -54,7 +54,6 @@ pub struct NewRenderer {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct LegacyRenderer {
     render_target: ID2D1HwndRenderTarget,
 }
@@ -123,7 +122,7 @@ impl RenderResources {
     ) -> anyhow::Result<()> {
         match self.renderer_type {
             RendererType::New => {
-                self.new_renderer = Some(NewRenderer::create(
+                self.new_renderer = Some(NewRenderer::try_new(
                     current_monitor,
                     border_width,
                     window_padding,
@@ -131,9 +130,8 @@ impl RenderResources {
                     create_extra_bitmaps,
                 )?)
             }
-            // TODO: implement legacy renderer
             RendererType::Legacy => {
-                self.legacy_renderer = Some(LegacyRenderer::create(border_window)?);
+                self.legacy_renderer = Some(LegacyRenderer::try_new(border_window)?);
             }
         }
 
@@ -150,7 +148,8 @@ impl RenderResources {
         match self.renderer_type {
             RendererType::New => {
                 let Some(ref mut new_renderer) = self.new_renderer else {
-                    // dunno what else i could do
+                    // Theoretically this branch shouldn't be reachable, but in case it does, let's
+                    // just panic because there's not much else we can do
                     panic!();
                 };
 
@@ -161,8 +160,9 @@ impl RenderResources {
                     create_extra_bitmaps,
                 )?;
             }
-            // TODO: implement legacy renderer
-            RendererType::Legacy => error!("uh"),
+            // TODO: We already update/resize the buffers in the render() function within
+            // WindowBorder, but I might want to move it here instead?
+            RendererType::Legacy => return Ok(()),
         }
 
         Ok(())
@@ -170,13 +170,13 @@ impl RenderResources {
 }
 
 impl NewRenderer {
-    pub fn create(
+    pub fn try_new(
         current_monitor: HMONITOR,
         border_width: i32,
         window_padding: i32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<NewRenderer> {
+    ) -> anyhow::Result<Self> {
         let d2d_context = unsafe {
             APP_STATE
                 .d2d_device
@@ -266,18 +266,17 @@ impl NewRenderer {
                 .context("d_comp_target.SetRoot()")?;
             d_comp_device.Commit().context("d_comp_device.Commit()")?;
 
-            let (target_bitmap_opt, border_bitmap_opt, mask_bitmap_opt) =
-                NewRenderer::create_bitmaps(
-                    &d2d_context,
-                    &swap_chain,
-                    screen_width,
-                    screen_height,
-                    border_width,
-                    window_padding,
-                    create_extra_bitmaps,
-                )?;
+            let (target_bitmap_opt, border_bitmap_opt, mask_bitmap_opt) = Self::create_bitmaps(
+                &d2d_context,
+                &swap_chain,
+                screen_width,
+                screen_height,
+                border_width,
+                window_padding,
+                create_extra_bitmaps,
+            )?;
 
-            Ok(NewRenderer {
+            Ok(Self {
                 target_bitmap: target_bitmap_opt,
                 border_bitmap: border_bitmap_opt,
                 mask_bitmap: mask_bitmap_opt,
@@ -419,7 +418,7 @@ impl NewRenderer {
         // Supposedly, cloning d2d_context or swap_chain just increases the underlying object's
         // reference count, so it's not actually cloning the object itself. Unfortunately, I need
         // to do it because Rust's borrow checker is a little stupid.
-        (self.target_bitmap, self.border_bitmap, self.mask_bitmap) = NewRenderer::create_bitmaps(
+        (self.target_bitmap, self.border_bitmap, self.mask_bitmap) = Self::create_bitmaps(
             &self.d2d_context,
             &self.swap_chain,
             screen_width,
@@ -434,7 +433,7 @@ impl NewRenderer {
 }
 
 impl LegacyRenderer {
-    fn create(border_window: HWND) -> anyhow::Result<Self> {
+    fn try_new(border_window: HWND) -> anyhow::Result<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
