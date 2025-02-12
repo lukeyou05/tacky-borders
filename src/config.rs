@@ -3,7 +3,7 @@ use crate::colors::ColorConfig;
 use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
-use crate::{display_error_box, reload_borders, APP_STATE};
+use crate::{create_directx_devices, display_error_box, reload_borders, APP_STATE};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -30,10 +30,19 @@ const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 pub struct Config {
     #[serde(default)]
     pub watch_config_changes: bool,
+    #[serde(default)]
+    pub renderer_type: RendererType,
     #[serde(default = "serde_default_global")]
     pub global: Global,
     #[serde(default)]
     pub window_rules: Vec<WindowRule>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+pub enum RendererType {
+    #[default]
+    New,
+    Legacy,
 }
 
 // Show borders even if the config.yaml is completely empty
@@ -251,6 +260,32 @@ impl Config {
                 }
 
                 drop(komorebi_integration);
+
+                let mut d3d11_device = APP_STATE.d3d11_device.write().unwrap();
+                let mut dxgi_device = APP_STATE.dxgi_device.write().unwrap();
+                let mut d2d_device = APP_STATE.d2d_device.write().unwrap();
+
+                // TODO: rn i only check d3d11_device but maybe i should check them all? maybe
+                // should put them into a separate struct? doesnt really matter tho
+                if config.renderer_type == RendererType::New && d3d11_device.is_none() {
+                    let (d3d11_device_new, dxgi_device_new, d2d_device_new) =
+                        create_directx_devices(&APP_STATE.render_factory).unwrap_or_else(|err| {
+                            error!("could not create directx devices: {err}");
+                            println!("could not create directx devices: {err}");
+                            panic!("could not create directx devices: {err}");
+                        });
+                    *d3d11_device = Some(d3d11_device_new);
+                    *dxgi_device = Some(dxgi_device_new);
+                    *d2d_device = Some(d2d_device_new);
+                } else if config.renderer_type == RendererType::Legacy && d3d11_device.is_some() {
+                    *d3d11_device = None;
+                    *dxgi_device = None;
+                    *d2d_device = None;
+                }
+
+                drop(d3d11_device);
+                drop(dxgi_device);
+                drop(d2d_device);
 
                 config
             }

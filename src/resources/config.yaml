@@ -1,6 +1,13 @@
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
 
+# renderer_type: Select the renderer version. Supported value:
+#   - Legacy: A simpler renderer with less developer control. Found in v1.1.0 and below.
+#   - New: A more complex renderer that allows use of new features. Found in v1.2.0 and above.
+#
+# Performance between the two may vary system-to-system, so I leave the choice up to you.
+renderer_type: New
+
 # Global configuration options
 global:
   # border_width: Width of the border (in pixels)
@@ -57,7 +64,7 @@ global:
     stack_color: "#e762b7"
     monocle_color: "#62e793"
     floating_color: "#f5f5a5"
-    enabled: False
+    enabled: True
 
   # animations: Configure animation behavior for window borders
   #   active: Animations for active windows
@@ -100,7 +107,7 @@ global:
         easing: EaseInOutQuad
 
     fps: 60
-    enabled: False
+    enabled: True
 
   # effects: Configure Direct2D effects for the window
   #   active: Effects for active windows
@@ -124,33 +131,33 @@ global:
   #      opacity: 0.5
   #
   # NOTE: These effects GREATLY increase CPU and GPU usage.
-  # I advise against using effects and animations at the same time.
+  # Additionally, you MUST use renderer_type: New or else effects will not appear.
   effects:
     active:
       - type: Shadow
-        std_dev: 32.0
+        radius: 4.0
         opacity: 0.75
         translation:
           x: 0
-          y: 20
+          y: 0
 
       - type: Glow
-        std_dev: 16.0
-        opacity: 0.5
+        radius: 10.0
+        opacity: 1.0
 
     inactive:
       - type: Shadow
-        std_dev: 32.0
+        radius: 4.0
         opacity: 0.75
         translation:
           x: 0
-          y: 20
+          y: 0
 
       - type: Glow
-        std_dev: 16.0
-        opacity: 0.5
+        radius: 10.0
+        opacity: 1.0
 
-    enabled: False
+    enabled: True
 
   # initialize_delay: Time (in ms) before the border appears after opening a new window
   # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
@@ -188,6 +195,11 @@ window_rules:
   - match: Title
     name: "Picture-in-Picture"
     enabled: False
+
+    # TODO: figure out why this doesnt work
+  - match: Title
+    name: "PowerToys.PowerLauncher"
+    enabled: True
 
   # Example rule:
   # - match: Class                   # Match based on Class or Title

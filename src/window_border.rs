@@ -4,15 +4,17 @@ use std::thread;
 use std::time;
 use windows::core::{w, PCWSTR};
 use windows::Foundation::Numerics::Matrix3x2;
+use windows::Win32::Foundation::DXGI_STATUS_OCCLUDED;
 use windows::Win32::Foundation::{
     COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, S_OK, TRUE, WPARAM,
 };
+use windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D_RECT_F,
 };
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1DeviceContext7, D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR,
-    D2D1_ROUNDED_RECT,
+    ID2D1Brush, D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -32,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::animations::{AnimType, AnimVec, Animations};
 use crate::colors::Color;
+use crate::config::RendererType;
 use crate::config::WindowRule;
 use crate::effects::Effects;
 use crate::komorebi::WindowKind;
@@ -135,21 +138,24 @@ impl WindowBorder {
 
             // Initialize render resources
             self.render_resources
-                .create(
+                .init(
                     self.current_monitor,
                     self.border_width,
                     self.window_padding,
                     self.border_window,
                     self.effects.is_enabled(),
                 )
-                .context("could not create render resources in init()")?;
+                .context("could not initialize render resources in init()")?;
 
             // Initialize the command lists used to draw effects
             self.effects
-                .create_command_lists_if_enabled(&self.render_resources)
-                .context("could not create command list")?;
+                .init_command_lists_if_enabled(&self.render_resources)
+                .context("could not initialize command list")?;
 
-            let d2d_context = self.render_resources.d2d_context()?;
+            let render_device: &ID2D1RenderTarget = match self.render_resources.renderer_type {
+                RendererType::New => self.render_resources.d2d_context()?,
+                RendererType::Legacy => self.render_resources.render_target()?,
+            };
 
             // We will adjust opacity later. For now, we set it to 0.
             let brush_properties = D2D1_BRUSH_PROPERTIES {
@@ -165,10 +171,10 @@ impl WindowBorder {
 
             // Initialize the brushes
             self.active_color
-                .init_brush(d2d_context, &self.window_rect, &brush_properties)
+                .init_brush(render_device, &self.window_rect, &brush_properties)
                 .log_if_err();
             self.inactive_color
-                .init_brush(d2d_context, &self.window_rect, &brush_properties)
+                .init_brush(render_device, &self.window_rect, &brush_properties)
                 .log_if_err();
 
             // Update the border's color
@@ -213,8 +219,8 @@ impl WindowBorder {
                 )
                 .log_if_err();
             self.effects
-                .create_command_lists_if_enabled(&self.render_resources)
-                .context("could not create effects command list")?;
+                .init_command_lists_if_enabled(&self.render_resources)
+                .context("could not initialize effects command list")?;
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, None, 0, 0).into() {
@@ -333,6 +339,8 @@ impl WindowBorder {
             .unminimize_delay
             .unwrap_or(global.unminimize_delay);
 
+        self.render_resources.renderer_type = config.renderer_type.clone();
+
         Ok(())
     }
 
@@ -445,79 +453,152 @@ impl WindowBorder {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        if !self
-            .effects
-            .get_current_vec(self.is_active_window)
-            .is_empty()
-        {
-            self.render_with_effects()?;
-            return Ok(());
-        }
-
         self.last_render_time = Some(time::Instant::now());
 
-        let d2d_context = self.render_resources.d2d_context()?;
-
-        let border_width = self.border_width as f32;
-        let border_offset = self.border_offset as f32;
-        let window_padding = self.window_padding as f32;
-
-        self.render_rect.rect = D2D_RECT_F {
-            left: border_width / 2.0 + window_padding - border_offset,
-            top: border_width / 2.0 + window_padding - border_offset,
-            right: (self.window_rect.right - self.window_rect.left) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-            bottom: (self.window_rect.bottom - self.window_rect.top) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-        };
-
-        unsafe {
-            // Determine which color should be drawn on top (for color fade animation)
-            let (bottom_color, top_color) = match self.is_active_window {
-                true => (&self.inactive_color, &self.active_color),
-                false => (&self.active_color, &self.inactive_color),
-            };
-
-            d2d_context.BeginDraw();
-            d2d_context.Clear(None);
-
-            if bottom_color.get_opacity() > Some(0.0) {
-                if let Color::Gradient(gradient) = bottom_color {
-                    gradient.update_start_end_points(&self.window_rect);
+        match self.render_resources.renderer_type {
+            RendererType::New => {
+                if !self
+                    .effects
+                    .get_current_vec(self.is_active_window)
+                    .is_empty()
+                {
+                    self.render_with_effects()?;
+                    return Ok(());
                 }
 
-                match bottom_color.get_brush() {
-                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
-                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                let d2d_context = self.render_resources.d2d_context()?;
+
+                let border_width = self.border_width as f32;
+                let border_offset = self.border_offset as f32;
+                let window_padding = self.window_padding as f32;
+
+                self.render_rect.rect = D2D_RECT_F {
+                    left: border_width / 2.0 + window_padding - border_offset,
+                    top: border_width / 2.0 + window_padding - border_offset,
+                    right: (self.window_rect.right - self.window_rect.left) as f32
+                        - border_width / 2.0
+                        - window_padding
+                        + border_offset,
+                    bottom: (self.window_rect.bottom - self.window_rect.top) as f32
+                        - border_width / 2.0
+                        - window_padding
+                        + border_offset,
+                };
+
+                unsafe {
+                    // Determine which color should be drawn on top (for color fade animation)
+                    let (bottom_color, top_color) = match self.is_active_window {
+                        true => (&self.inactive_color, &self.active_color),
+                        false => (&self.active_color, &self.inactive_color),
+                    };
+
+                    d2d_context.BeginDraw();
+                    d2d_context.Clear(None);
+
+                    if bottom_color.get_opacity() > Some(0.0) {
+                        if let Color::Gradient(gradient) = bottom_color {
+                            gradient.update_start_end_points(&self.window_rect);
+                        }
+
+                        match bottom_color.get_brush() {
+                            Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                            None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                        }
+                    }
+                    if top_color.get_opacity() > Some(0.0) {
+                        if let Color::Gradient(gradient) = top_color {
+                            gradient.update_start_end_points(&self.window_rect);
+                        }
+
+                        match top_color.get_brush() {
+                            Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                            None => debug!("ID2D1Brush for top_color has not been created yet"),
+                        }
+                    }
+
+                    if let Err(err) = d2d_context.EndDraw(None, None) {
+                        self.handle_end_draw_error(err.clone());
+                        return Err(err.into());
+                    }
+
+                    // Present the swap chain buffer
+                    let hresult = self
+                        .render_resources
+                        .swap_chain()?
+                        .Present(1, DXGI_PRESENT::default());
+                    if hresult != S_OK {
+                        return Err(anyhow!("could not present swap_chain: {hresult}"));
+                    }
                 }
             }
-            if top_color.get_opacity() > Some(0.0) {
-                if let Color::Gradient(gradient) = top_color {
-                    gradient.update_start_end_points(&self.window_rect);
+            RendererType::Legacy => {
+                let render_target = self.render_resources.render_target()?;
+
+                let pixel_size = D2D_SIZE_U {
+                    width: (self.window_rect.right - self.window_rect.left) as u32,
+                    height: (self.window_rect.bottom - self.window_rect.top) as u32,
+                };
+
+                let border_width = self.border_width as f32;
+                let border_offset = self.border_offset as f32;
+                let window_padding = self.window_padding as f32;
+
+                // TODO: instead of having to add window_padding here, I should just check the
+                // renderer_type in self.load_from_config before I set window_padding
+                self.render_rect.rect = D2D_RECT_F {
+                    left: border_width / 2.0 - border_offset + window_padding,
+                    top: border_width / 2.0 - border_offset + window_padding,
+                    right: (self.window_rect.right - self.window_rect.left) as f32
+                        - border_width / 2.0
+                        + border_offset
+                        - window_padding,
+                    bottom: (self.window_rect.bottom - self.window_rect.top) as f32
+                        - border_width / 2.0
+                        + border_offset
+                        - window_padding,
+                };
+
+                unsafe {
+                    render_target
+                        .Resize(&pixel_size)
+                        .context("could not resize render_target")?;
+
+                    // Determine which color should be drawn on top (for color fade animation)
+                    let (bottom_color, top_color) = match self.is_active_window {
+                        true => (&self.inactive_color, &self.active_color),
+                        false => (&self.active_color, &self.inactive_color),
+                    };
+
+                    render_target.BeginDraw();
+                    render_target.Clear(None);
+
+                    if bottom_color.get_opacity() > Some(0.0) {
+                        if let Color::Gradient(gradient) = bottom_color {
+                            gradient.update_start_end_points(&self.window_rect);
+                        }
+
+                        match bottom_color.get_brush() {
+                            Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
+                            None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                        }
+                    }
+                    if top_color.get_opacity() > Some(0.0) {
+                        if let Color::Gradient(gradient) = top_color {
+                            gradient.update_start_end_points(&self.window_rect);
+                        }
+
+                        match top_color.get_brush() {
+                            Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
+                            None => debug!("ID2D1Brush for top_color has not been created yet"),
+                        }
+                    }
+
+                    // TODO: i dont think this is gonna work. i need to update handle_end_draw_error
+                    if let Err(err) = render_target.EndDraw(None, None) {
+                        self.handle_end_draw_error(err.clone());
+                        return Err(err.into());
+                    }
                 }
-
-                match top_color.get_brush() {
-                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
-                    None => debug!("ID2D1Brush for top_color has not been created yet"),
-                }
-            }
-
-            if let Err(err) = d2d_context.EndDraw(None, None) {
-                self.handle_end_draw_error(err.clone());
-                return Err(err.into());
-            }
-
-            // Present the swap chain buffer
-            let hresult = self
-                .render_resources
-                .swap_chain()?
-                .Present(1, DXGI_PRESENT::default());
-            if hresult != S_OK {
-                return Err(anyhow!("could not present swap_chain: {hresult}"));
             }
         }
 
@@ -525,8 +606,6 @@ impl WindowBorder {
     }
 
     fn render_with_effects(&mut self) -> anyhow::Result<()> {
-        self.last_render_time = Some(time::Instant::now());
-
         let d2d_context = self.render_resources.d2d_context()?;
 
         let border_width = self.border_width as f32;
@@ -675,7 +754,8 @@ impl WindowBorder {
                 .render_resources
                 .swap_chain()?
                 .Present(1, DXGI_PRESENT::default());
-            if hresult != S_OK {
+            // TODO: handle occluded error
+            if hresult != S_OK && hresult != DXGI_STATUS_OCCLUDED {
                 return Err(anyhow!("could not present swap_chain: {hresult}"));
             }
         }
@@ -683,16 +763,17 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn draw_rectangle(&self, d2d_context: &ID2D1DeviceContext7, brush: &ID2D1Brush) {
+    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
+    fn draw_rectangle(&self, render_device: &ID2D1RenderTarget, brush: &ID2D1Brush) {
         unsafe {
             match self.border_radius {
-                0.0 => d2d_context.DrawRectangle(
+                0.0 => render_device.DrawRectangle(
                     &self.render_rect.rect,
                     brush,
                     self.border_width as f32,
                     None,
                 ),
-                _ => d2d_context.DrawRoundedRectangle(
+                _ => render_device.DrawRoundedRectangle(
                     &self.render_rect,
                     brush,
                     self.border_width as f32,
@@ -702,17 +783,17 @@ impl WindowBorder {
         }
     }
 
-    // Used with render_with_effects()
+    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
     fn fill_rectangle(
         &self,
         rounded_rect: &D2D1_ROUNDED_RECT,
-        d2d_context: &ID2D1DeviceContext7,
+        render_device: &ID2D1RenderTarget,
         brush: &ID2D1Brush,
     ) {
         unsafe {
             match self.border_radius {
-                0.0 => d2d_context.FillRectangle(&rounded_rect.rect, brush),
-                _ => d2d_context.FillRoundedRectangle(rounded_rect, brush),
+                0.0 => render_device.FillRectangle(&rounded_rect.rect, brush),
+                _ => render_device.FillRoundedRectangle(rounded_rect, brush),
             }
         }
     }
@@ -724,7 +805,7 @@ impl WindowBorder {
             // drivers, changing screen resolution, etc.
             warn!("render target has been lost; attempting to recreate");
 
-            if let Err(err_2) = self.render_resources.create(
+            if let Err(err_2) = self.render_resources.init(
                 self.current_monitor,
                 self.border_width,
                 self.window_padding,
@@ -738,7 +819,7 @@ impl WindowBorder {
 
             if let Err(err_3) = self
                 .effects
-                .create_command_lists_if_enabled(&self.render_resources)
+                .init_command_lists_if_enabled(&self.render_resources)
             {
                 error!("could not recreate effects command lists; exiting thread: {err_3}");
                 self.cleanup_and_queue_exit();
@@ -842,7 +923,7 @@ impl WindowBorder {
                         .log_if_err();
 
                     self.effects
-                        .create_command_lists_if_enabled(&self.render_resources)
+                        .init_command_lists_if_enabled(&self.render_resources)
                         .log_if_err();
 
                     let new_dpi = match get_dpi_for_window(self.tracking_window) {

@@ -6,9 +6,8 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{BOOL, FALSE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D_POINT_2F};
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1DeviceContext7, ID2D1LinearGradientBrush, ID2D1SolidColorBrush,
-    D2D1_BRUSH_PROPERTIES, D2D1_BUFFER_PRECISION_8BPC_UNORM,
-    D2D1_COLOR_INTERPOLATION_MODE_STRAIGHT, D2D1_COLOR_SPACE_SRGB, D2D1_EXTEND_MODE_CLAMP,
+    ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget, ID2D1SolidColorBrush,
+    D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
 };
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
@@ -217,16 +216,17 @@ impl Line {
 }
 
 impl Color {
+    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
     pub fn init_brush(
         &mut self,
-        d2d_context: &ID2D1DeviceContext7,
+        render_device: &ID2D1RenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
     ) -> windows::core::Result<()> {
         match self {
             Color::Solid(solid) => unsafe {
                 let id2d1_brush =
-                    d2d_context.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
+                    render_device.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
                 solid.brush = Some(id2d1_brush);
 
@@ -249,16 +249,13 @@ impl Color {
                     },
                 };
 
-                let gradient_stop_collection = d2d_context.CreateGradientStopCollection(
+                let gradient_stop_collection = render_device.CreateGradientStopCollection(
                     &gradient.gradient_stops,
-                    D2D1_COLOR_SPACE_SRGB,
-                    D2D1_COLOR_SPACE_SRGB,
-                    D2D1_BUFFER_PRECISION_8BPC_UNORM,
+                    D2D1_GAMMA_2_2,
                     D2D1_EXTEND_MODE_CLAMP,
-                    D2D1_COLOR_INTERPOLATION_MODE_STRAIGHT,
                 )?;
 
-                let id2d1_brush = d2d_context.CreateLinearGradientBrush(
+                let id2d1_brush = render_device.CreateLinearGradientBrush(
                     &gradient_properties,
                     Some(brush_properties),
                     &gradient_stop_collection,

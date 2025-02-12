@@ -8,6 +8,7 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{anyhow, Context};
+use config::RendererType;
 use komorebi::KomorebiIntegration;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
@@ -67,9 +68,10 @@ struct AppState {
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
-    device: ID3D11Device,
-    dxgi_device: IDXGIDevice,
-    d2d_device: ID2D1Device7,
+    render_factory: ID2D1Factory8,
+    d3d11_device: RwLock<Option<ID3D11Device>>,
+    dxgi_device: RwLock<Option<IDXGIDevice>>,
+    d2d_device: RwLock<Option<ID2D1Device7>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
 }
 
@@ -109,64 +111,27 @@ impl AppState {
             }
         };
 
-        let factory: ID2D1Factory8 = unsafe {
+        let render_factory: ID2D1Factory8 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
                 error!("could not create ID2D1Factory: {err}");
                 panic!()
             })
         };
 
-        let create_directx_devices = |factory: &ID2D1Factory8| -> anyhow::Result<(
-            ID3D11Device,
-            IDXGIDevice,
-            ID2D1Device7,
-        )> {
-            // NOTE: if you add D3D11_CREATE_DEVICE_DEBUG here, be sure to remove it once done or
-            // else it will crash on computers without the Graphics Tools feature installed
-            let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-
-            let feature_levels = [
-                D3D_FEATURE_LEVEL_11_1,
-                D3D_FEATURE_LEVEL_11_0,
-                D3D_FEATURE_LEVEL_10_1,
-                D3D_FEATURE_LEVEL_10_0,
-                D3D_FEATURE_LEVEL_9_3,
-                D3D_FEATURE_LEVEL_9_2,
-                D3D_FEATURE_LEVEL_9_1,
-            ];
-
-            let mut device_opt: Option<ID3D11Device> = None;
-            let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
-
-            unsafe {
-                D3D11CreateDevice(
-                    None,
-                    D3D_DRIVER_TYPE_HARDWARE,
-                    HMODULE::default(),
-                    creation_flags,
-                    Some(&feature_levels),
-                    D3D11_SDK_VERSION,
-                    Some(&mut device_opt),
-                    Some(&mut feature_level),
-                    None,
-                )
-            }?;
-
-            debug!("directx feature_level: {feature_level:X?}");
-
-            let device = device_opt.context("could not get d3d11 device")?;
-            let dxgi_device: IDXGIDevice = device.cast().context("id3d11device cast")?;
-            let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
-
-            Ok((device, dxgi_device, d2d_device))
+        // TODO: wtf is this ugly af
+        let (d3d11_device, dxgi_device, d2d_device) = match config.renderer_type {
+            RendererType::New => {
+                // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
+                let (d3d11_device, dxgi_device, d2d_device) =
+                    create_directx_devices(&render_factory).unwrap_or_else(|err| {
+                        error!("could not create directx devices: {err}");
+                        println!("could not create directx devices: {err}");
+                        panic!("could not create directx devices: {err}");
+                    });
+                (Some(d3d11_device), Some(dxgi_device), Some(d2d_device))
+            }
+            RendererType::Legacy => (None, None, None),
         };
-        // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
-        let (device, dxgi_device, d2d_device) =
-            create_directx_devices(&factory).unwrap_or_else(|err| {
-                error!("could not create directx devices: {err}");
-                println!("could not create directx devices: {err}");
-                panic!("could not create directx devices: {err}");
-            });
 
         AppState {
             borders: Mutex::new(HashMap::new()),
@@ -175,9 +140,10 @@ impl AppState {
             is_polling_active_window: AtomicBool::new(false),
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
-            device,
-            dxgi_device,
-            d2d_device,
+            render_factory,
+            d3d11_device: RwLock::new(d3d11_device),
+            dxgi_device: RwLock::new(dxgi_device),
+            d2d_device: RwLock::new(d2d_device),
             komorebi_integration: Mutex::new(komorebi_integration),
         }
     }
@@ -189,6 +155,49 @@ impl AppState {
     fn set_polling_active_window(&self, val: bool) {
         self.is_polling_active_window.store(val, Ordering::SeqCst);
     }
+}
+
+fn create_directx_devices(
+    factory: &ID2D1Factory8,
+) -> anyhow::Result<(ID3D11Device, IDXGIDevice, ID2D1Device7)> {
+    // NOTE: if you add D3D11_CREATE_DEVICE_DEBUG here, be sure to remove it once done or
+    // else it will crash on computers without the Graphics Tools feature installed
+    let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+
+    let feature_levels = [
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_3,
+        D3D_FEATURE_LEVEL_9_2,
+        D3D_FEATURE_LEVEL_9_1,
+    ];
+
+    let mut device_opt: Option<ID3D11Device> = None;
+    let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
+
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            creation_flags,
+            Some(&feature_levels),
+            D3D11_SDK_VERSION,
+            Some(&mut device_opt),
+            Some(&mut feature_level),
+            None,
+        )
+    }?;
+
+    debug!("directx feature_level: {feature_level:X?}");
+
+    let device = device_opt.context("could not get d3d11 device")?;
+    let dxgi_device: IDXGIDevice = device.cast().context("id3d11device cast")?;
+    let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+
+    Ok((device, dxgi_device, d2d_device))
 }
 
 fn main() {

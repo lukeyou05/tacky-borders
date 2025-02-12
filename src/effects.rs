@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_OPTIMIZATION,
 };
 
-use crate::config::{serde_default_bool, serde_default_f32};
+use crate::config::{serde_default_bool, serde_default_f32, RendererType};
 use crate::render_resources::RenderResources;
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
@@ -86,12 +86,12 @@ impl Effects {
         }
     }
 
-    pub fn create_command_lists_if_enabled(
+    pub fn init_command_lists_if_enabled(
         &mut self,
         render_resources: &RenderResources,
     ) -> anyhow::Result<()> {
         // If not enabled, then don't create the command lists
-        if !self.is_enabled() {
+        if !self.is_enabled() || render_resources.renderer_type == RendererType::Legacy {
             return Ok(());
         }
 
