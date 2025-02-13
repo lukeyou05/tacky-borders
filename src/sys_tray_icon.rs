@@ -4,7 +4,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::UI::Accessibility::{UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
-use crate::border_config::Config;
+use crate::config::Config;
 use crate::{reload_borders, APP_STATE};
 
 pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon> {

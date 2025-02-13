@@ -6,7 +6,7 @@ use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{BOOL, FALSE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D_POINT_2F};
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1HwndRenderTarget, ID2D1LinearGradientBrush, ID2D1SolidColorBrush,
+    ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget, ID2D1SolidColorBrush,
     D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
 };
@@ -216,16 +216,17 @@ impl Line {
 }
 
 impl Color {
+    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
     pub fn init_brush(
         &mut self,
-        render_target: &ID2D1HwndRenderTarget,
+        renderer: &ID2D1RenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
     ) -> windows::core::Result<()> {
         match self {
             Color::Solid(solid) => unsafe {
                 let id2d1_brush =
-                    render_target.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
+                    renderer.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
                 solid.brush = Some(id2d1_brush);
 
@@ -248,13 +249,13 @@ impl Color {
                     },
                 };
 
-                let gradient_stop_collection = render_target.CreateGradientStopCollection(
+                let gradient_stop_collection = renderer.CreateGradientStopCollection(
                     &gradient.gradient_stops,
                     D2D1_GAMMA_2_2,
                     D2D1_EXTEND_MODE_CLAMP,
                 )?;
 
-                let id2d1_brush = render_target.CreateLinearGradientBrush(
+                let id2d1_brush = renderer.CreateLinearGradientBrush(
                     &gradient_properties,
                     Some(brush_properties),
                     &gradient_stop_collection,
