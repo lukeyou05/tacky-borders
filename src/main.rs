@@ -8,7 +8,7 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{anyhow, Context};
-use config::RendererType;
+use config::RenderBackend;
 use komorebi::KomorebiIntegration;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
@@ -118,19 +118,18 @@ impl AppState {
             })
         };
 
-        // TODO: wtf is this ugly af
-        let (d3d11_device, dxgi_device, d2d_device) = match config.renderer_type {
-            RendererType::New => {
+        let (d3d11_device_opt, dxgi_device_opt, d2d_device_opt) = match config.render_backend {
+            RenderBackend::V2 => {
                 // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
                 let (d3d11_device, dxgi_device, d2d_device) =
                     create_directx_devices(&render_factory).unwrap_or_else(|err| {
                         error!("could not create directx devices: {err}");
-                        println!("could not create directx devices: {err}");
                         panic!("could not create directx devices: {err}");
                     });
+
                 (Some(d3d11_device), Some(dxgi_device), Some(d2d_device))
             }
-            RendererType::Legacy => (None, None, None),
+            RenderBackend::Legacy => (None, None, None),
         };
 
         AppState {
@@ -141,9 +140,9 @@ impl AppState {
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
             render_factory,
-            d3d11_device: RwLock::new(d3d11_device),
-            dxgi_device: RwLock::new(dxgi_device),
-            d2d_device: RwLock::new(d2d_device),
+            d3d11_device: RwLock::new(d3d11_device_opt),
+            dxgi_device: RwLock::new(dxgi_device_opt),
+            d2d_device: RwLock::new(d2d_device_opt),
             komorebi_integration: Mutex::new(komorebi_integration),
         }
     }

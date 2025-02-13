@@ -1,12 +1,12 @@
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
 
-# renderer_type: Select the renderer version. Supported value:
+# rendering_backend: Renderer type. Supported values:
 #   - Legacy: A simpler renderer with less developer control. Found in v1.1.0 and below.
-#   - New: A more complex renderer that allows use of new features. Found in v1.2.0 and above.
+#   - V2: A more complex renderer that allows use of new features. Found in v1.2.0 and above.
 #
 # Performance between the two may vary system-to-system, so I leave the choice up to you.
-renderer_type: New
+rendering_backend: V2
 
 # Global configuration options
 global:
@@ -135,26 +135,26 @@ global:
   effects:
     active:
       - type: Shadow
-        radius: 4.0
-        opacity: 0.75
+        radius: 2.0
+        opacity: 1.0
         translation:
           x: 0
           y: 0
 
       - type: Glow
-        radius: 10.0
+        radius: 8.0
         opacity: 1.0
 
     inactive:
       - type: Shadow
-        radius: 4.0
-        opacity: 0.75
+        radius: 2.0
+        opacity: 1.0
         translation:
           x: 0
           y: 0
 
       - type: Glow
-        radius: 10.0
+        radius: 8.0
         opacity: 1.0
 
     enabled: True

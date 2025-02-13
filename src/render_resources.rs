@@ -26,92 +26,39 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Gdi::HMONITOR;
 
-use crate::config::RendererType;
+use crate::config::RenderBackend;
 use crate::{utils::get_monitor_info, APP_STATE};
 
 #[derive(Debug, Default)]
 pub struct RenderResources {
-    new_renderer: Option<NewRenderer>,
-    legacy_renderer: Option<LegacyRenderer>,
-    // The renderer_type is actually in the Config, but it's behind a RwLock, so we'll move it here
+    v2_render_backend: Option<V2RenderBackend>,
+    legacy_render_backend: Option<LegacyRenderBackend>,
+    // The render_backend is actually in the Config, but it's behind a RwLock, so we'll move it here
     // so we don't have to lock the Config as often.
-    pub renderer_type: RendererType,
+    pub render_backend: RenderBackend,
 }
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct NewRenderer {
-    d2d_context: ID2D1DeviceContext7,
-    swap_chain: IDXGISwapChain1,
-    d_comp_device: IDCompositionDevice4,
-    d_comp_target: IDCompositionTarget,
-    d_comp_visual: IDCompositionVisual2,
+pub struct V2RenderBackend {
+    pub d2d_context: ID2D1DeviceContext7,
+    pub swap_chain: IDXGISwapChain1,
+    pub d_comp_device: IDCompositionDevice4,
+    pub d_comp_target: IDCompositionTarget,
+    pub d_comp_visual: IDCompositionVisual2,
     // target_bitmap will always be created, but the reason I keep it as an Option is because I
     // need to temporarily drop it in update(), and setting it to None is an easy way to do that
-    target_bitmap: Option<ID2D1Bitmap1>,
-    border_bitmap: Option<ID2D1Bitmap1>,
-    mask_bitmap: Option<ID2D1Bitmap1>,
+    pub target_bitmap: Option<ID2D1Bitmap1>,
+    pub border_bitmap: Option<ID2D1Bitmap1>,
+    pub mask_bitmap: Option<ID2D1Bitmap1>,
 }
 
 #[derive(Debug)]
-pub struct LegacyRenderer {
-    render_target: ID2D1HwndRenderTarget,
+pub struct LegacyRenderBackend {
+    pub render_target: ID2D1HwndRenderTarget,
 }
 
 impl RenderResources {
-    // TODO: maybe i should just have it return the whole struct instead because that seems like
-    // it'd be easier to understand for new people reading the code
-    pub fn d2d_context(&self) -> anyhow::Result<&ID2D1DeviceContext7> {
-        Ok(&self
-            .new_renderer
-            .as_ref()
-            .context("d2d_context: could not get new_renderer")?
-            .d2d_context)
-    }
-
-    pub fn render_target(&self) -> anyhow::Result<&ID2D1HwndRenderTarget> {
-        Ok(&self
-            .legacy_renderer
-            .as_ref()
-            .context("render_target: could not get legacy_renderer")?
-            .render_target)
-    }
-
-    pub fn swap_chain(&self) -> anyhow::Result<&IDXGISwapChain1> {
-        Ok(&self
-            .new_renderer
-            .as_ref()
-            .context("swap_chain: could not get new_renderer")?
-            .swap_chain)
-    }
-
-    pub fn target_bitmap(&self) -> anyhow::Result<&ID2D1Bitmap1> {
-        self.new_renderer
-            .as_ref()
-            .context("target_bitmap: could not get new_renderer")?
-            .target_bitmap
-            .as_ref()
-            .context("could not get target_bitmap")
-    }
-
-    pub fn border_bitmap(&self) -> anyhow::Result<&ID2D1Bitmap1> {
-        self.new_renderer
-            .as_ref()
-            .context("border_bitmap: could not get new_renderer")?
-            .border_bitmap
-            .as_ref()
-            .context("could not get border_bitmap")
-    }
-
-    pub fn mask_bitmap(&self) -> anyhow::Result<&ID2D1Bitmap1> {
-        self.new_renderer
-            .as_ref()
-            .context("mask_bitmap: could not get new_renderer")?
-            .mask_bitmap
-            .as_ref()
-            .context("could not get mask_bitmap")
-    }
-
     pub fn init(
         &mut self,
         current_monitor: HMONITOR,
@@ -120,9 +67,9 @@ impl RenderResources {
         border_window: HWND,
         create_extra_bitmaps: bool,
     ) -> anyhow::Result<()> {
-        match self.renderer_type {
-            RendererType::New => {
-                self.new_renderer = Some(NewRenderer::try_new(
+        match self.render_backend {
+            RenderBackend::V2 => {
+                self.v2_render_backend = Some(V2RenderBackend::try_new(
                     current_monitor,
                     border_width,
                     window_padding,
@@ -130,8 +77,8 @@ impl RenderResources {
                     create_extra_bitmaps,
                 )?)
             }
-            RendererType::Legacy => {
-                self.legacy_renderer = Some(LegacyRenderer::try_new(border_window)?);
+            RenderBackend::Legacy => {
+                self.legacy_render_backend = Some(LegacyRenderBackend::try_new(border_window)?);
             }
         }
 
@@ -145,15 +92,15 @@ impl RenderResources {
         window_padding: i32,
         create_extra_bitmaps: bool,
     ) -> anyhow::Result<()> {
-        match self.renderer_type {
-            RendererType::New => {
-                let Some(ref mut new_renderer) = self.new_renderer else {
+        match self.render_backend {
+            RenderBackend::V2 => {
+                let Some(ref mut v2_render_backend) = self.v2_render_backend else {
                     // Theoretically this branch shouldn't be reachable, but in case it does, let's
                     // just panic because there's not much else we can do
                     panic!();
                 };
 
-                new_renderer.update(
+                v2_render_backend.update(
                     current_monitor,
                     border_width,
                     window_padding,
@@ -162,14 +109,26 @@ impl RenderResources {
             }
             // TODO: We already update/resize the buffers in the render() function within
             // WindowBorder, but I might want to move it here instead?
-            RendererType::Legacy => return Ok(()),
+            RenderBackend::Legacy => return Ok(()),
         }
 
         Ok(())
     }
+
+    pub fn v2_render_backend(&self) -> anyhow::Result<&V2RenderBackend> {
+        self.v2_render_backend
+            .as_ref()
+            .context("could not get v2_render_backend")
+    }
+
+    pub fn legacy_render_backend(&self) -> anyhow::Result<&LegacyRenderBackend> {
+        self.legacy_render_backend
+            .as_ref()
+            .context("could not get legacy_render_backend")
+    }
 }
 
-impl NewRenderer {
+impl V2RenderBackend {
     pub fn try_new(
         current_monitor: HMONITOR,
         border_width: i32,
@@ -432,7 +391,7 @@ impl NewRenderer {
     }
 }
 
-impl LegacyRenderer {
+impl LegacyRenderBackend {
     fn try_new(border_window: HWND) -> anyhow::Result<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,

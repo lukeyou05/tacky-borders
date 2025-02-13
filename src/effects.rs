@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_OPTIMIZATION,
 };
 
-use crate::config::{serde_default_bool, serde_default_f32, RendererType};
+use crate::config::{serde_default_bool, serde_default_f32, RenderBackend};
 use crate::render_resources::RenderResources;
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
@@ -70,6 +70,10 @@ impl Effects {
         }
     }
 
+    pub fn should_apply(&self, is_active_window: bool) -> bool {
+        !self.get_current_vec(is_active_window).is_empty()
+    }
+
     pub fn get_current_command_list(
         &self,
         is_active_window: bool,
@@ -91,13 +95,20 @@ impl Effects {
         render_resources: &RenderResources,
     ) -> anyhow::Result<()> {
         // If not enabled, then don't create the command lists
-        if !self.is_enabled() || render_resources.renderer_type == RendererType::Legacy {
+        if !self.is_enabled() || render_resources.render_backend == RenderBackend::Legacy {
             return Ok(());
         }
 
-        let d2d_context = render_resources.d2d_context()?;
-        let border_bitmap = render_resources.border_bitmap()?;
-        let mask_bitmap = render_resources.mask_bitmap()?;
+        let render_backend = render_resources.v2_render_backend()?;
+        let d2d_context = &render_backend.d2d_context;
+        let border_bitmap = render_backend
+            .border_bitmap
+            .as_ref()
+            .context("could not get border_bitmap")?;
+        let mask_bitmap = render_backend
+            .mask_bitmap
+            .as_ref()
+            .context("could not get mask_bitmap")?;
 
         let create_single_list =
             |effect_params_vec: &Vec<EffectParams>| -> anyhow::Result<ID2D1CommandList> {

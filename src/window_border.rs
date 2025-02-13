@@ -34,7 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::animations::{AnimType, AnimVec, Animations};
 use crate::colors::Color;
-use crate::config::RendererType;
+use crate::config::RenderBackend;
 use crate::config::WindowRule;
 use crate::effects::Effects;
 use crate::komorebi::WindowKind;
@@ -152,9 +152,11 @@ impl WindowBorder {
                 .init_command_lists_if_enabled(&self.render_resources)
                 .context("could not initialize command list")?;
 
-            let render_device: &ID2D1RenderTarget = match self.render_resources.renderer_type {
-                RendererType::New => self.render_resources.d2d_context()?,
-                RendererType::Legacy => self.render_resources.render_target()?,
+            let renderer: &ID2D1RenderTarget = match self.render_resources.render_backend {
+                RenderBackend::V2 => &self.render_resources.v2_render_backend()?.d2d_context,
+                RenderBackend::Legacy => {
+                    &self.render_resources.legacy_render_backend()?.render_target
+                }
             };
 
             // We will adjust opacity later. For now, we set it to 0.
@@ -171,10 +173,10 @@ impl WindowBorder {
 
             // Initialize the brushes
             self.active_color
-                .init_brush(render_device, &self.window_rect, &brush_properties)
+                .init_brush(renderer, &self.window_rect, &brush_properties)
                 .log_if_err();
             self.inactive_color
-                .init_brush(render_device, &self.window_rect, &brush_properties)
+                .init_brush(renderer, &self.window_rect, &brush_properties)
                 .log_if_err();
 
             // Update the border's color
@@ -278,11 +280,13 @@ impl WindowBorder {
         self.animations = animations_config.to_animations();
         self.effects = effects_config.to_effects();
 
-        self.render_resources.renderer_type = config.renderer_type;
+        self.render_resources.render_backend = config.render_backend;
 
-        // Try to find how much window padding we should add
-        self.window_padding = match self.render_resources.renderer_type {
-            RendererType::New => {
+        // This padding is used to increase the size of the border window such that effects don't
+        // get clipped. However, effects are not supported by the Legacy rendering backend, so
+        // we'll set the padding to 0 if that's what's being used.
+        self.window_padding = match self.render_resources.render_backend {
+            RenderBackend::V2 => {
                 let max_active_padding = self
                     .effects
                     .active
@@ -326,7 +330,7 @@ impl WindowBorder {
 
                 max_active_padding.max(max_inactive_padding).ceil() as i32
             }
-            RendererType::Legacy => 0,
+            RenderBackend::Legacy => 0,
         };
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
@@ -460,152 +464,154 @@ impl WindowBorder {
     fn render(&mut self) -> anyhow::Result<()> {
         self.last_render_time = Some(time::Instant::now());
 
-        match self.render_resources.renderer_type {
-            RendererType::New => {
-                if !self
-                    .effects
-                    .get_current_vec(self.is_active_window)
-                    .is_empty()
-                {
-                    self.render_with_effects()?;
-                    return Ok(());
+        match self.render_resources.render_backend {
+            RenderBackend::V2 if self.effects.should_apply(self.is_active_window) => {
+                self.render_v2_with_effects()?
+            }
+            RenderBackend::V2 => self.render_v2()?,
+            RenderBackend::Legacy => self.render_legacy()?,
+        }
+
+        Ok(())
+    }
+
+    fn render_legacy(&mut self) -> anyhow::Result<()> {
+        let render_backend = self.render_resources.legacy_render_backend()?;
+        let render_target = &render_backend.render_target;
+
+        let pixel_size = D2D_SIZE_U {
+            width: (self.window_rect.right - self.window_rect.left) as u32,
+            height: (self.window_rect.bottom - self.window_rect.top) as u32,
+        };
+
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
+
+        self.render_rect.rect = D2D_RECT_F {
+            left: border_width / 2.0 - border_offset,
+            top: border_width / 2.0 - border_offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32 - border_width / 2.0
+                + border_offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32 - border_width / 2.0
+                + border_offset,
+        };
+
+        unsafe {
+            render_target
+                .Resize(&pixel_size)
+                .context("could not resize render_target")?;
+
+            // Determine which color should be drawn on top (for color fade animation)
+            let (bottom_color, top_color) = match self.is_active_window {
+                true => (&self.inactive_color, &self.active_color),
+                false => (&self.active_color, &self.inactive_color),
+            };
+
+            render_target.BeginDraw();
+            render_target.Clear(None);
+
+            if bottom_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = bottom_color {
+                    gradient.update_start_end_points(&self.window_rect);
                 }
 
-                let d2d_context = self.render_resources.d2d_context()?;
-
-                let border_width = self.border_width as f32;
-                let border_offset = self.border_offset as f32;
-                let window_padding = self.window_padding as f32;
-
-                self.render_rect.rect = D2D_RECT_F {
-                    left: border_width / 2.0 + window_padding - border_offset,
-                    top: border_width / 2.0 + window_padding - border_offset,
-                    right: (self.window_rect.right - self.window_rect.left) as f32
-                        - border_width / 2.0
-                        - window_padding
-                        + border_offset,
-                    bottom: (self.window_rect.bottom - self.window_rect.top) as f32
-                        - border_width / 2.0
-                        - window_padding
-                        + border_offset,
-                };
-
-                unsafe {
-                    // Determine which color should be drawn on top (for color fade animation)
-                    let (bottom_color, top_color) = match self.is_active_window {
-                        true => (&self.inactive_color, &self.active_color),
-                        false => (&self.active_color, &self.inactive_color),
-                    };
-
-                    d2d_context.BeginDraw();
-                    d2d_context.Clear(None);
-
-                    if bottom_color.get_opacity() > Some(0.0) {
-                        if let Color::Gradient(gradient) = bottom_color {
-                            gradient.update_start_end_points(&self.window_rect);
-                        }
-
-                        match bottom_color.get_brush() {
-                            Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
-                            None => debug!("ID2D1Brush for bottom_color has not been created yet"),
-                        }
-                    }
-                    if top_color.get_opacity() > Some(0.0) {
-                        if let Color::Gradient(gradient) = top_color {
-                            gradient.update_start_end_points(&self.window_rect);
-                        }
-
-                        match top_color.get_brush() {
-                            Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
-                            None => debug!("ID2D1Brush for top_color has not been created yet"),
-                        }
-                    }
-
-                    if let Err(err) = d2d_context.EndDraw(None, None) {
-                        self.handle_end_draw_error(err.clone());
-                        return Err(err.into());
-                    }
-
-                    // Present the swap chain buffer
-                    let hresult = self
-                        .render_resources
-                        .swap_chain()?
-                        .Present(1, DXGI_PRESENT::default());
-                    if hresult != S_OK {
-                        return Err(anyhow!("could not present swap_chain: {hresult}"));
-                    }
+                match bottom_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
+                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            RendererType::Legacy => {
-                let render_target = self.render_resources.render_target()?;
-
-                let pixel_size = D2D_SIZE_U {
-                    width: (self.window_rect.right - self.window_rect.left) as u32,
-                    height: (self.window_rect.bottom - self.window_rect.top) as u32,
-                };
-
-                let border_width = self.border_width as f32;
-                let border_offset = self.border_offset as f32;
-
-                self.render_rect.rect = D2D_RECT_F {
-                    left: border_width / 2.0 - border_offset,
-                    top: border_width / 2.0 - border_offset,
-                    right: (self.window_rect.right - self.window_rect.left) as f32
-                        - border_width / 2.0
-                        + border_offset,
-                    bottom: (self.window_rect.bottom - self.window_rect.top) as f32
-                        - border_width / 2.0
-                        + border_offset,
-                };
-
-                unsafe {
-                    render_target
-                        .Resize(&pixel_size)
-                        .context("could not resize render_target")?;
-
-                    // Determine which color should be drawn on top (for color fade animation)
-                    let (bottom_color, top_color) = match self.is_active_window {
-                        true => (&self.inactive_color, &self.active_color),
-                        false => (&self.active_color, &self.inactive_color),
-                    };
-
-                    render_target.BeginDraw();
-                    render_target.Clear(None);
-
-                    if bottom_color.get_opacity() > Some(0.0) {
-                        if let Color::Gradient(gradient) = bottom_color {
-                            gradient.update_start_end_points(&self.window_rect);
-                        }
-
-                        match bottom_color.get_brush() {
-                            Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
-                            None => debug!("ID2D1Brush for bottom_color has not been created yet"),
-                        }
-                    }
-                    if top_color.get_opacity() > Some(0.0) {
-                        if let Color::Gradient(gradient) = top_color {
-                            gradient.update_start_end_points(&self.window_rect);
-                        }
-
-                        match top_color.get_brush() {
-                            Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
-                            None => debug!("ID2D1Brush for top_color has not been created yet"),
-                        }
-                    }
-
-                    if let Err(err) = render_target.EndDraw(None, None) {
-                        self.handle_end_draw_error(err.clone());
-                        return Err(err.into());
-                    }
+            if top_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = top_color {
+                    gradient.update_start_end_points(&self.window_rect);
                 }
+
+                match top_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(render_target, id2d1_brush),
+                    None => debug!("ID2D1Brush for top_color has not been created yet"),
+                }
+            }
+
+            if let Err(err) = render_target.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
             }
         }
 
         Ok(())
     }
 
-    fn render_with_effects(&mut self) -> anyhow::Result<()> {
-        let d2d_context = self.render_resources.d2d_context()?;
+    fn render_v2(&mut self) -> anyhow::Result<()> {
+        let render_backend = self.render_resources.v2_render_backend()?;
+        let d2d_context = &render_backend.d2d_context;
+
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
+        let window_padding = self.window_padding as f32;
+
+        self.render_rect.rect = D2D_RECT_F {
+            left: border_width / 2.0 + window_padding - border_offset,
+            top: border_width / 2.0 + window_padding - border_offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+        };
+
+        unsafe {
+            // Determine which color should be drawn on top (for color fade animation)
+            let (bottom_color, top_color) = match self.is_active_window {
+                true => (&self.inactive_color, &self.active_color),
+                false => (&self.active_color, &self.inactive_color),
+            };
+
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            if bottom_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = bottom_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match bottom_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                }
+            }
+            if top_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = top_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match top_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    None => debug!("ID2D1Brush for top_color has not been created yet"),
+                }
+            }
+
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
+
+            // Present the swap chain buffer
+            let hresult = render_backend
+                .swap_chain
+                .Present(1, DXGI_PRESENT::default());
+            if hresult != S_OK {
+                return Err(anyhow!("could not present swap_chain: {hresult}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_v2_with_effects(&mut self) -> anyhow::Result<()> {
+        let render_backend = self.render_resources.v2_render_backend()?;
+        let d2d_context = &render_backend.d2d_context;
 
         let border_width = self.border_width as f32;
         let border_offset = self.border_offset as f32;
@@ -644,7 +650,10 @@ impl WindowBorder {
             };
 
             // Set the d2d_context target to the border_bitmap
-            let border_bitmap = self.render_resources.border_bitmap()?;
+            let border_bitmap = render_backend
+                .border_bitmap
+                .as_ref()
+                .context("could not get border_bitmap")?;
             d2d_context.SetTarget(border_bitmap);
 
             // Draw to the border_bitmap
@@ -682,7 +691,10 @@ impl WindowBorder {
             }
 
             // Set the d2d_context target to the mask_bitmap to create an alpha mask
-            let mask_bitmap = self.render_resources.mask_bitmap()?;
+            let mask_bitmap = render_backend
+                .mask_bitmap
+                .as_ref()
+                .context("could not get mask_bitmap")?;
             d2d_context.SetTarget(mask_bitmap);
 
             // Create a rect that covers up to the inner edge of the border
@@ -723,7 +735,10 @@ impl WindowBorder {
             }
 
             // Set d2d_context's target back to the target_bitmap so we can draw to the display
-            let target_bitmap = self.render_resources.target_bitmap()?;
+            let target_bitmap = render_backend
+                .target_bitmap
+                .as_ref()
+                .context("could not get target_bitmap")?;
             d2d_context.SetTarget(target_bitmap);
 
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
@@ -749,9 +764,8 @@ impl WindowBorder {
             }
 
             // Present the swap chain buffer
-            let hresult = self
-                .render_resources
-                .swap_chain()?
+            let hresult = render_backend
+                .swap_chain
                 .Present(1, DXGI_PRESENT::default());
             // TODO: handle occluded error
             if hresult != S_OK && hresult != DXGI_STATUS_OCCLUDED {
@@ -1147,8 +1161,21 @@ impl WindowBorder {
                     }
                 };
 
-                let Ok(d2d_context) = self.render_resources.d2d_context() else {
-                    error!("render target has not been set yet");
+                let Some(renderer): Option<&ID2D1RenderTarget> =
+                    (match self.render_resources.render_backend {
+                        RenderBackend::V2 => self
+                            .render_resources
+                            .v2_render_backend()
+                            .ok()
+                            .map(|backend| &backend.d2d_context as _),
+                        RenderBackend::Legacy => self
+                            .render_resources
+                            .legacy_render_backend()
+                            .ok()
+                            .map(|backend| &backend.render_target as _),
+                    })
+                else {
+                    error!("could not get renderer");
                     return LRESULT(0);
                 };
 
@@ -1158,7 +1185,7 @@ impl WindowBorder {
                 };
 
                 self.active_color
-                    .init_brush(d2d_context, &self.window_rect, &brush_properties)
+                    .init_brush(renderer, &self.window_rect, &brush_properties)
                     .log_if_err();
             }
             WM_PAINT => {

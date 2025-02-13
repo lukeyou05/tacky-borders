@@ -31,7 +31,8 @@ pub struct Config {
     #[serde(default)]
     pub watch_config_changes: bool,
     #[serde(default)]
-    pub renderer_type: RendererType,
+    #[serde(alias = "rendering_backend")]
+    pub render_backend: RenderBackend,
     #[serde(default = "serde_default_global")]
     pub global: Global,
     #[serde(default)]
@@ -39,9 +40,9 @@ pub struct Config {
 }
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
-pub enum RendererType {
+pub enum RenderBackend {
     #[default]
-    New,
+    V2,
     Legacy,
 }
 
@@ -261,31 +262,32 @@ impl Config {
 
                 drop(komorebi_integration);
 
-                let mut d3d11_device = APP_STATE.d3d11_device.write().unwrap();
-                let mut dxgi_device = APP_STATE.dxgi_device.write().unwrap();
-                let mut d2d_device = APP_STATE.d2d_device.write().unwrap();
+                let mut d3d11_device_opt = APP_STATE.d3d11_device.write().unwrap();
+                let mut dxgi_device_opt = APP_STATE.dxgi_device.write().unwrap();
+                let mut d2d_device_opt = APP_STATE.d2d_device.write().unwrap();
 
                 // TODO: rn i only check d3d11_device but maybe i should check them all? maybe
                 // should put them into a separate struct? doesnt really matter tho
-                if config.renderer_type == RendererType::New && d3d11_device.is_none() {
-                    let (d3d11_device_new, dxgi_device_new, d2d_device_new) =
+                if config.render_backend == RenderBackend::V2 && d3d11_device_opt.is_none() {
+                    let (d3d11_device, dxgi_device, d2d_device) =
                         create_directx_devices(&APP_STATE.render_factory).unwrap_or_else(|err| {
                             error!("could not create directx devices: {err}");
-                            println!("could not create directx devices: {err}");
                             panic!("could not create directx devices: {err}");
                         });
-                    *d3d11_device = Some(d3d11_device_new);
-                    *dxgi_device = Some(dxgi_device_new);
-                    *d2d_device = Some(d2d_device_new);
-                } else if config.renderer_type == RendererType::Legacy && d3d11_device.is_some() {
-                    *d3d11_device = None;
-                    *dxgi_device = None;
-                    *d2d_device = None;
+                    *d3d11_device_opt = Some(d3d11_device);
+                    *dxgi_device_opt = Some(dxgi_device);
+                    *d2d_device_opt = Some(d2d_device);
+                } else if config.render_backend == RenderBackend::Legacy
+                    && d3d11_device_opt.is_some()
+                {
+                    *d3d11_device_opt = None;
+                    *dxgi_device_opt = None;
+                    *d2d_device_opt = None;
                 }
 
-                drop(d3d11_device);
-                drop(dxgi_device);
-                drop(d2d_device);
+                drop(d3d11_device_opt);
+                drop(dxgi_device_opt);
+                drop(d2d_device_opt);
 
                 config
             }

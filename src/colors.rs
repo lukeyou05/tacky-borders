@@ -219,14 +219,14 @@ impl Color {
     // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
     pub fn init_brush(
         &mut self,
-        render_device: &ID2D1RenderTarget,
+        renderer: &ID2D1RenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
     ) -> windows::core::Result<()> {
         match self {
             Color::Solid(solid) => unsafe {
                 let id2d1_brush =
-                    render_device.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
+                    renderer.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
                 solid.brush = Some(id2d1_brush);
 
@@ -249,13 +249,13 @@ impl Color {
                     },
                 };
 
-                let gradient_stop_collection = render_device.CreateGradientStopCollection(
+                let gradient_stop_collection = renderer.CreateGradientStopCollection(
                     &gradient.gradient_stops,
                     D2D1_GAMMA_2_2,
                     D2D1_EXTEND_MODE_CLAMP,
                 )?;
 
-                let id2d1_brush = render_device.CreateLinearGradientBrush(
+                let id2d1_brush = renderer.CreateLinearGradientBrush(
                     &gradient_properties,
                     Some(brush_properties),
                     &gradient_stop_collection,
