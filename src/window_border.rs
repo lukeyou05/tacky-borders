@@ -6,7 +6,7 @@ use crate::utils::{
     are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
     is_rect_visible, is_window_minimized, is_window_visible, post_message_w, LogIfErr,
     WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE,
-    WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
+    WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_SHOWUNCLOAKED,
 };
 use crate::APP_STATE;
 use anyhow::{anyhow, Context};
@@ -34,13 +34,13 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
-    SetWindowPos, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, GW_HWNDPREV,
-    HWND_TOP, LWA_ALPHA, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
-    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, WM_CREATE,
-    WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    SetWindowPos, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, LWA_ALPHA, MSG,
+    SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW,
+    SWP_NOSENDCHANGING, SWP_SHOWWINDOW, WM_CREATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED,
+    WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    WS_POPUP,
 };
 
 #[derive(Debug, Default)]
@@ -84,7 +84,7 @@ impl WindowBorder {
 
         unsafe {
             self.border_window = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 w!("border"),
                 PCWSTR(title.as_ptr()),
                 WS_POPUP | WS_DISABLED,
@@ -92,7 +92,7 @@ impl WindowBorder {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                None,
+                Some(self.tracking_window),
                 None,
                 None,
                 Some(ptr::addr_of!(*self) as _),
@@ -314,28 +314,17 @@ impl WindowBorder {
 
     fn update_position(&mut self, other_flags: Option<SET_WINDOW_POS_FLAGS>) -> anyhow::Result<()> {
         unsafe {
-            // Get the hwnd above the tracking hwnd so we can place the border window in between
-            let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
-
-            let mut swp_flags = SWP_NOSENDCHANGING
-                | SWP_NOACTIVATE
-                | SWP_NOREDRAW
-                | other_flags.unwrap_or_default();
-
-            // If hwnd_above_tracking is the window border itself, we have what we want and there's
-            // no need to change the z-order (plus it results in an error if we try it).
-            if hwnd_above_tracking == Ok(self.border_window) {
-                swp_flags |= SWP_NOZORDER;
-            }
-
             if let Err(e) = SetWindowPos(
                 self.border_window,
-                Some(hwnd_above_tracking.unwrap_or(HWND_TOP)),
+                None,
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
                 self.window_rect.bottom - self.window_rect.top,
-                swp_flags,
+                SWP_NOSENDCHANGING
+                    | SWP_NOACTIVATE
+                    | SWP_NOREDRAW
+                    | other_flags.unwrap_or_default(),
             )
             .context(format!(
                 "could not set window position for {:?}",
@@ -590,12 +579,6 @@ impl WindowBorder {
                 if should_render {
                     self.render().log_if_err();
                 }
-            }
-            // EVENT_OBJECT_REORDER
-            WM_APP_REORDER => {
-                // If something changes the z-order of windows, it may put the border window behind
-                // the tracking window, so we update the border's position here when that happens
-                self.update_position(None).log_if_err();
             }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
