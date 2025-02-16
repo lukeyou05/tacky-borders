@@ -26,13 +26,14 @@ use crate::window_border::WindowBorder;
 use crate::APP_STATE;
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
-pub const WM_APP_FOREGROUND: u32 = WM_APP + 1;
-pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 2;
-pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 3;
-pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 4;
-pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 5;
-pub const WM_APP_ANIMATE: u32 = WM_APP + 6;
-pub const WM_APP_KOMOREBI: u32 = WM_APP + 7;
+pub const WM_APP_REORDER: u32 = WM_APP + 1;
+pub const WM_APP_FOREGROUND: u32 = WM_APP + 2;
+pub const WM_APP_SHOWUNCLOAKED: u32 = WM_APP + 3;
+pub const WM_APP_HIDECLOAKED: u32 = WM_APP + 4;
+pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
+pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
+pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
+pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 
 pub trait LogIfErr {
     fn log_if_err(&self);

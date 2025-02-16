@@ -5,7 +5,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
-    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
+    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR,
     OBJID_WINDOW,
 };
@@ -14,7 +14,7 @@ use crate::utils::{
     destroy_border_for_window, get_border_for_window, get_foreground_window,
     hide_border_for_window, is_window_visible, post_message_w, send_notify_message_w,
     show_border_for_window, LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
-    WM_APP_MINIMIZESTART,
+    WM_APP_MINIMIZESTART, WM_APP_REORDER,
 };
 use crate::APP_STATE;
 
@@ -42,6 +42,17 @@ pub extern "system" fn process_win_event(
                 send_notify_message_w(border, WM_APP_LOCATIONCHANGE, WPARAM(0), LPARAM(0))
                     .context("EVENT_OBJECT_LOCATIONCHANGE")
                     .log_if_err();
+            }
+        }
+        EVENT_OBJECT_REORDER => {
+            // Send reorder messages to all the border windows
+            for value in APP_STATE.borders.lock().unwrap().values() {
+                let border_window = HWND(*value as _);
+                if is_window_visible(border_window) {
+                    post_message_w(Some(border_window), WM_APP_REORDER, WPARAM(0), LPARAM(0))
+                        .context("EVENT_OBJECT_REORDER")
+                        .log_if_err();
+                }
             }
         }
         // Neither the HWND passed by this event nor the one returned by GetForegroundWindow() are
