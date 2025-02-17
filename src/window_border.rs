@@ -1,38 +1,27 @@
-use crate::animations::{self, AnimType, AnimVec, Animations};
-use crate::border_config::WindowRule;
-use crate::colors::Color;
-use crate::komorebi::WindowKind;
-use crate::utils::{
-    are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
-    is_rect_visible, is_window_minimized, is_window_visible, post_message_w, LogIfErr,
-    WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE,
-    WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
-};
-use crate::APP_STATE;
 use anyhow::{anyhow, Context};
 use std::ptr;
 use std::thread;
 use std::time;
 use windows::core::{w, PCWSTR};
 use windows::Foundation::Numerics::Matrix3x2;
+use windows::Win32::Foundation::DXGI_STATUS_OCCLUDED;
 use windows::Win32::Foundation::{
-    COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
+    COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, S_OK, TRUE, WPARAM,
 };
+use windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U;
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
+    D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D_RECT_F,
 };
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1HwndRenderTarget, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BRUSH_PROPERTIES,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
-    D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_ROUNDED_RECT,
+    ID2D1Brush, D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
 };
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
-use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect};
+use windows::Win32::Graphics::Dxgi::DXGI_PRESENT;
+use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect, HMONITOR};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
     GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
@@ -43,26 +32,45 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
+use crate::animations::{AnimType, AnimVec, Animations};
+use crate::colors::Color;
+use crate::config::RenderBackend;
+use crate::config::WindowRule;
+use crate::effects::Effects;
+use crate::komorebi::WindowKind;
+use crate::render_resources::RenderResources;
+use crate::utils::{
+    are_rects_same_size, get_dpi_for_window, get_window_rule, get_window_title, has_native_border,
+    is_rect_visible, is_window_minimized, is_window_visible, monitor_from_window, post_message_w,
+    LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
+    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
+    WM_APP_SHOWUNCLOAKED,
+};
+use crate::APP_STATE;
+
 #[derive(Debug, Default)]
 pub struct WindowBorder {
-    pub border_window: HWND,
-    pub tracking_window: HWND,
-    pub is_active_window: bool,
-    pub window_rect: RECT,
-    pub border_width: i32,
-    pub border_offset: i32,
-    pub border_radius: f32,
-    pub current_dpi: f32,
-    pub render_target: Option<ID2D1HwndRenderTarget>,
-    pub rounded_rect: D2D1_ROUNDED_RECT,
-    pub active_color: Color,
-    pub inactive_color: Color,
-    pub animations: Animations,
-    pub last_render_time: Option<time::Instant>,
-    pub last_anim_time: Option<time::Instant>,
-    pub initialize_delay: u64,
-    pub unminimize_delay: u64,
-    pub is_paused: bool,
+    border_window: HWND,
+    tracking_window: HWND,
+    is_active_window: bool,
+    window_rect: RECT,
+    window_padding: i32,
+    render_rect: D2D1_ROUNDED_RECT,
+    border_width: i32,
+    border_offset: i32,
+    border_radius: f32,
+    current_monitor: HMONITOR,
+    current_dpi: f32,
+    render_resources: RenderResources,
+    active_color: Color,
+    inactive_color: Color,
+    animations: Animations,
+    effects: Effects,
+    last_render_time: Option<time::Instant>,
+    last_anim_time: Option<time::Instant>,
+    initialize_delay: u64,
+    unminimize_delay: u64,
+    is_paused: bool,
 }
 
 impl WindowBorder {
@@ -73,7 +81,7 @@ impl WindowBorder {
         }
     }
 
-    pub fn create_window(&mut self) -> windows::core::Result<()> {
+    pub fn create_window(&mut self) -> windows::core::Result<HWND> {
         let title: Vec<u16> = format!(
             "tacky-border | {} | {:?}\0",
             get_window_title(self.tracking_window).unwrap_or_default(),
@@ -99,7 +107,7 @@ impl WindowBorder {
             )?;
         }
 
-        Ok(())
+        Ok(self.border_window)
     }
 
     pub fn init(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
@@ -128,9 +136,50 @@ impl WindowBorder {
             SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
                 .context("could not set LWA_ALPHA")?;
 
-            self.create_render_resources()
-                .context("could not create render resources in init()")?;
+            // Initialize render resources
+            self.render_resources
+                .init(
+                    self.current_monitor,
+                    self.border_width,
+                    self.window_padding,
+                    self.border_window,
+                    self.effects.is_enabled(),
+                )
+                .context("could not initialize render resources in init()")?;
 
+            // Initialize the command lists used to draw effects
+            self.effects
+                .init_command_lists_if_enabled(&self.render_resources)
+                .context("could not initialize command list")?;
+
+            let renderer: &ID2D1RenderTarget = match self.render_resources.render_backend {
+                RenderBackend::V2 => &self.render_resources.v2_render_backend()?.d2d_context,
+                RenderBackend::Legacy => {
+                    &self.render_resources.legacy_render_backend()?.render_target
+                }
+            };
+
+            // We will adjust opacity later. For now, we set it to 0.
+            let brush_properties = D2D1_BRUSH_PROPERTIES {
+                opacity: 0.0,
+                transform: Matrix3x2::identity(),
+            };
+
+            self.render_rect = D2D1_ROUNDED_RECT {
+                rect: Default::default(),
+                radiusX: self.border_radius,
+                radiusY: self.border_radius,
+            };
+
+            // Initialize the brushes
+            self.active_color
+                .init_brush(renderer, &self.window_rect, &brush_properties)
+                .log_if_err();
+            self.inactive_color
+                .init_brush(renderer, &self.window_rect, &brush_properties)
+                .log_if_err();
+
+            // Update the border's color
             self.update_color(Some(self.initialize_delay)).log_if_err();
             self.update_window_rect().log_if_err();
 
@@ -146,7 +195,8 @@ impl WindowBorder {
                 self.render().log_if_err();
             }
 
-            animations::set_timer_if_anims_enabled(self);
+            self.animations
+                .set_timer_if_enabled(self.border_window, &mut self.last_anim_time);
 
             // Handle the case where the tracking window is already minimized
             // TODO: maybe put this in a better spot but idk where
@@ -160,6 +210,19 @@ impl WindowBorder {
                 .context("could not post WM_APP_MINIMIZESTART message in init()")
                 .log_if_err();
             }
+
+            // TODO: testing; remove when done
+            self.render_resources
+                .update(
+                    self.current_monitor,
+                    self.border_width,
+                    self.window_padding,
+                    self.effects.is_enabled(),
+                )
+                .log_if_err();
+            self.effects
+                .init_command_lists_if_enabled(&self.render_resources)
+                .context("could not initialize effects command list")?;
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, None, 0, 0).into() {
@@ -194,19 +257,18 @@ impl WindowBorder {
             .animations
             .as_ref()
             .unwrap_or(&global.animations);
+        let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
 
         self.active_color = active_color_config.to_color(true);
         self.inactive_color = inactive_color_config.to_color(false);
 
-        self.current_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
-            0.0 => {
-                self.exit_border_thread();
-                return Err(anyhow!(
-                    "received invalid dpi of 0 from GetDpiForWindow for {:?}",
-                    self.tracking_window
-                ));
+        self.current_monitor = monitor_from_window(self.tracking_window);
+        self.current_dpi = match get_dpi_for_window(self.tracking_window) {
+            Ok(dpi) => dpi as f32,
+            Err(err) => {
+                self.cleanup_and_queue_exit();
+                return Err(anyhow!("could not get dpi for window: {err}"));
             }
-            valid_dpi => valid_dpi,
         };
 
         // Adjust the border width and radius based on the window/monitor dpi
@@ -216,6 +278,60 @@ impl WindowBorder {
             radius_config.to_radius(self.border_width, self.current_dpi, self.tracking_window);
 
         self.animations = animations_config.to_animations();
+        self.effects = effects_config.to_effects();
+
+        self.render_resources.render_backend = config.render_backend;
+
+        // This padding is used to increase the size of the border window such that effects don't
+        // get clipped. However, effects are not supported by the Legacy rendering backend, so
+        // we'll set the padding to 0 if that's what's being used.
+        self.window_padding = match self.render_resources.render_backend {
+            RenderBackend::V2 => {
+                let max_active_padding = self
+                    .effects
+                    .active
+                    .iter()
+                    .max_by_key(|params| {
+                        // Try to find the effect params with the largest required padding
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
+
+                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                    })
+                    .map(|params| {
+                        // Now that we found it, go ahead and calculate it as an f32
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
+
+                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                    })
+                    .unwrap_or(0.0);
+                let max_inactive_padding = self
+                    .effects
+                    .inactive
+                    .iter()
+                    .max_by_key(|params| {
+                        // Try to find the effect params with the largest required padding
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
+
+                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
+                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                    })
+                    .map(|params| {
+                        // Now that we found it, go ahead and calculate it as an f32
+                        let max_std_dev = params.std_dev;
+                        let max_translation = (params.translation.x).max(params.translation.y);
+
+                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
+                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                    })
+                    .unwrap_or(0.0);
+
+                max_active_padding.max(max_inactive_padding).ceil() as i32
+            }
+            RenderBackend::Legacy => 0,
+        };
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
@@ -237,55 +353,6 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn create_render_resources(&mut self) -> anyhow::Result<()> {
-        let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
-            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_UNKNOWN,
-                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            ..Default::default()
-        };
-        let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
-            hwnd: self.border_window,
-            pixelSize: Default::default(),
-            presentOptions: D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS | D2D1_PRESENT_OPTIONS_IMMEDIATELY,
-        };
-        // We will adjust opacity later. For now, we set it to 0.
-        let brush_properties = D2D1_BRUSH_PROPERTIES {
-            opacity: 0.0,
-            transform: Matrix3x2::identity(),
-        };
-
-        self.rounded_rect = D2D1_ROUNDED_RECT {
-            rect: Default::default(),
-            radiusX: self.border_radius,
-            radiusY: self.border_radius,
-        };
-
-        unsafe {
-            let render_target = APP_STATE.render_factory.CreateHwndRenderTarget(
-                &render_target_properties,
-                &hwnd_render_target_properties,
-            )?;
-
-            render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-            self.active_color
-                .init_brush(&render_target, &self.window_rect, &brush_properties)
-                .log_if_err();
-            self.inactive_color
-                .init_brush(&render_target, &self.window_rect, &brush_properties)
-                .log_if_err();
-
-            self.render_target = Some(render_target);
-        }
-
-        Ok(())
-    }
-
     fn update_window_rect(&mut self) -> anyhow::Result<()> {
         if let Err(e) = unsafe {
             DwmGetWindowAttribute(
@@ -299,15 +366,16 @@ impl WindowBorder {
                 self.tracking_window
             ))
         } {
-            self.exit_border_thread();
+            self.cleanup_and_queue_exit();
             return Err(e);
         }
 
-        // Make space for the border
-        self.window_rect.top -= self.border_width;
-        self.window_rect.left -= self.border_width;
-        self.window_rect.right += self.border_width;
-        self.window_rect.bottom += self.border_width;
+        let adjustment = self.border_width + self.window_padding;
+        // Make space for the border + padding
+        self.window_rect.top -= adjustment;
+        self.window_rect.left -= adjustment;
+        self.window_rect.right += adjustment;
+        self.window_rect.bottom += adjustment;
 
         Ok(())
     }
@@ -341,7 +409,7 @@ impl WindowBorder {
                 "could not set window position for {:?}",
                 self.tracking_window
             )) {
-                self.exit_border_thread();
+                self.cleanup_and_queue_exit();
                 return Err(e);
             }
         }
@@ -352,11 +420,15 @@ impl WindowBorder {
         self.is_active_window =
             self.tracking_window.0 as isize == *APP_STATE.active_window.lock().unwrap();
 
-        match animations::get_current_anims(self).contains_type(AnimType::Fade) {
+        match self
+            .animations
+            .get_current(self.is_active_window)
+            .contains_type(AnimType::Fade)
+        {
             false => self.update_brush_opacities(),
             true if check_delay == Some(0) => {
                 self.update_brush_opacities();
-                animations::update_fade_progress(self)
+                self.animations.update_fade_progress(self.is_active_window)
             }
             true => self.animations.should_fade = true,
         }
@@ -392,9 +464,20 @@ impl WindowBorder {
     fn render(&mut self) -> anyhow::Result<()> {
         self.last_render_time = Some(time::Instant::now());
 
-        let Some(ref render_target) = self.render_target else {
-            return Err(anyhow!("render_target has not been set yet"));
-        };
+        match self.render_resources.render_backend {
+            RenderBackend::V2 if self.effects.should_apply(self.is_active_window) => {
+                self.render_v2_with_effects()?
+            }
+            RenderBackend::V2 => self.render_v2()?,
+            RenderBackend::Legacy => self.render_legacy()?,
+        }
+
+        Ok(())
+    }
+
+    fn render_legacy(&mut self) -> anyhow::Result<()> {
+        let render_backend = self.render_resources.legacy_render_backend()?;
+        let render_target = &render_backend.render_target;
 
         let pixel_size = D2D_SIZE_U {
             width: (self.window_rect.right - self.window_rect.left) as u32,
@@ -404,7 +487,7 @@ impl WindowBorder {
         let border_width = self.border_width as f32;
         let border_offset = self.border_offset as f32;
 
-        self.rounded_rect.rect = D2D_RECT_F {
+        self.render_rect.rect = D2D_RECT_F {
             left: border_width / 2.0 - border_offset,
             top: border_width / 2.0 - border_offset,
             right: (self.window_rect.right - self.window_rect.left) as f32 - border_width / 2.0
@@ -448,43 +531,263 @@ impl WindowBorder {
                 }
             }
 
-            match render_target.EndDraw(None, None) {
-                Ok(_) => {}
-                Err(e) if e.code() == D2DERR_RECREATE_TARGET => {
-                    // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
-                    // This error can be caused by things like waking up from sleep, updating GPU
-                    // drivers, changing screen resolution, etc.
-                    warn!("render_target has been lost; attempting to recreate");
-
-                    match self.create_render_resources() {
-                        Ok(_) => info!("successfully recreated render_target; resuming thread"),
-                        Err(e_2) => {
-                            error!("could not recreate render_target; exiting thread: {e_2}");
-                            self.exit_border_thread();
-                        }
-                    }
-                }
-                Err(other) => {
-                    error!("render_target.EndDraw() failed; exiting thread: {other}");
-                    self.exit_border_thread();
-                }
+            if let Err(err) = render_target.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
             }
         }
 
         Ok(())
     }
 
-    fn draw_rectangle(&self, render_target: &ID2D1HwndRenderTarget, brush: &ID2D1Brush) {
+    fn render_v2(&mut self) -> anyhow::Result<()> {
+        let render_backend = self.render_resources.v2_render_backend()?;
+        let d2d_context = &render_backend.d2d_context;
+
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
+        let window_padding = self.window_padding as f32;
+
+        self.render_rect.rect = D2D_RECT_F {
+            left: border_width / 2.0 + window_padding - border_offset,
+            top: border_width / 2.0 + window_padding - border_offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+        };
+
+        unsafe {
+            // Determine which color should be drawn on top (for color fade animation)
+            let (bottom_color, top_color) = match self.is_active_window {
+                true => (&self.inactive_color, &self.active_color),
+                false => (&self.active_color, &self.inactive_color),
+            };
+
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            if bottom_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = bottom_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match bottom_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                }
+            }
+            if top_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = top_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match top_color.get_brush() {
+                    Some(id2d1_brush) => self.draw_rectangle(d2d_context, id2d1_brush),
+                    None => debug!("ID2D1Brush for top_color has not been created yet"),
+                }
+            }
+
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
+
+            // Present the swap chain buffer
+            let hresult = render_backend
+                .swap_chain
+                .Present(1, DXGI_PRESENT::default());
+            if hresult != S_OK {
+                return Err(anyhow!("could not present swap_chain: {hresult}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_v2_with_effects(&mut self) -> anyhow::Result<()> {
+        let render_backend = self.render_resources.v2_render_backend()?;
+        let d2d_context = &render_backend.d2d_context;
+
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
+        let window_padding = self.window_padding as f32;
+
+        self.render_rect.rect = D2D_RECT_F {
+            left: border_width / 2.0 + window_padding - border_offset,
+            top: border_width / 2.0 + window_padding - border_offset,
+            right: (self.window_rect.right - self.window_rect.left) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+            bottom: (self.window_rect.bottom - self.window_rect.top) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+        };
+
+        unsafe {
+            // Determine which color should be drawn on top (for color fade animation)
+            let (bottom_color, top_color) = match self.is_active_window {
+                true => (&self.inactive_color, &self.active_color),
+                false => (&self.active_color, &self.inactive_color),
+            };
+
+            // Create a rect that covers up to the outer edge of the border
+            let render_rect_adjusted = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: self.render_rect.rect.left - (self.border_width as f32 / 2.0),
+                    top: self.render_rect.rect.top - (self.border_width as f32 / 2.0),
+                    right: self.render_rect.rect.right + (self.border_width as f32 / 2.0),
+                    bottom: self.render_rect.rect.bottom + (self.border_width as f32 / 2.0),
+                },
+                radiusX: self.border_radius + (self.border_width as f32 / 2.0),
+                radiusY: self.border_radius + (self.border_width as f32 / 2.0),
+            };
+
+            // Set the d2d_context target to the border_bitmap
+            let border_bitmap = render_backend
+                .border_bitmap
+                .as_ref()
+                .context("could not get border_bitmap")?;
+            d2d_context.SetTarget(border_bitmap);
+
+            // Draw to the border_bitmap
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            if bottom_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = bottom_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match bottom_color.get_brush() {
+                    Some(id2d1_brush) => {
+                        self.fill_rectangle(&render_rect_adjusted, d2d_context, id2d1_brush)
+                    }
+                    None => debug!("ID2D1Brush for bottom_color has not been created yet"),
+                }
+            }
+            if top_color.get_opacity() > Some(0.0) {
+                if let Color::Gradient(gradient) = top_color {
+                    gradient.update_start_end_points(&self.window_rect);
+                }
+
+                match top_color.get_brush() {
+                    Some(id2d1_brush) => {
+                        self.fill_rectangle(&render_rect_adjusted, d2d_context, id2d1_brush)
+                    }
+                    None => debug!("ID2D1Brush for top_color has not been created yet"),
+                }
+            }
+
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
+
+            // Set the d2d_context target to the mask_bitmap to create an alpha mask
+            let mask_bitmap = render_backend
+                .mask_bitmap
+                .as_ref()
+                .context("could not get mask_bitmap")?;
+            d2d_context.SetTarget(mask_bitmap);
+
+            // Create a rect that covers up to the inner edge of the border
+            // This rect is used to mask out the inner portion of the window
+            // Note this is different from the earlier render_rect_adjusted
+            let render_rect_adjusted = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: self.render_rect.rect.left + (self.border_width as f32 / 2.0),
+                    top: self.render_rect.rect.top + (self.border_width as f32 / 2.0),
+                    right: self.render_rect.rect.right - (self.border_width as f32 / 2.0),
+                    bottom: self.render_rect.rect.bottom - (self.border_width as f32 / 2.0),
+                },
+                radiusX: self.border_radius - (self.border_width as f32 / 2.0),
+                radiusY: self.border_radius - (self.border_width as f32 / 2.0),
+            };
+
+            // Create a 100% opaque brush because our active/inactive colors' brushes might not be
+            let opaque_brush = d2d_context
+                .CreateSolidColorBrush(
+                    &D2D1_COLOR_F {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 1.0,
+                    },
+                    None,
+                )
+                .context("opaque_brush")?;
+
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            self.fill_rectangle(&render_rect_adjusted, d2d_context, &opaque_brush);
+
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
+
+            // Set d2d_context's target back to the target_bitmap so we can draw to the display
+            let target_bitmap = render_backend
+                .target_bitmap
+                .as_ref()
+                .context("could not get target_bitmap")?;
+            d2d_context.SetTarget(target_bitmap);
+
+            // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
+            let command_list = self
+                .effects
+                .get_current_command_list(self.is_active_window)?;
+
+            // Draw to the target_bitmap
+            d2d_context.BeginDraw();
+            d2d_context.Clear(None);
+
+            d2d_context.DrawImage(
+                command_list,
+                None,
+                None,
+                D2D1_INTERPOLATION_MODE_LINEAR,
+                D2D1_COMPOSITE_MODE_SOURCE_OVER,
+            );
+
+            if let Err(err) = d2d_context.EndDraw(None, None) {
+                self.handle_end_draw_error(err.clone());
+                return Err(err.into());
+            }
+
+            // Present the swap chain buffer
+            let hresult = render_backend
+                .swap_chain
+                .Present(1, DXGI_PRESENT::default());
+            // TODO: handle occluded error
+            if hresult != S_OK && hresult != DXGI_STATUS_OCCLUDED {
+                return Err(anyhow!("could not present swap_chain: {hresult}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
+    fn draw_rectangle(&self, render_device: &ID2D1RenderTarget, brush: &ID2D1Brush) {
         unsafe {
             match self.border_radius {
-                0.0 => render_target.DrawRectangle(
-                    &self.rounded_rect.rect,
+                0.0 => render_device.DrawRectangle(
+                    &self.render_rect.rect,
                     brush,
                     self.border_width as f32,
                     None,
                 ),
-                _ => render_target.DrawRoundedRectangle(
-                    &self.rounded_rect,
+                _ => render_device.DrawRoundedRectangle(
+                    &self.render_rect,
                     brush,
                     self.border_width as f32,
                     None,
@@ -493,9 +796,59 @@ impl WindowBorder {
         }
     }
 
-    fn exit_border_thread(&mut self) {
+    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
+    fn fill_rectangle(
+        &self,
+        rounded_rect: &D2D1_ROUNDED_RECT,
+        render_device: &ID2D1RenderTarget,
+        brush: &ID2D1Brush,
+    ) {
+        unsafe {
+            match self.border_radius {
+                0.0 => render_device.FillRectangle(&rounded_rect.rect, brush),
+                _ => render_device.FillRoundedRectangle(rounded_rect, brush),
+            }
+        }
+    }
+
+    fn handle_end_draw_error(&mut self, err: windows::core::Error) {
+        if err.code() == D2DERR_RECREATE_TARGET {
+            // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
+            // This error can be caused by things like waking up from sleep, updating GPU
+            // drivers, changing screen resolution, etc.
+            warn!("render target has been lost; attempting to recreate");
+
+            if let Err(err_2) = self.render_resources.init(
+                self.current_monitor,
+                self.border_width,
+                self.window_padding,
+                self.border_window,
+                self.effects.is_enabled(),
+            ) {
+                error!("could not recreate render target; exiting thread: {err_2}");
+                self.cleanup_and_queue_exit();
+                return;
+            }
+
+            if let Err(err_3) = self
+                .effects
+                .init_command_lists_if_enabled(&self.render_resources)
+            {
+                error!("could not recreate effects command lists; exiting thread: {err_3}");
+                self.cleanup_and_queue_exit();
+                return;
+            }
+
+            info!("successfully recreated render target; resuming thread");
+        } else {
+            error!("d2d_context.EndDraw() failed; exiting thread: {err}");
+            self.cleanup_and_queue_exit();
+        }
+    }
+
+    fn cleanup_and_queue_exit(&mut self) {
         self.is_paused = true;
-        animations::destroy_timer(self);
+        self.animations.destroy_timer();
         APP_STATE
             .borders
             .lock()
@@ -568,22 +921,37 @@ impl WindowBorder {
                     (!is_window_visible(self.border_window)).then_some(SWP_SHOWWINDOW);
                 self.update_position(update_pos_flags).log_if_err();
 
-                // TODO: idk what might cause GetDpiForWindow to return 0
-                let new_dpi = match get_dpi_for_window(self.tracking_window) as f32 {
-                    0.0 => {
-                        error!(
-                            "received invalid dpi of 0 from GetDpiForWindow for {:?}",
-                            self.tracking_window
-                        );
-                        self.exit_border_thread();
-                        return LRESULT(0);
-                    }
-                    valid_dpi => valid_dpi,
-                };
+                let new_monitor = monitor_from_window(self.tracking_window);
+                if new_monitor != self.current_monitor {
+                    self.current_monitor = new_monitor;
 
-                if new_dpi != self.current_dpi {
-                    self.current_dpi = new_dpi;
-                    self.update_width_radius();
+                    self.render_resources
+                        .update(
+                            self.current_monitor,
+                            self.border_width,
+                            self.window_padding,
+                            self.effects.is_enabled(),
+                        )
+                        .context("could not update render resources")
+                        .log_if_err();
+
+                    self.effects
+                        .init_command_lists_if_enabled(&self.render_resources)
+                        .log_if_err();
+
+                    let new_dpi = match get_dpi_for_window(self.tracking_window) {
+                        Ok(dpi) => dpi as f32,
+                        Err(err) => {
+                            error!("could not get dpi for window: {err}");
+                            self.cleanup_and_queue_exit();
+                            return LRESULT(0);
+                        }
+                    };
+                    if new_dpi != self.current_dpi {
+                        self.current_dpi = new_dpi;
+                        self.update_width_radius();
+                    }
+
                     should_render |= true;
                 }
 
@@ -626,13 +994,14 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                animations::set_timer_if_anims_enabled(self);
+                self.animations
+                    .set_timer_if_enabled(self.border_window, &mut self.last_anim_time);
                 self.is_paused = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
-                animations::destroy_timer(self);
+                self.animations.destroy_timer();
                 self.is_paused = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
@@ -642,7 +1011,7 @@ impl WindowBorder {
                 self.active_color.set_opacity(0.0);
                 self.inactive_color.set_opacity(0.0);
 
-                animations::destroy_timer(self);
+                self.animations.destroy_timer();
                 self.is_paused = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
@@ -657,7 +1026,8 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                animations::set_timer_if_anims_enabled(self);
+                self.animations
+                    .set_timer_if_enabled(self.border_window, &mut self.last_anim_time);
                 self.is_paused = false;
             }
             WM_APP_ANIMATE => {
@@ -667,35 +1037,60 @@ impl WindowBorder {
 
                 let anim_elapsed = self
                     .last_anim_time
-                    .unwrap_or(time::Instant::now())
-                    .elapsed();
+                    .map(|instant| instant.elapsed())
+                    .unwrap_or_default();
                 let render_elapsed = self
                     .last_render_time
-                    .unwrap_or(time::Instant::now())
-                    .elapsed();
-
-                self.last_anim_time = Some(time::Instant::now());
+                    .map(|instant| instant.elapsed())
+                    .unwrap_or_default();
 
                 let mut update = false;
 
-                for anim_params in animations::get_current_anims(self).clone().iter() {
+                for anim_params in self
+                    .animations
+                    .get_current(self.is_active_window)
+                    .clone()
+                    .iter()
+                {
                     match anim_params.anim_type {
                         AnimType::Spiral => {
-                            animations::animate_spiral(self, &anim_elapsed, anim_params, false);
+                            self.animations.animate_spiral(
+                                &self.window_rect,
+                                &self.active_color,
+                                &self.inactive_color,
+                                &anim_elapsed,
+                                anim_params,
+                                false,
+                            );
                             update = true;
                         }
                         AnimType::ReverseSpiral => {
-                            animations::animate_spiral(self, &anim_elapsed, anim_params, true);
+                            self.animations.animate_spiral(
+                                &self.window_rect,
+                                &self.active_color,
+                                &self.inactive_color,
+                                &anim_elapsed,
+                                anim_params,
+                                true,
+                            );
                             update = true;
                         }
                         AnimType::Fade => {
                             if self.animations.should_fade {
-                                animations::animate_fade(self, &anim_elapsed, anim_params);
+                                self.animations.animate_fade(
+                                    self.is_active_window,
+                                    &self.active_color,
+                                    &self.inactive_color,
+                                    &anim_elapsed,
+                                    anim_params,
+                                );
                                 update = true;
                             }
                         }
                     }
                 }
+
+                self.last_anim_time = Some(time::Instant::now());
 
                 let render_interval = 1.0 / self.animations.fps as f32;
                 let time_diff = render_elapsed.as_secs_f32() - render_interval;
@@ -769,8 +1164,21 @@ impl WindowBorder {
                     }
                 };
 
-                let Some(ref render_target) = self.render_target else {
-                    error!("render target has not been set yet");
+                let Some(renderer): Option<&ID2D1RenderTarget> =
+                    (match self.render_resources.render_backend {
+                        RenderBackend::V2 => self
+                            .render_resources
+                            .v2_render_backend()
+                            .ok()
+                            .map(|backend| &backend.d2d_context as _),
+                        RenderBackend::Legacy => self
+                            .render_resources
+                            .legacy_render_backend()
+                            .ok()
+                            .map(|backend| &backend.render_target as _),
+                    })
+                else {
+                    error!("could not get renderer");
                     return LRESULT(0);
                 };
 
@@ -780,7 +1188,7 @@ impl WindowBorder {
                 };
 
                 self.active_color
-                    .init_brush(render_target, &self.window_rect, &brush_properties)
+                    .init_brush(renderer, &self.window_rect, &brush_properties)
                     .log_if_err();
             }
             WM_PAINT => {
@@ -789,7 +1197,7 @@ impl WindowBorder {
             WM_NCDESTROY => {
                 // TODO not actually sure if we need to set GWLP_USERDATA to 0 here
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-                self.exit_border_thread();
+                self.cleanup_and_queue_exit();
             }
             // Ignore these window position messages
             WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}
