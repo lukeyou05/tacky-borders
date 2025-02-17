@@ -29,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HWND_TOP, LWA_ALPHA, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
     SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, WM_CREATE,
     WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::animations::{AnimType, AnimVec, Animations};
@@ -92,7 +92,7 @@ impl WindowBorder {
 
         unsafe {
             self.border_window = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
                 w!("border"),
                 PCWSTR(title.as_ptr()),
                 WS_POPUP | WS_DISABLED,
@@ -961,9 +961,12 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
-                // If something changes the z-order of windows, it may put the border window behind
-                // the tracking window, so we update the border's position here when that happens
-                self.update_position(None).log_if_err();
+                // When the tracking window reorders its contents, it may change the z-order. So,
+                // we first check whether the border is still above the tracking window, and if
+                // not, we must update its position and place it back on top
+                if GetWindow(self.tracking_window, GW_HWNDPREV) != Ok(self.border_window) {
+                    self.update_position(None).log_if_err();
+                }
             }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
