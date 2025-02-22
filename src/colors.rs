@@ -16,20 +16,20 @@ use crate::LogIfErr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
-pub enum ColorConfig {
-    SolidConfig(String),
-    GradientConfig(GradientConfig),
+pub enum ColorBrushConfig {
+    Solid(String),
+    Gradient(GradientBrushConfig),
 }
 
-impl Default for ColorConfig {
+impl Default for ColorBrushConfig {
     fn default() -> Self {
-        Self::SolidConfig("accent".to_string())
+        Self::Solid("accent".to_string())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct GradientConfig {
+pub struct GradientBrushConfig {
     pub colors: Vec<String>,
     pub direction: GradientDirection,
 }
@@ -49,14 +49,14 @@ pub struct GradientCoordinates {
 }
 
 #[derive(Debug, Clone)]
-pub enum Color {
-    Solid(Solid),
-    Gradient(Gradient),
+pub enum ColorBrush {
+    Solid(SolidBrush),
+    Gradient(GradientBrush),
 }
 
-impl Default for Color {
+impl Default for ColorBrush {
     fn default() -> Self {
-        Color::Solid(Solid {
+        ColorBrush::Solid(SolidBrush {
             color: D2D1_COLOR_F::default(),
             brush: None,
         })
@@ -64,36 +64,36 @@ impl Default for Color {
 }
 
 #[derive(Debug, Clone)]
-pub struct Solid {
+pub struct SolidBrush {
     color: D2D1_COLOR_F,
     brush: Option<ID2D1SolidColorBrush>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Gradient {
+pub struct GradientBrush {
     gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
     direction: GradientCoordinates,
     brush: Option<ID2D1LinearGradientBrush>,
 }
 
-impl ColorConfig {
+impl ColorBrushConfig {
     // Convert the ColorConfig struct to a Color struct
-    pub fn to_color(&self, is_active_color: bool) -> Color {
+    pub fn to_color(&self, is_active_color: bool) -> ColorBrush {
         match self {
-            ColorConfig::SolidConfig(solid_config) => {
+            ColorBrushConfig::Solid(solid_config) => {
                 if solid_config == "accent" {
-                    Color::Solid(Solid {
+                    ColorBrush::Solid(SolidBrush {
                         color: get_accent_color(is_active_color),
                         brush: None,
                     })
                 } else {
-                    Color::Solid(Solid {
+                    ColorBrush::Solid(SolidBrush {
                         color: get_color_from_hex(solid_config.as_str()),
                         brush: None,
                     })
                 }
             }
-            ColorConfig::GradientConfig(gradient_config) => {
+            ColorBrushConfig::Gradient(gradient_config) => {
                 // We use 'step' to calculate the position of each color in the gradient below
                 let step = 1.0 / (gradient_config.colors.len() - 1) as f32;
 
@@ -120,7 +120,7 @@ impl ColorConfig {
                             .and_then(|d| d.trim().parse::<f32>().ok())
                         else {
                             error!("config contains an invalid gradient direction!");
-                            return Color::default();
+                            return ColorBrush::default();
                         };
 
                         // We multiply degree by -1 to account for the fact that Win32's coordinate
@@ -193,7 +193,7 @@ impl ColorConfig {
                     GradientDirection::Coordinates(ref coordinates) => coordinates.clone(),
                 };
 
-                Color::Gradient(Gradient {
+                ColorBrush::Gradient(GradientBrush {
                     gradient_stops,
                     direction,
                     brush: None,
@@ -215,7 +215,7 @@ impl Line {
     }
 }
 
-impl Color {
+impl ColorBrush {
     // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
     pub fn init_brush(
         &mut self,
@@ -224,7 +224,7 @@ impl Color {
         brush_properties: &D2D1_BRUSH_PROPERTIES,
     ) -> windows::core::Result<()> {
         match self {
-            Color::Solid(solid) => unsafe {
+            ColorBrush::Solid(solid) => unsafe {
                 let id2d1_brush =
                     renderer.CreateSolidColorBrush(&solid.color, Some(brush_properties))?;
 
@@ -232,7 +232,7 @@ impl Color {
 
                 Ok(())
             },
-            Color::Gradient(gradient) => unsafe {
+            ColorBrush::Gradient(gradient) => unsafe {
                 let width = (window_rect.right - window_rect.left) as f32;
                 let height = (window_rect.bottom - window_rect.top) as f32;
 
@@ -270,8 +270,8 @@ impl Color {
 
     pub fn get_brush(&self) -> Option<&ID2D1Brush> {
         match self {
-            Color::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| id2d1_brush.into()),
-            Color::Gradient(gradient) => gradient
+            ColorBrush::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| id2d1_brush.into()),
+            ColorBrush::Gradient(gradient) => gradient
                 .brush
                 .as_ref()
                 .map(|id2d1_brush| id2d1_brush.into()),
@@ -280,12 +280,12 @@ impl Color {
 
     pub fn set_opacity(&self, opacity: f32) {
         match self {
-            Color::Gradient(gradient) => {
+            ColorBrush::Gradient(gradient) => {
                 if let Some(ref id2d1_brush) = gradient.brush {
                     unsafe { id2d1_brush.SetOpacity(opacity) }
                 }
             }
-            Color::Solid(solid) => {
+            ColorBrush::Solid(solid) => {
                 if let Some(ref id2d1_brush) = solid.brush {
                     unsafe { id2d1_brush.SetOpacity(opacity) }
                 }
@@ -295,11 +295,11 @@ impl Color {
 
     pub fn get_opacity(&self) -> Option<f32> {
         match self {
-            Color::Solid(solid) => solid
+            ColorBrush::Solid(solid) => solid
                 .brush
                 .as_ref()
                 .map(|id2d1_brush| unsafe { id2d1_brush.GetOpacity() }),
-            Color::Gradient(gradient) => gradient
+            ColorBrush::Gradient(gradient) => gradient
                 .brush
                 .as_ref()
                 .map(|id2d1_brush| unsafe { id2d1_brush.GetOpacity() }),
@@ -308,12 +308,12 @@ impl Color {
 
     pub fn set_transform(&self, transform: &Matrix3x2) {
         match self {
-            Color::Solid(solid) => {
+            ColorBrush::Solid(solid) => {
                 if let Some(ref id2d1_brush) = solid.brush {
                     unsafe { id2d1_brush.SetTransform(transform) };
                 }
             }
-            Color::Gradient(gradient) => {
+            ColorBrush::Gradient(gradient) => {
                 if let Some(ref id2d1_brush) = gradient.brush {
                     unsafe { id2d1_brush.SetTransform(transform) };
                 }
@@ -323,13 +323,13 @@ impl Color {
 
     pub fn get_transform(&self) -> Option<Matrix3x2> {
         match self {
-            Color::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| {
+            ColorBrush::Solid(solid) => solid.brush.as_ref().map(|id2d1_brush| {
                 let mut transform = Matrix3x2::default();
                 unsafe { id2d1_brush.GetTransform(&mut transform) };
 
                 transform
             }),
-            Color::Gradient(gradient) => gradient.brush.as_ref().map(|id2d1_brush| {
+            ColorBrush::Gradient(gradient) => gradient.brush.as_ref().map(|id2d1_brush| {
                 let mut transform = Matrix3x2::default();
                 unsafe { id2d1_brush.GetTransform(&mut transform) };
 
@@ -339,7 +339,7 @@ impl Color {
     }
 }
 
-impl Gradient {
+impl GradientBrush {
     pub fn update_start_end_points(&self, window_rect: &RECT) {
         let width = (window_rect.right - window_rect.left) as f32;
         let height = (window_rect.bottom - window_rect.top) as f32;

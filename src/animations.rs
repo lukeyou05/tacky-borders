@@ -6,7 +6,7 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
-use crate::colors::Color;
+use crate::colors::ColorBrush;
 use crate::config::{serde_default_bool, serde_default_i32};
 use crate::utils::cubic_bezier;
 
@@ -63,8 +63,8 @@ impl Animations {
     pub fn animate_spiral(
         &mut self,
         window_rect: &RECT,
-        active_color: &Color,
-        inactive_color: &Color,
+        active_color: &ColorBrush,
+        inactive_color: &ColorBrush,
         anim_elapsed: &time::Duration,
         anim_params: &AnimParams,
         reverse: bool,
@@ -98,8 +98,8 @@ impl Animations {
     pub fn animate_fade(
         &mut self,
         is_active_window: bool,
-        active_color: &Color,
-        inactive_color: &Color,
+        active_color: &ColorBrush,
+        inactive_color: &ColorBrush,
         anim_elapsed: &time::Duration,
         anim_params: &AnimParams,
     ) {

@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use serde::Deserialize;
 use std::slice;
 use windows::Foundation::Numerics::Matrix3x2;
@@ -13,8 +13,8 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_OPTIMIZATION,
 };
 
-use crate::config::{serde_default_bool, serde_default_f32, RenderBackend};
-use crate::render_resources::RenderResources;
+use crate::config::{serde_default_bool, serde_default_f32};
+use crate::render_backend::RenderBackend;
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -92,20 +92,22 @@ impl Effects {
 
     pub fn init_command_lists_if_enabled(
         &mut self,
-        render_resources: &RenderResources,
+        render_backend: &RenderBackend,
     ) -> anyhow::Result<()> {
         // If not enabled, then don't create the command lists
-        if !self.is_enabled() || render_resources.render_backend == RenderBackend::Legacy {
+        if !self.is_enabled() {
             return Ok(());
         }
 
-        let render_backend = render_resources.v2_render_backend()?;
-        let d2d_context = &render_backend.d2d_context;
-        let border_bitmap = render_backend
+        let RenderBackend::V2(backend) = render_backend else {
+            return Err(anyhow!("render backend is not V2"));
+        };
+        let d2d_context = &backend.d2d_context;
+        let border_bitmap = backend
             .border_bitmap
             .as_ref()
             .context("could not get border_bitmap")?;
-        let mask_bitmap = render_backend
+        let mask_bitmap = backend
             .mask_bitmap
             .as_ref()
             .context("could not get mask_bitmap")?;

@@ -1,9 +1,10 @@
 use crate::animations::AnimationsConfig;
-use crate::colors::ColorConfig;
+use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
+use crate::render_backend::RenderBackendConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
-use crate::{create_directx_devices, display_error_box, reload_borders, APP_STATE};
+use crate::{create_directx_devices, display_error_box, reload_borders, DirectXDevices, APP_STATE};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -32,18 +33,11 @@ pub struct Config {
     pub watch_config_changes: bool,
     #[serde(default)]
     #[serde(alias = "rendering_backend")]
-    pub render_backend: RenderBackend,
+    pub render_backend: RenderBackendConfig,
     #[serde(default = "serde_default_global")]
     pub global: Global,
     #[serde(default)]
     pub window_rules: Vec<WindowRule>,
-}
-
-#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
-pub enum RenderBackend {
-    #[default]
-    V2,
-    Legacy,
 }
 
 // Show borders even if the config.yaml is completely empty
@@ -67,9 +61,9 @@ pub struct Global {
     #[serde(default)]
     pub border_radius: RadiusConfig,
     #[serde(default)]
-    pub active_color: ColorConfig,
+    pub active_color: ColorBrushConfig,
     #[serde(default)]
-    pub inactive_color: ColorConfig,
+    pub inactive_color: ColorBrushConfig,
     #[serde(default)]
     pub komorebi_colors: KomorebiColorsConfig,
     #[serde(default)]
@@ -111,8 +105,8 @@ pub struct WindowRule {
     pub border_width: Option<f32>,
     pub border_offset: Option<i32>,
     pub border_radius: Option<RadiusConfig>,
-    pub active_color: Option<ColorConfig>,
-    pub inactive_color: Option<ColorConfig>,
+    pub active_color: Option<ColorBrushConfig>,
+    pub inactive_color: Option<ColorBrushConfig>,
     pub komorebi_colors: Option<KomorebiColorsConfig>,
     pub enabled: Option<EnableMode>,
     pub animations: Option<AnimationsConfig>,
@@ -240,54 +234,55 @@ impl Config {
     pub fn reload() {
         let new_config = match Self::create() {
             Ok(config) => {
-                let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
-
-                if config_watcher.is_enabled(&config) && !config_watcher.is_running() {
-                    config_watcher.start().log_if_err();
-                } else if !config_watcher.is_enabled(&config) && config_watcher.is_running() {
-                    config_watcher.stop().log_if_err();
-                }
-
-                drop(config_watcher);
-
-                let mut komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
-
-                if komorebi_integration.is_enabled(&config) && !komorebi_integration.is_running() {
-                    komorebi_integration.start().log_if_err();
-                } else if !komorebi_integration.is_enabled(&config)
-                    && komorebi_integration.is_running()
                 {
-                    komorebi_integration.stop().log_if_err();
+                    let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
+
+                    if config_watcher.is_enabled(&config) && !config_watcher.is_running() {
+                        config_watcher.start().log_if_err();
+                    } else if !config_watcher.is_enabled(&config) && config_watcher.is_running() {
+                        config_watcher.stop().log_if_err();
+                    }
                 }
 
-                drop(komorebi_integration);
+                {
+                    let mut komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
 
-                let mut d3d11_device_opt = APP_STATE.d3d11_device.write().unwrap();
-                let mut dxgi_device_opt = APP_STATE.dxgi_device.write().unwrap();
-                let mut d2d_device_opt = APP_STATE.d2d_device.write().unwrap();
+                    if komorebi_integration.is_enabled(&config)
+                        && !komorebi_integration.is_running()
+                    {
+                        komorebi_integration.start().log_if_err();
+                    } else if !komorebi_integration.is_enabled(&config)
+                        && komorebi_integration.is_running()
+                    {
+                        komorebi_integration.stop().log_if_err();
+                    }
+                }
 
-                // TODO: rn i only check d3d11_device but maybe i should check them all? maybe
-                // should put them into a separate struct? doesnt really matter tho
-                if config.render_backend == RenderBackend::V2 && d3d11_device_opt.is_none() {
-                    let (d3d11_device, dxgi_device, d2d_device) =
-                        create_directx_devices(&APP_STATE.render_factory).unwrap_or_else(|err| {
+                {
+                    let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+
+                    if config.render_backend == RenderBackendConfig::V2
+                        && directx_devices_opt.is_none()
+                    {
+                        let (d3d11_device, dxgi_device, d2d_device) = create_directx_devices(
+                            &APP_STATE.render_factory,
+                        )
+                        .unwrap_or_else(|err| {
                             error!("could not create directx devices: {err}");
                             panic!("could not create directx devices: {err}");
                         });
-                    *d3d11_device_opt = Some(d3d11_device);
-                    *dxgi_device_opt = Some(dxgi_device);
-                    *d2d_device_opt = Some(d2d_device);
-                } else if config.render_backend == RenderBackend::Legacy
-                    && d3d11_device_opt.is_some()
-                {
-                    *d3d11_device_opt = None;
-                    *dxgi_device_opt = None;
-                    *d2d_device_opt = None;
-                }
 
-                drop(d3d11_device_opt);
-                drop(dxgi_device_opt);
-                drop(d2d_device_opt);
+                        *directx_devices_opt = Some(DirectXDevices {
+                            d3d11_device,
+                            dxgi_device,
+                            d2d_device,
+                        })
+                    } else if config.render_backend == RenderBackendConfig::Legacy
+                        && directx_devices_opt.is_some()
+                    {
+                        *directx_devices_opt = None;
+                    }
+                }
 
                 config
             }

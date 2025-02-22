@@ -8,8 +8,8 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{anyhow, Context};
-use config::RenderBackend;
 use komorebi::KomorebiIntegration;
+use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,13 +41,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 mod anim_timer;
 mod animations;
+mod border_drawer;
 mod colors;
 mod config;
 mod effects;
 mod event_hook;
 mod iocp;
 mod komorebi;
-mod render_resources;
+mod render_backend;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
@@ -69,10 +70,14 @@ struct AppState {
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
     render_factory: ID2D1Factory8,
-    d3d11_device: RwLock<Option<ID3D11Device>>,
-    dxgi_device: RwLock<Option<IDXGIDevice>>,
-    d2d_device: RwLock<Option<ID2D1Device7>>,
+    directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
+}
+
+struct DirectXDevices {
+    d3d11_device: ID3D11Device,
+    dxgi_device: IDXGIDevice,
+    d2d_device: ID2D1Device7,
 }
 
 unsafe impl Send for AppState {}
@@ -118,8 +123,8 @@ impl AppState {
             })
         };
 
-        let (d3d11_device_opt, dxgi_device_opt, d2d_device_opt) = match config.render_backend {
-            RenderBackend::V2 => {
+        let directx_devices_opt = match config.render_backend {
+            RenderBackendConfig::V2 => {
                 // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
                 let (d3d11_device, dxgi_device, d2d_device) =
                     create_directx_devices(&render_factory).unwrap_or_else(|err| {
@@ -127,9 +132,13 @@ impl AppState {
                         panic!("could not create directx devices: {err}");
                     });
 
-                (Some(d3d11_device), Some(dxgi_device), Some(d2d_device))
+                Some(DirectXDevices {
+                    d3d11_device,
+                    dxgi_device,
+                    d2d_device,
+                })
             }
-            RenderBackend::Legacy => (None, None, None),
+            RenderBackendConfig::Legacy => None,
         };
 
         AppState {
@@ -140,9 +149,7 @@ impl AppState {
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
             render_factory,
-            d3d11_device: RwLock::new(d3d11_device_opt),
-            dxgi_device: RwLock::new(dxgi_device_opt),
-            d2d_device: RwLock::new(d2d_device_opt),
+            directx_devices: RwLock::new(directx_devices_opt),
             komorebi_integration: Mutex::new(komorebi_integration),
         }
     }

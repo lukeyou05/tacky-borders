@@ -196,11 +196,6 @@ window_rules:
     name: "Picture-in-Picture"
     enabled: False
 
-    # TODO: figure out why this doesnt work
-  - match: Title
-    name: "PowerToys.PowerLauncher"
-    enabled: True
-
   # Example rule:
   # - match: Class                   # Match based on Class or Title
   #   name: "MozillaWindowClass"     # Class or title name to match

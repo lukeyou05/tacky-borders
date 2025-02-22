@@ -1,4 +1,5 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
+use serde::Deserialize;
 use std::mem::ManuallyDrop;
 use windows::core::Interface;
 use windows::Win32::Foundation::{FALSE, HWND};
@@ -24,18 +25,22 @@ use windows::Win32::Graphics::Dxgi::{
     IDXGIFactory7, IDXGISurface, IDXGISwapChain1, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
     DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
-use windows::Win32::Graphics::Gdi::HMONITOR;
 
-use crate::config::RenderBackend;
-use crate::{utils::get_monitor_info, APP_STATE};
+use crate::APP_STATE;
+
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
+pub enum RenderBackendConfig {
+    #[default]
+    V2,
+    Legacy,
+}
 
 #[derive(Debug, Default)]
-pub struct RenderResources {
-    v2_render_backend: Option<V2RenderBackend>,
-    legacy_render_backend: Option<LegacyRenderBackend>,
-    // The render_backend is actually in the Config, but it's behind a RwLock, so we'll move it here
-    // so we don't have to lock the Config as often.
-    pub render_backend: RenderBackend,
+pub enum RenderBackend {
+    V2(V2RenderBackend),
+    Legacy(LegacyRenderBackend),
+    #[default]
+    None,
 }
 
 #[derive(Debug)]
@@ -58,104 +63,97 @@ pub struct LegacyRenderBackend {
     pub render_target: ID2D1HwndRenderTarget,
 }
 
-impl RenderResources {
-    pub fn init(
-        &mut self,
-        current_monitor: HMONITOR,
-        border_width: i32,
-        window_padding: i32,
+impl RenderBackendConfig {
+    pub fn to_render_backend(
+        self,
+        width: u32,
+        height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<()> {
-        match self.render_backend {
-            RenderBackend::V2 => {
-                self.v2_render_backend = Some(V2RenderBackend::try_new(
-                    current_monitor,
-                    border_width,
-                    window_padding,
-                    border_window,
-                    create_extra_bitmaps,
-                )?)
-            }
-            RenderBackend::Legacy => {
-                self.legacy_render_backend = Some(LegacyRenderBackend::try_new(border_window)?);
-            }
+    ) -> anyhow::Result<RenderBackend> {
+        match self {
+            RenderBackendConfig::V2 => Ok(RenderBackend::V2(V2RenderBackend::new(
+                width,
+                height,
+                border_window,
+                create_extra_bitmaps,
+            )?)),
+            RenderBackendConfig::Legacy => Ok(RenderBackend::Legacy(LegacyRenderBackend::new(
+                border_window,
+            )?)),
         }
-
-        Ok(())
     }
+}
 
+impl RenderBackend {
     pub fn update(
         &mut self,
-        current_monitor: HMONITOR,
-        border_width: i32,
-        window_padding: i32,
+        width: u32,
+        height: u32,
         create_extra_bitmaps: bool,
     ) -> anyhow::Result<()> {
-        match self.render_backend {
-            RenderBackend::V2 => {
-                let Some(ref mut v2_render_backend) = self.v2_render_backend else {
-                    // Theoretically this branch shouldn't be reachable, but in case it does, let's
-                    // just panic because there's not much else we can do
-                    panic!();
-                };
-
-                v2_render_backend.update(
-                    current_monitor,
-                    border_width,
-                    window_padding,
-                    create_extra_bitmaps,
-                )?;
+        match self {
+            RenderBackend::V2(backend) => {
+                backend.update(width, height, create_extra_bitmaps)?;
             }
             // TODO: We already update/resize the buffers in the render() function within
             // WindowBorder, but I might want to move it here instead?
-            RenderBackend::Legacy => return Ok(()),
+            RenderBackend::Legacy(_) => return Ok(()),
+            RenderBackend::None => return Err(anyhow!("render backend is None")),
         }
 
         Ok(())
     }
 
-    pub fn v2_render_backend(&self) -> anyhow::Result<&V2RenderBackend> {
-        self.v2_render_backend
-            .as_ref()
-            .context("could not get v2_render_backend")
+    pub fn get_pixel_size(&self) -> anyhow::Result<D2D_SIZE_U> {
+        match self {
+            RenderBackend::V2(backend) => {
+                let swap_chain = &backend.swap_chain;
+                let swap_chain_desc = unsafe { swap_chain.GetDesc1() }?;
+
+                Ok(D2D_SIZE_U {
+                    width: swap_chain_desc.Width,
+                    height: swap_chain_desc.Height,
+                })
+            }
+            RenderBackend::Legacy(backend) => {
+                let pixel_size = unsafe { backend.render_target.GetPixelSize() };
+
+                Ok(pixel_size)
+            }
+            RenderBackend::None => Err(anyhow!("render backend is None")),
+        }
     }
 
-    pub fn legacy_render_backend(&self) -> anyhow::Result<&LegacyRenderBackend> {
-        self.legacy_render_backend
-            .as_ref()
-            .context("could not get legacy_render_backend")
+    pub fn supports_effects(&self) -> bool {
+        !matches!(self, RenderBackend::Legacy(_) | RenderBackend::None)
     }
 }
 
 impl V2RenderBackend {
-    pub fn try_new(
-        current_monitor: HMONITOR,
-        border_width: i32,
-        window_padding: i32,
+    pub fn new(
+        width: u32,
+        height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
     ) -> anyhow::Result<Self> {
+        let directx_devices_opt = APP_STATE.directx_devices.read().unwrap();
+        let directx_devices = directx_devices_opt
+            .as_ref()
+            .context("could not get direct_devices")?;
+
         let d2d_context = unsafe {
-            APP_STATE
+            directx_devices
                 .d2d_device
-                .read()
-                .unwrap()
-                .as_ref()
-                .context("could not get d2d_device")?
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)
         }
         .context("d2d_context")?;
 
         unsafe { d2d_context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE) };
 
-        let m_info = get_monitor_info(current_monitor).context("mi")?;
-        let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
-        let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
-
         let swap_chain_desc = DXGI_SWAP_CHAIN_DESC1 {
-            Width: screen_width + ((border_width + window_padding) * 2) as u32,
-            Height: screen_height + ((border_width + window_padding) * 2) as u32,
+            Width: width,
+            Height: height,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             Stereo: FALSE,
             SampleDesc: DXGI_SAMPLE_DESC {
@@ -171,37 +169,22 @@ impl V2RenderBackend {
         };
 
         unsafe {
-            let dxgi_adapter = APP_STATE
+            let dxgi_adapter = directx_devices
                 .dxgi_device
-                .read()
-                .unwrap()
-                .as_ref()
-                .context("could not get dxgi_device")?
                 .GetAdapter()
                 .context("dxgi_adapter")?;
             let dxgi_factory: IDXGIFactory7 = dxgi_adapter.GetParent().context("dxgi_factory")?;
 
             let swap_chain = dxgi_factory
                 .CreateSwapChainForComposition(
-                    APP_STATE
-                        .d3d11_device
-                        .read()
-                        .unwrap()
-                        .as_ref()
-                        .context("could not get d3d11_device")?,
+                    &directx_devices.d3d11_device,
                     &swap_chain_desc,
                     None,
                 )
                 .context("swap_chain")?;
 
-            let d_comp_desktop_device: IDCompositionDesktopDevice = DCompositionCreateDevice3(
-                APP_STATE
-                    .dxgi_device
-                    .read()
-                    .unwrap()
-                    .as_ref()
-                    .context("could not get dxgi_device")?,
-            )?;
+            let d_comp_desktop_device: IDCompositionDesktopDevice =
+                DCompositionCreateDevice3(&directx_devices.dxgi_device)?;
             let d_comp_target = d_comp_desktop_device
                 .CreateTargetForHwnd(border_window, true)
                 .context("d_comp_target")?;
@@ -228,10 +211,8 @@ impl V2RenderBackend {
             let (target_bitmap_opt, border_bitmap_opt, mask_bitmap_opt) = Self::create_bitmaps(
                 &d2d_context,
                 &swap_chain,
-                screen_width,
-                screen_height,
-                border_width,
-                window_padding,
+                width,
+                height,
                 create_extra_bitmaps,
             )?;
 
@@ -251,10 +232,8 @@ impl V2RenderBackend {
     fn create_bitmaps(
         d2d_context: &ID2D1DeviceContext7,
         swap_chain: &IDXGISwapChain1,
-        screen_width: u32,
-        screen_height: u32,
-        border_width: i32,
-        window_padding: i32,
+        width: u32,
+        height: u32,
         create_extra_bitmaps: bool,
     ) -> anyhow::Result<(
         Option<ID2D1Bitmap1>,
@@ -301,10 +280,7 @@ impl V2RenderBackend {
             border_bitmap_opt = Some(
                 unsafe {
                     d2d_context.CreateBitmap(
-                        D2D_SIZE_U {
-                            width: screen_width + ((border_width + window_padding) * 2) as u32,
-                            height: screen_height + ((border_width + window_padding) * 2) as u32,
-                        },
+                        D2D_SIZE_U { width, height },
                         None,
                         0,
                         &bitmap_properties,
@@ -327,10 +303,7 @@ impl V2RenderBackend {
             mask_bitmap_opt = Some(
                 unsafe {
                     d2d_context.CreateBitmap(
-                        D2D_SIZE_U {
-                            width: screen_width + ((border_width + window_padding) * 2) as u32,
-                            height: screen_height + ((border_width + window_padding) * 2) as u32,
-                        },
+                        D2D_SIZE_U { width, height },
                         None,
                         0,
                         &bitmap_properties,
@@ -347,9 +320,8 @@ impl V2RenderBackend {
     // resources (e.g. border effects)
     pub fn update(
         &mut self,
-        current_monitor: HMONITOR,
-        border_width: i32,
-        window_padding: i32,
+        width: u32,
+        height: u32,
         create_extra_bitmaps: bool,
     ) -> anyhow::Result<()> {
         // Release buffer references
@@ -359,15 +331,11 @@ impl V2RenderBackend {
 
         unsafe { self.d2d_context.SetTarget(None) };
 
-        let m_info = get_monitor_info(current_monitor).context("mi")?;
-        let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
-        let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
-
         unsafe {
             self.swap_chain.ResizeBuffers(
                 2,
-                screen_width + ((border_width + window_padding) * 2) as u32,
-                screen_height + ((border_width + window_padding) * 2) as u32,
+                width,
+                height,
                 DXGI_FORMAT_B8G8R8A8_UNORM,
                 DXGI_SWAP_CHAIN_FLAG::default(),
             )
@@ -380,10 +348,8 @@ impl V2RenderBackend {
         (self.target_bitmap, self.border_bitmap, self.mask_bitmap) = Self::create_bitmaps(
             &self.d2d_context,
             &self.swap_chain,
-            screen_width,
-            screen_height,
-            border_width,
-            window_padding,
+            width,
+            height,
             create_extra_bitmaps,
         )?;
 
@@ -392,7 +358,7 @@ impl V2RenderBackend {
 }
 
 impl LegacyRenderBackend {
-    fn try_new(border_window: HWND) -> anyhow::Result<Self> {
+    fn new(border_window: HWND) -> anyhow::Result<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
