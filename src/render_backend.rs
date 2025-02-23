@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
 };
 use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice3, IDCompositionDesktopDevice, IDCompositionDevice4,
+    DCompositionCreateDevice3, IDCompositionDesktopDevice, IDCompositionDevice3,
     IDCompositionTarget, IDCompositionVisual2,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
@@ -48,7 +48,7 @@ pub enum RenderBackend {
 pub struct V2RenderBackend {
     pub d2d_context: ID2D1DeviceContext4,
     pub swap_chain: IDXGISwapChain1,
-    pub d_comp_device: IDCompositionDevice4,
+    pub d_comp_device: IDCompositionDevice3,
     pub d_comp_target: IDCompositionTarget,
     pub d_comp_visual: IDCompositionVisual2,
     // target_bitmap will always be created, but the reason I keep it as an Option is because I
@@ -194,7 +194,7 @@ impl V2RenderBackend {
             // like IDCompositionDevice or IDCompositionDesktopDevice, create the target, then
             // .cast() it. Sidenote, you can't create an IDCompositionDevice3 using
             // DCompositionCreateDevice3, but you can create an IDCompositionDevice4... why?
-            let d_comp_device: IDCompositionDevice4 = d_comp_desktop_device
+            let d_comp_device: IDCompositionDevice3 = d_comp_desktop_device
                 .cast()
                 .context("d_comp_desktop_device.cast()")?;
 
