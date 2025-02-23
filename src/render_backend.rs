@@ -7,7 +7,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Bitmap1, ID2D1DeviceContext7, ID2D1HwndRenderTarget, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+    ID2D1Bitmap1, ID2D1DeviceContext4, ID2D1HwndRenderTarget, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
     D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
     D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_PRESENT_OPTIONS_IMMEDIATELY, D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS,
@@ -46,7 +46,7 @@ pub enum RenderBackend {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct V2RenderBackend {
-    pub d2d_context: ID2D1DeviceContext7,
+    pub d2d_context: ID2D1DeviceContext4,
     pub swap_chain: IDXGISwapChain1,
     pub d_comp_device: IDCompositionDevice4,
     pub d_comp_target: IDCompositionTarget,
@@ -230,7 +230,7 @@ impl V2RenderBackend {
     }
 
     fn create_bitmaps(
-        d2d_context: &ID2D1DeviceContext7,
+        d2d_context: &ID2D1DeviceContext4,
         swap_chain: &IDXGISwapChain1,
         width: u32,
         height: u32,

@@ -98,14 +98,15 @@ impl BorderDrawer {
             .init_brush(renderer, window_rect, &brush_properties)?;
 
         // TODO: testing; remove when done
-        self.render_backend
+        // actually just make this a unit test instead
+        /*self.render_backend
             .update(width, height, self.effects.is_enabled())
             .log_if_err();
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
                 .context("could not initialize command list")?;
-        }
+        }*/
 
         Ok(())
     }

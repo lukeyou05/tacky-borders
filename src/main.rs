@@ -19,7 +19,7 @@ use windows::core::Interface;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HMODULE, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Device7, ID2D1Factory8, D2D1_FACTORY_TYPE_MULTI_THREADED,
+    D2D1CreateFactory, ID2D1Device4, ID2D1Factory5, D2D1_FACTORY_TYPE_MULTI_THREADED,
 };
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1,
@@ -69,7 +69,7 @@ struct AppState {
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
-    render_factory: ID2D1Factory8,
+    render_factory: ID2D1Factory5,
     directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
 }
@@ -77,7 +77,7 @@ struct AppState {
 struct DirectXDevices {
     d3d11_device: ID3D11Device,
     dxgi_device: IDXGIDevice,
-    d2d_device: ID2D1Device7,
+    d2d_device: ID2D1Device4,
 }
 
 unsafe impl Send for AppState {}
@@ -116,7 +116,7 @@ impl AppState {
             }
         };
 
-        let render_factory: ID2D1Factory8 = unsafe {
+        let render_factory: ID2D1Factory5 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
                 error!("could not create ID2D1Factory: {err}");
                 panic!()
@@ -164,8 +164,8 @@ impl AppState {
 }
 
 fn create_directx_devices(
-    factory: &ID2D1Factory8,
-) -> anyhow::Result<(ID3D11Device, IDXGIDevice, ID2D1Device7)> {
+    factory: &ID2D1Factory5,
+) -> anyhow::Result<(ID3D11Device, IDXGIDevice, ID2D1Device4)> {
     // NOTE: if you add D3D11_CREATE_DEVICE_DEBUG here, be sure to remove it once done or
     // else it will crash on computers without the Graphics Tools feature installed
     let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
