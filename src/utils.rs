@@ -283,6 +283,10 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
 
         // Note: init() contains a loop
         border.init(window_rule).log_if_err();
+
+        // TODO: It's probably better to remove the border from the hashmap right here instead of
+        // from WindowBorder's cleanup_and_queue_exit(). This ensures it is removed even if
+        // WindowBorder's init() returns an error and exits early.
     });
 }
 

@@ -2,8 +2,8 @@
 watch_config_changes: True
 
 # rendering_backend: Renderer type. Supported values:
-#   - Legacy: A simpler renderer with less developer control. Found in v1.1.0 and below.
-#   - V2: A more complex renderer that allows use of new features. Found in v1.2.0 and above.
+#   - V2: A more complex renderer that supports new features. Found in v1.2.0 and above.
+#   - Legacy: A simpler, more limited renderer. Found in v0.1.0 and above.
 #
 # Performance between the two may vary system-to-system, so I leave the choice up to you.
 rendering_backend: V2
@@ -64,7 +64,7 @@ global:
     stack_color: "#e762b7"
     monocle_color: "#62e793"
     floating_color: "#f5f5a5"
-    enabled: True
+    enabled: False
 
   # animations: Configure animation behavior for window borders
   #   active: Animations for active windows
@@ -107,7 +107,7 @@ global:
         easing: EaseInOutQuad
 
     fps: 60
-    enabled: True
+    enabled: False
 
   # effects: Configure Direct2D effects for the window
   #   active: Effects for active windows
@@ -130,8 +130,8 @@ global:
   #      std_dev: 16.0
   #      opacity: 0.5
   #
-  # NOTE: These effects GREATLY increase CPU and GPU usage.
-  # Additionally, you MUST use renderer_type: New or else effects will not appear.
+  # NOTE: These effects can significantly increase CPU and GPU usage.
+  # Additionally, you must use rendering_backend: V2 for the effects to appear.
   effects:
     active:
       - type: Shadow
@@ -157,7 +157,7 @@ global:
         radius: 8.0
         opacity: 1.0
 
-    enabled: True
+    enabled: False
 
   # initialize_delay: Time (in ms) before the border appears after opening a new window
   # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
