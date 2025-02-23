@@ -40,7 +40,7 @@ use crate::APP_STATE;
 pub struct WindowBorder {
     border_window: HWND,
     tracking_window: HWND,
-    is_active_window: bool,
+    window_state: WindowState,
     window_rect: RECT,
     window_padding: i32,
     current_monitor: HMONITOR,
@@ -49,6 +49,23 @@ pub struct WindowBorder {
     initialize_delay: u64,
     unminimize_delay: u64,
     is_paused: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum WindowState {
+    #[default]
+    Active,
+    Inactive,
+}
+
+impl WindowState {
+    pub fn update(&mut self, self_hwnd: isize, active_hwnd: isize) {
+        if self_hwnd == active_hwnd {
+            *self = WindowState::Active;
+        } else {
+            *self = WindowState::Inactive;
+        }
+    }
 }
 
 impl WindowBorder {
@@ -368,13 +385,15 @@ impl WindowBorder {
     }
 
     fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
-        self.is_active_window =
-            self.tracking_window.0 as isize == *APP_STATE.active_window.lock().unwrap();
+        self.window_state.update(
+            self.tracking_window.0 as isize,
+            *APP_STATE.active_window.lock().unwrap(),
+        );
 
         match self
             .border_drawer
             .animations
-            .get_current(self.is_active_window)
+            .get_current(self.window_state)
             .contains_type(AnimType::Fade)
         {
             false => self.update_brush_opacities(),
@@ -382,7 +401,7 @@ impl WindowBorder {
                 self.update_brush_opacities();
                 self.border_drawer
                     .animations
-                    .update_fade_progress(self.is_active_window)
+                    .update_fade_progress(self.window_state)
             }
             true => self.border_drawer.animations.should_fade = true,
         }
@@ -391,12 +410,12 @@ impl WindowBorder {
     }
 
     fn update_brush_opacities(&mut self) {
-        let (top_color, bottom_color) = match self.is_active_window {
-            true => (
+        let (top_color, bottom_color) = match self.window_state {
+            WindowState::Active => (
                 &mut self.border_drawer.active_color,
                 &mut self.border_drawer.inactive_color,
             ),
-            false => (
+            WindowState::Inactive => (
                 &mut self.border_drawer.inactive_color,
                 &mut self.border_drawer.active_color,
             ),
@@ -425,11 +444,10 @@ impl WindowBorder {
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
-        if let Err(err) = self.border_drawer.render(
-            &self.window_rect,
-            self.window_padding,
-            self.is_active_window,
-        ) {
+        if let Err(err) =
+            self.border_drawer
+                .render(&self.window_rect, self.window_padding, self.window_state)
+        {
             self.handle_render_error(err)?
         };
 
@@ -681,7 +699,7 @@ impl WindowBorder {
                 self.border_drawer.animate(
                     &self.window_rect,
                     self.window_padding,
-                    self.is_active_window,
+                    self.window_state,
                 );
             }
             WM_APP_KOMOREBI => {

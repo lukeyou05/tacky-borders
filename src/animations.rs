@@ -9,6 +9,7 @@ use crate::anim_timer::AnimationTimer;
 use crate::colors::ColorBrush;
 use crate::config::{serde_default_bool, serde_default_i32};
 use crate::utils::cubic_bezier;
+use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -97,7 +98,7 @@ impl Animations {
 
     pub fn animate_fade(
         &mut self,
-        is_active_window: bool,
+        window_state: WindowState,
         active_color: &ColorBrush,
         inactive_color: &ColorBrush,
         anim_elapsed: &time::Duration,
@@ -107,18 +108,18 @@ impl Animations {
         // unminimized. If that is the case, only one of the colors should be visible while fading.
         if active_color.get_opacity() == Some(0.0) && inactive_color.get_opacity() == Some(0.0) {
             // Set fade_progress here so we start from 0 opacity for the visible color
-            self.fade_progress = match is_active_window {
-                true => 0.0,
-                false => 1.0,
+            self.fade_progress = match window_state {
+                WindowState::Active => 0.0,
+                WindowState::Inactive => 1.0,
             };
 
             self.fade_to_visible = true;
         }
 
         // Determine which direction we should move fade_progress
-        let direction = match is_active_window {
-            true => 1.0,
-            false => -1.0,
+        let direction = match window_state {
+            WindowState::Active => 1.0,
+            WindowState::Inactive => -1.0,
         };
 
         let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
@@ -140,9 +141,9 @@ impl Animations {
         let y_coord = anim_params.easing_fn.as_ref()(self.fade_progress);
 
         let (new_active_opacity, new_inactive_opacity) = match self.fade_to_visible {
-            true => match is_active_window {
-                true => (y_coord, 0.0),
-                false => (0.0, 1.0 - y_coord),
+            true => match window_state {
+                WindowState::Active => (y_coord, 0.0),
+                WindowState::Inactive => (0.0, 1.0 - y_coord),
             },
             false => (y_coord, 1.0 - y_coord),
         };
@@ -151,10 +152,10 @@ impl Animations {
         inactive_color.set_opacity(new_inactive_opacity);
     }
 
-    pub fn get_current(&self, is_active_window: bool) -> &Vec<AnimParams> {
-        match is_active_window {
-            true => &self.active,
-            false => &self.inactive,
+    pub fn get_current(&self, window_state: WindowState) -> &Vec<AnimParams> {
+        match window_state {
+            WindowState::Active => &self.active,
+            WindowState::Inactive => &self.inactive,
         }
     }
 
@@ -178,10 +179,10 @@ impl Animations {
         }
     }
 
-    pub fn update_fade_progress(&mut self, is_active_window: bool) {
-        self.fade_progress = match is_active_window {
-            true => 1.0,
-            false => 0.0,
+    pub fn update_fade_progress(&mut self, window_state: WindowState) {
+        self.fade_progress = match window_state {
+            WindowState::Active => 1.0,
+            WindowState::Inactive => 0.0,
         };
     }
 }

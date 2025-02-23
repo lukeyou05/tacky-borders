@@ -16,6 +16,7 @@ use crate::colors::ColorBrush;
 use crate::effects::Effects;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::LogIfErr;
+use crate::window_border::WindowState;
 
 #[derive(Debug, Default)]
 pub struct BorderDrawer {
@@ -129,20 +130,35 @@ impl BorderDrawer {
         &mut self,
         window_rect: &RECT,
         window_padding: i32,
-        is_active_window: bool,
+        window_state: WindowState,
     ) -> windows::core::Result<()> {
         self.last_render_time = Some(time::Instant::now());
+
+        let border_width = self.border_width as f32;
+        let border_offset = self.border_offset as f32;
+        let window_padding = window_padding as f32;
+
+        self.render_rect.rect = D2D_RECT_F {
+            left: border_width / 2.0 + window_padding - border_offset,
+            top: border_width / 2.0 + window_padding - border_offset,
+            right: (window_rect.right - window_rect.left) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+            bottom: (window_rect.bottom - window_rect.top) as f32
+                - border_width / 2.0
+                - window_padding
+                + border_offset,
+        };
 
         // I ignore the pattern matching here, instead opting to grab the render backend from
         // within the other render functions. This is because Rust borrow checker grrr.
         match self.render_backend {
-            RenderBackend::V2(_) if self.effects.should_apply(is_active_window) => {
-                self.render_v2_with_effects(window_rect, window_padding, is_active_window)?
+            RenderBackend::V2(_) if self.effects.should_apply(window_state) => {
+                self.render_v2_with_effects(window_rect, window_state)?
             }
-            RenderBackend::V2(_) => {
-                self.render_v2(window_rect, window_padding, is_active_window)?
-            }
-            RenderBackend::Legacy(_) => self.render_legacy(window_rect, is_active_window)?,
+            RenderBackend::V2(_) => self.render_v2(window_rect, window_state)?,
+            RenderBackend::Legacy(_) => self.render_legacy(window_rect, window_state)?,
             RenderBackend::None => {
                 return Err(windows::core::Error::new(E_FAIL, "render_backend is None"));
             }
@@ -154,7 +170,7 @@ impl BorderDrawer {
     fn render_legacy(
         &mut self,
         window_rect: &RECT,
-        is_active_window: bool,
+        window_state: WindowState,
     ) -> windows::core::Result<()> {
         let RenderBackend::Legacy(ref backend) = self.render_backend else {
             return Err(windows::core::Error::new(
@@ -169,25 +185,13 @@ impl BorderDrawer {
             height: (window_rect.bottom - window_rect.top) as u32,
         };
 
-        let border_width = self.border_width as f32;
-        let border_offset = self.border_offset as f32;
-
-        self.render_rect.rect = D2D_RECT_F {
-            left: border_width / 2.0 - border_offset,
-            top: border_width / 2.0 - border_offset,
-            right: (window_rect.right - window_rect.left) as f32 - border_width / 2.0
-                + border_offset,
-            bottom: (window_rect.bottom - window_rect.top) as f32 - border_width / 2.0
-                + border_offset,
-        };
-
         unsafe {
             render_target.Resize(&pixel_size)?;
 
             // Determine which color should be drawn on top (for color fade animation)
-            let (bottom_color, top_color) = match is_active_window {
-                true => (&self.inactive_color, &self.active_color),
-                false => (&self.active_color, &self.inactive_color),
+            let (bottom_color, top_color) = match window_state {
+                WindowState::Active => (&self.inactive_color, &self.active_color),
+                WindowState::Inactive => (&self.active_color, &self.inactive_color),
             };
 
             render_target.BeginDraw();
@@ -223,8 +227,7 @@ impl BorderDrawer {
     fn render_v2(
         &mut self,
         window_rect: &RECT,
-        window_padding: i32,
-        is_active_window: bool,
+        window_state: WindowState,
     ) -> windows::core::Result<()> {
         let RenderBackend::V2(ref backend) = self.render_backend else {
             return Err(windows::core::Error::new(
@@ -234,28 +237,11 @@ impl BorderDrawer {
         };
         let d2d_context = &backend.d2d_context;
 
-        let border_width = self.border_width as f32;
-        let border_offset = self.border_offset as f32;
-        let window_padding = window_padding as f32;
-
-        self.render_rect.rect = D2D_RECT_F {
-            left: border_width / 2.0 + window_padding - border_offset,
-            top: border_width / 2.0 + window_padding - border_offset,
-            right: (window_rect.right - window_rect.left) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-            bottom: (window_rect.bottom - window_rect.top) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-        };
-
         unsafe {
             // Determine which color should be drawn on top (for color fade animation)
-            let (bottom_color, top_color) = match is_active_window {
-                true => (&self.inactive_color, &self.active_color),
-                false => (&self.active_color, &self.inactive_color),
+            let (bottom_color, top_color) = match window_state {
+                WindowState::Active => (&self.inactive_color, &self.active_color),
+                WindowState::Inactive => (&self.active_color, &self.inactive_color),
             };
 
             d2d_context.BeginDraw();
@@ -301,8 +287,7 @@ impl BorderDrawer {
     fn render_v2_with_effects(
         &mut self,
         window_rect: &RECT,
-        window_padding: i32,
-        is_active_window: bool,
+        window_state: WindowState,
     ) -> windows::core::Result<()> {
         let RenderBackend::V2(ref backend) = self.render_backend else {
             return Err(windows::core::Error::new(
@@ -312,31 +297,15 @@ impl BorderDrawer {
         };
         let d2d_context = &backend.d2d_context;
 
-        let border_width = self.border_width as f32;
-        let border_offset = self.border_offset as f32;
-        let window_padding = window_padding as f32;
-
-        self.render_rect.rect = D2D_RECT_F {
-            left: border_width / 2.0 + window_padding - border_offset,
-            top: border_width / 2.0 + window_padding - border_offset,
-            right: (window_rect.right - window_rect.left) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-            bottom: (window_rect.bottom - window_rect.top) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-        };
-
         unsafe {
             // Determine which color should be drawn on top (for color fade animation)
-            let (bottom_color, top_color) = match is_active_window {
-                true => (&self.inactive_color, &self.active_color),
-                false => (&self.active_color, &self.inactive_color),
+            let (bottom_color, top_color) = match window_state {
+                WindowState::Active => (&self.inactive_color, &self.active_color),
+                WindowState::Inactive => (&self.active_color, &self.inactive_color),
             };
 
             // Create a rect that covers up to the outer edge of the border
+            let border_width = self.border_width as f32;
             let render_rect_adjusted = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
                     left: self.render_rect.rect.left - (border_width / 2.0),
@@ -438,7 +407,7 @@ impl BorderDrawer {
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
             let command_list = self
                 .effects
-                .get_current_command_list(is_active_window)
+                .get_current_command_list(window_state)
                 .map_err(|err| windows::core::Error::new(E_POINTER, err.to_string()))?;
 
             // Draw to the target_bitmap
@@ -504,8 +473,7 @@ impl BorderDrawer {
         }
     }
 
-    // TODO: maybe make this return a Result type
-    pub fn animate(&mut self, window_rect: &RECT, window_padding: i32, is_active_window: bool) {
+    pub fn animate(&mut self, window_rect: &RECT, window_padding: i32, window_state: WindowState) {
         let anim_elapsed = self
             .last_anim_time
             .map(|instant| instant.elapsed())
@@ -517,7 +485,7 @@ impl BorderDrawer {
 
         let mut update = false;
 
-        for anim_params in self.animations.get_current(is_active_window).clone().iter() {
+        for anim_params in self.animations.get_current(window_state).clone().iter() {
             match anim_params.anim_type {
                 AnimType::Spiral => {
                     self.animations.animate_spiral(
@@ -544,7 +512,7 @@ impl BorderDrawer {
                 AnimType::Fade => {
                     if self.animations.should_fade {
                         self.animations.animate_fade(
-                            is_active_window,
+                            window_state,
                             &self.active_color,
                             &self.inactive_color,
                             &anim_elapsed,
@@ -561,7 +529,7 @@ impl BorderDrawer {
         let render_interval = 1.0 / self.animations.fps as f32;
         let time_diff = render_elapsed.as_secs_f32() - render_interval;
         if update && (time_diff.abs() <= 0.001 || time_diff >= 0.0) {
-            self.render(window_rect, window_padding, is_active_window)
+            self.render(window_rect, window_padding, window_state)
                 .log_if_err();
         }
     }

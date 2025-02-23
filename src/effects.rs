@@ -15,6 +15,7 @@ use windows::Win32::Graphics::Direct2D::{
 
 use crate::config::{serde_default_bool, serde_default_f32};
 use crate::render_backend::RenderBackend;
+use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -63,27 +64,27 @@ impl Effects {
         !self.active.is_empty() || !self.inactive.is_empty()
     }
 
-    pub fn get_current_vec(&self, is_active_window: bool) -> &Vec<EffectParams> {
-        match is_active_window {
-            true => &self.active,
-            false => &self.inactive,
+    pub fn get_current_vec(&self, window_state: WindowState) -> &Vec<EffectParams> {
+        match window_state {
+            WindowState::Active => &self.active,
+            WindowState::Inactive => &self.inactive,
         }
     }
 
-    pub fn should_apply(&self, is_active_window: bool) -> bool {
-        !self.get_current_vec(is_active_window).is_empty()
+    pub fn should_apply(&self, window_state: WindowState) -> bool {
+        !self.get_current_vec(window_state).is_empty()
     }
 
     pub fn get_current_command_list(
         &self,
-        is_active_window: bool,
+        window_state: WindowState,
     ) -> anyhow::Result<&ID2D1CommandList> {
-        match is_active_window {
-            true => self
+        match window_state {
+            WindowState::Active => self
                 .active_command_list
                 .as_ref()
                 .context("could not get active_command_list"),
-            false => self
+            WindowState::Inactive => self
                 .inactive_command_list
                 .as_ref()
                 .context("could not get inactive_command_list"),
