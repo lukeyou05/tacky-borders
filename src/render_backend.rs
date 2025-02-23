@@ -97,7 +97,7 @@ impl RenderBackend {
                 backend.update(width, height, create_extra_bitmaps)?;
             }
             // TODO: We already update/resize the buffers in the render() function within
-            // WindowBorder, but I might want to move it here instead?
+            // BorderDrawer, but I might want to move it here instead?
             RenderBackend::Legacy(_) => return Ok(()),
             RenderBackend::None => return Err(anyhow!("render backend is None")),
         }

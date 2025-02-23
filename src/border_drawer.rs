@@ -63,12 +63,10 @@ impl BorderDrawer {
         window_rect: &RECT,
         render_backend_config: RenderBackendConfig,
     ) -> anyhow::Result<()> {
-        // Initialize render resources
         self.render_backend = render_backend_config
             .to_render_backend(width, height, border_window, self.effects.is_enabled())
             .context("could not initialize render backend in init()")?;
 
-        // Initialize the command lists used to draw effects
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
@@ -112,7 +110,7 @@ impl BorderDrawer {
         Ok(())
     }
 
-    pub fn update(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+    pub fn update_renderer(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
         self.render_backend
             .update(width, height, self.effects.is_enabled())
             .context("could not update render resources")?;
@@ -329,6 +327,9 @@ impl BorderDrawer {
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
+            // We use filled rectangles here because it helps make the effects more visible.
+            // Additionally, if someone sets the border width to 0, the effects will still be
+            // visible (whereas they wouldn't be if we used a hollow rectangle).
             if bottom_color.get_opacity() > Some(0.0) {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
@@ -365,7 +366,7 @@ impl BorderDrawer {
             d2d_context.SetTarget(mask_bitmap);
 
             // Create a rect that covers up to the inner edge of the border
-            // This rect is used to mask out the inner portion of the window
+            // This rect is used to mask out the inner portion of the border
             // Note this is different from the earlier render_rect_adjusted
             let render_rect_adjusted = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
@@ -439,16 +440,16 @@ impl BorderDrawer {
     }
 
     // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
-    fn draw_rectangle(&self, render_device: &ID2D1RenderTarget, brush: &ID2D1Brush) {
+    fn draw_rectangle(&self, renderer: &ID2D1RenderTarget, brush: &ID2D1Brush) {
         unsafe {
             match self.border_radius {
-                0.0 => render_device.DrawRectangle(
+                0.0 => renderer.DrawRectangle(
                     &self.render_rect.rect,
                     brush,
                     self.border_width as f32,
                     None,
                 ),
-                _ => render_device.DrawRoundedRectangle(
+                _ => renderer.DrawRoundedRectangle(
                     &self.render_rect,
                     brush,
                     self.border_width as f32,
@@ -461,14 +462,14 @@ impl BorderDrawer {
     // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
     fn fill_rectangle(
         &self,
-        rounded_rect: &D2D1_ROUNDED_RECT,
-        render_device: &ID2D1RenderTarget,
+        render_rect: &D2D1_ROUNDED_RECT,
+        renderer: &ID2D1RenderTarget,
         brush: &ID2D1Brush,
     ) {
         unsafe {
             match self.border_radius {
-                0.0 => render_device.FillRectangle(&rounded_rect.rect, brush),
-                _ => render_device.FillRoundedRectangle(rounded_rect, brush),
+                0.0 => renderer.FillRectangle(&render_rect.rect, brush),
+                _ => renderer.FillRoundedRectangle(render_rect, brush),
             }
         }
     }

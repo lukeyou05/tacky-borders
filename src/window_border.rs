@@ -131,12 +131,10 @@ impl WindowBorder {
             SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
                 .context("could not set LWA_ALPHA")?;
 
-            // Initialize render resources
             let m_info = get_monitor_info(self.current_monitor).context("mi")?;
             let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
             let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
 
-            // TODO: maybe move into load_from_config or smth so i dont have to lock Config twice
             self.border_drawer
                 .init_renderer(
                     screen_width
@@ -488,9 +486,7 @@ impl WindowBorder {
             info!("successfully recreated render target; resuming thread");
         } else {
             self.cleanup_and_queue_exit();
-            return Err(anyhow!(
-                "d2d_context.EndDraw() failed; exiting thread: {err}"
-            ));
+            return Err(anyhow!("self.render() failed; exiting thread: {err}"));
         }
 
         Ok(())
@@ -598,7 +594,7 @@ impl WindowBorder {
                     let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
 
                     self.border_drawer
-                        .update(
+                        .update_renderer(
                             screen_width
                                 + ((self.border_drawer.border_width + self.window_padding) * 2)
                                     as u32,
