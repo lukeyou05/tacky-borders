@@ -1,25 +1,27 @@
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time;
+use windows::Win32::Foundation::{HWND, RECT};
 
 use windows::Foundation::Numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
-use crate::border_config::{serde_default_bool, serde_default_i32};
+use crate::colors::ColorBrush;
+use crate::config::{serde_default_bool, serde_default_i32};
 use crate::utils::cubic_bezier;
-use crate::window_border::WindowBorder;
+use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AnimationsConfig {
     #[serde(default)]
-    pub active: Vec<AnimParamsConfig>,
+    active: Vec<AnimParamsConfig>,
     #[serde(default)]
-    pub inactive: Vec<AnimParamsConfig>,
+    inactive: Vec<AnimParamsConfig>,
     #[serde(default = "serde_default_i32::<60>")]
-    pub fps: i32,
+    fps: i32,
     #[serde(default = "serde_default_bool::<true>")]
-    pub enabled: bool,
+    enabled: bool,
 }
 
 impl AnimationsConfig {
@@ -56,6 +58,133 @@ pub struct Animations {
     pub should_fade: bool,
     pub spiral_progress: f32,
     pub spiral_angle: f32,
+}
+
+impl Animations {
+    pub fn animate_spiral(
+        &mut self,
+        window_rect: &RECT,
+        active_color: &ColorBrush,
+        inactive_color: &ColorBrush,
+        anim_elapsed: &time::Duration,
+        anim_params: &AnimParams,
+        reverse: bool,
+    ) {
+        let direction = match reverse {
+            true => -1.0,
+            false => 1.0,
+        };
+
+        let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
+        self.spiral_progress += delta_x;
+
+        if !(0.0..=1.0).contains(&self.spiral_progress) {
+            self.spiral_progress = self.spiral_progress.rem_euclid(1.0);
+        }
+
+        let y_coord = anim_params.easing_fn.as_ref()(self.spiral_progress);
+
+        self.spiral_angle = 360.0 * y_coord;
+
+        // Calculate the center point of the window
+        let center_x = (window_rect.right - window_rect.left) / 2;
+        let center_y = (window_rect.bottom - window_rect.top) / 2;
+
+        let transform = Matrix3x2::rotation(self.spiral_angle, center_x as f32, center_y as f32);
+
+        active_color.set_transform(&transform);
+        inactive_color.set_transform(&transform);
+    }
+
+    pub fn animate_fade(
+        &mut self,
+        window_state: WindowState,
+        active_color: &ColorBrush,
+        inactive_color: &ColorBrush,
+        anim_elapsed: &time::Duration,
+        anim_params: &AnimParams,
+    ) {
+        // If both are 0, that means the window has been opened for the first time or has been
+        // unminimized. If that is the case, only one of the colors should be visible while fading.
+        if active_color.get_opacity() == Some(0.0) && inactive_color.get_opacity() == Some(0.0) {
+            // Set fade_progress here so we start from 0 opacity for the visible color
+            self.fade_progress = match window_state {
+                WindowState::Active => 0.0,
+                WindowState::Inactive => 1.0,
+            };
+
+            self.fade_to_visible = true;
+        }
+
+        // Determine which direction we should move fade_progress
+        let direction = match window_state {
+            WindowState::Active => 1.0,
+            WindowState::Inactive => -1.0,
+        };
+
+        let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
+        self.fade_progress += delta_x;
+
+        // Check if the fade animation is finished
+        if !(0.0..=1.0).contains(&self.fade_progress) {
+            let final_opacity = self.fade_progress.clamp(0.0, 1.0);
+
+            active_color.set_opacity(final_opacity);
+            inactive_color.set_opacity(1.0 - final_opacity);
+
+            self.fade_progress = final_opacity;
+            self.fade_to_visible = false;
+            self.should_fade = false;
+            return;
+        }
+
+        let y_coord = anim_params.easing_fn.as_ref()(self.fade_progress);
+
+        let (new_active_opacity, new_inactive_opacity) = match self.fade_to_visible {
+            true => match window_state {
+                WindowState::Active => (y_coord, 0.0),
+                WindowState::Inactive => (0.0, 1.0 - y_coord),
+            },
+            false => (y_coord, 1.0 - y_coord),
+        };
+
+        active_color.set_opacity(new_active_opacity);
+        inactive_color.set_opacity(new_inactive_opacity);
+    }
+
+    pub fn get_current(&self, window_state: WindowState) -> &Vec<AnimParams> {
+        match window_state {
+            WindowState::Active => &self.active,
+            WindowState::Inactive => &self.inactive,
+        }
+    }
+
+    pub fn set_timer_if_enabled(
+        &mut self,
+        border_window: HWND,
+        last_anim_time: &mut Option<time::Instant>,
+    ) {
+        if (!self.active.is_empty() || !self.inactive.is_empty()) && self.timer.is_none() {
+            let timer_duration = (1000.0 / self.fps as f32) as u64;
+            self.timer = Some(AnimationTimer::start(border_window, timer_duration));
+
+            *last_anim_time = Some(time::Instant::now());
+        }
+    }
+
+    pub fn destroy_timer(&mut self) {
+        if let Some(anim_timer) = self.timer.as_mut() {
+            anim_timer.stop();
+            self.timer = None;
+        }
+    }
+
+    pub fn update_fade_progress(&mut self, window_state: WindowState) {
+        self.fade_progress = match window_state {
+            WindowState::Active => 1.0,
+            WindowState::Inactive => 0.0,
+        };
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -211,127 +340,4 @@ impl AnimEasing {
             AnimEasing::CubicBezier(bezier) => bezier,
         }
     }
-}
-
-pub fn animate_spiral(
-    border: &mut WindowBorder,
-    anim_elapsed: &time::Duration,
-    anim_params: &AnimParams,
-    reverse: bool,
-) {
-    let direction = match reverse {
-        true => -1.0,
-        false => 1.0,
-    };
-
-    let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
-    border.animations.spiral_progress += delta_x;
-
-    if !(0.0..=1.0).contains(&border.animations.spiral_progress) {
-        border.animations.spiral_progress = border.animations.spiral_progress.rem_euclid(1.0);
-    }
-
-    let y_coord = anim_params.easing_fn.as_ref()(border.animations.spiral_progress);
-
-    border.animations.spiral_angle = 360.0 * y_coord;
-
-    // Calculate the center point of the window
-    let center_x = (border.window_rect.right - border.window_rect.left) / 2;
-    let center_y = (border.window_rect.bottom - border.window_rect.top) / 2;
-
-    let transform = Matrix3x2::rotation(
-        border.animations.spiral_angle,
-        center_x as f32,
-        center_y as f32,
-    );
-
-    border.active_color.set_transform(&transform);
-    border.inactive_color.set_transform(&transform);
-}
-
-pub fn animate_fade(
-    border: &mut WindowBorder,
-    anim_elapsed: &time::Duration,
-    anim_params: &AnimParams,
-) {
-    // If both are 0, that means the window has been opened for the first time or has been
-    // unminimized. If that is the case, only one of the colors should be visible while fading.
-    if border.active_color.get_opacity() == Some(0.0)
-        && border.inactive_color.get_opacity() == Some(0.0)
-    {
-        // Set fade_progress here so we start from 0 opacity for the visible color
-        border.animations.fade_progress = match border.is_active_window {
-            true => 0.0,
-            false => 1.0,
-        };
-
-        border.animations.fade_to_visible = true;
-    }
-
-    // Determine which direction we should move fade_progress
-    let direction = match border.is_active_window {
-        true => 1.0,
-        false => -1.0,
-    };
-
-    let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
-    border.animations.fade_progress += delta_x;
-
-    // Check if the fade animation is finished
-    if !(0.0..=1.0).contains(&border.animations.fade_progress) {
-        let final_opacity = border.animations.fade_progress.clamp(0.0, 1.0);
-
-        border.active_color.set_opacity(final_opacity);
-        border.inactive_color.set_opacity(1.0 - final_opacity);
-
-        border.animations.fade_progress = final_opacity;
-        border.animations.fade_to_visible = false;
-        border.animations.should_fade = false;
-        return;
-    }
-
-    let y_coord = anim_params.easing_fn.as_ref()(border.animations.fade_progress);
-
-    let (new_active_opacity, new_inactive_opacity) = match border.animations.fade_to_visible {
-        true => match border.is_active_window {
-            true => (y_coord, 0.0),
-            false => (0.0, 1.0 - y_coord),
-        },
-        false => (y_coord, 1.0 - y_coord),
-    };
-
-    border.active_color.set_opacity(new_active_opacity);
-    border.inactive_color.set_opacity(new_inactive_opacity);
-}
-
-pub fn get_current_anims(border: &mut WindowBorder) -> &Vec<AnimParams> {
-    match border.is_active_window {
-        true => &border.animations.active,
-        false => &border.animations.inactive,
-    }
-}
-
-pub fn set_timer_if_anims_enabled(border: &mut WindowBorder) {
-    if (!border.animations.active.is_empty() || !border.animations.inactive.is_empty())
-        && border.animations.timer.is_none()
-    {
-        let timer_duration = (1000.0 / border.animations.fps as f32) as u64;
-        border.animations.timer = Some(AnimationTimer::start(border.border_window, timer_duration));
-
-        border.last_anim_time = Some(time::Instant::now());
-    }
-}
-
-pub fn destroy_timer(border: &mut WindowBorder) {
-    if let Some(anim_timer) = border.animations.timer.as_mut() {
-        anim_timer.stop();
-        border.animations.timer = None;
-    }
-}
-
-pub fn update_fade_progress(border: &mut WindowBorder) {
-    border.animations.fade_progress = match border.is_active_window {
-        true => 1.0,
-        false => 0.0,
-    };
 }

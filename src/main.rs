@@ -9,16 +9,27 @@ extern crate sp_log;
 
 use anyhow::{anyhow, Context};
 use komorebi::KomorebiIntegration;
+use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use utils::{get_foreground_window, get_last_error};
+use windows::core::Interface;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE, WPARAM};
+use windows::Win32::Foundation::{BOOL, HMODULE, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, D2D1_FACTORY_TYPE_MULTI_THREADED,
+    D2D1CreateFactory, ID2D1Device7, ID2D1Factory8, D2D1_FACTORY_TYPE_MULTI_THREADED,
 };
+use windows::Win32::Graphics::Direct3D::{
+    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1,
+    D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_9_1, D3D_FEATURE_LEVEL_9_2,
+    D3D_FEATURE_LEVEL_9_3,
+};
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+};
+use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
@@ -30,23 +41,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 mod anim_timer;
 mod animations;
-mod border_config;
+mod border_drawer;
 mod colors;
+mod config;
+mod effects;
 mod event_hook;
 mod iocp;
 mod komorebi;
+mod render_backend;
 mod sys_tray_icon;
 mod utils;
 mod window_border;
 
-use crate::border_config::{Config, ConfigWatcher, EnableMode};
+use crate::config::{Config, ConfigWatcher, EnableMode};
 use crate::utils::{
     create_border_for_window, get_window_rule, has_filtered_style, imm_disable_ime,
     is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
     set_process_dpi_awareness_context, LogIfErr,
 };
 
-// TODO: dunno if I should pass an Arc ptr of this to other functions/structs
 static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
 
 struct AppState {
@@ -56,8 +69,15 @@ struct AppState {
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
-    render_factory: ID2D1Factory,
+    render_factory: ID2D1Factory8,
+    directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
+}
+
+struct DirectXDevices {
+    d3d11_device: ID3D11Device,
+    dxgi_device: IDXGIDevice,
+    d2d_device: ID2D1Device7,
 }
 
 unsafe impl Send for AppState {}
@@ -74,7 +94,6 @@ impl AppState {
             Config::config_watcher_callback,
         );
 
-        // NOTE: experimental
         let mut komorebi_integration = KomorebiIntegration::new();
 
         let config = match Config::create() {
@@ -97,11 +116,29 @@ impl AppState {
             }
         };
 
-        let render_factory = unsafe {
+        let render_factory: ID2D1Factory8 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
                 error!("could not create ID2D1Factory: {err}");
                 panic!()
             })
+        };
+
+        let directx_devices_opt = match config.render_backend {
+            RenderBackendConfig::V2 => {
+                // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
+                let (d3d11_device, dxgi_device, d2d_device) =
+                    create_directx_devices(&render_factory).unwrap_or_else(|err| {
+                        error!("could not create directx devices: {err}");
+                        panic!("could not create directx devices: {err}");
+                    });
+
+                Some(DirectXDevices {
+                    d3d11_device,
+                    dxgi_device,
+                    d2d_device,
+                })
+            }
+            RenderBackendConfig::Legacy => None,
         };
 
         AppState {
@@ -112,6 +149,7 @@ impl AppState {
             config: RwLock::new(config),
             config_watcher: Mutex::new(config_watcher),
             render_factory,
+            directx_devices: RwLock::new(directx_devices_opt),
             komorebi_integration: Mutex::new(komorebi_integration),
         }
     }
@@ -123,6 +161,49 @@ impl AppState {
     fn set_polling_active_window(&self, val: bool) {
         self.is_polling_active_window.store(val, Ordering::SeqCst);
     }
+}
+
+fn create_directx_devices(
+    factory: &ID2D1Factory8,
+) -> anyhow::Result<(ID3D11Device, IDXGIDevice, ID2D1Device7)> {
+    // NOTE: if you add D3D11_CREATE_DEVICE_DEBUG here, be sure to remove it once done or
+    // else it will crash on computers without the Graphics Tools feature installed
+    let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+
+    let feature_levels = [
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_3,
+        D3D_FEATURE_LEVEL_9_2,
+        D3D_FEATURE_LEVEL_9_1,
+    ];
+
+    let mut device_opt: Option<ID3D11Device> = None;
+    let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
+
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            creation_flags,
+            Some(&feature_levels),
+            D3D11_SDK_VERSION,
+            Some(&mut device_opt),
+            Some(&mut feature_level),
+            None,
+        )
+    }?;
+
+    debug!("directx feature_level: {feature_level:X?}");
+
+    let device = device_opt.context("could not get d3d11 device")?;
+    let dxgi_device: IDXGIDevice = device.cast().context("id3d11device cast")?;
+    let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+
+    Ok((device, dxgi_device, d2d_device))
 }
 
 fn main() {
