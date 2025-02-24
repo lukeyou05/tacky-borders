@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time;
 use windows::Win32::Foundation::{HWND, RECT};
 
-use windows::Foundation::Numerics::Matrix3x2;
+use windows_numerics::Matrix3x2;
 
 use crate::anim_timer::AnimationTimer;
 use crate::colors::ColorBrush;

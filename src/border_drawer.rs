@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context};
 use std::time;
-use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, E_FAIL, E_POINTER, HWND, RECT, S_OK};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D_RECT_F, D2D_SIZE_U,
@@ -10,6 +9,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::Dxgi::DXGI_PRESENT;
+use windows_numerics::Matrix3x2;
 
 use crate::animations::{AnimType, Animations};
 use crate::colors::ColorBrush;

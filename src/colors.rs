@@ -2,8 +2,8 @@ use anyhow::{anyhow, Context};
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
-use windows::Foundation::Numerics::Matrix3x2;
-use windows::Win32::Foundation::{BOOL, FALSE, RECT};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{FALSE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D_POINT_2F};
 use windows::Win32::Graphics::Direct2D::{
     ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget, ID2D1SolidColorBrush,
@@ -11,6 +11,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
 };
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
+use windows_numerics::Matrix3x2;
 
 use crate::LogIfErr;
 

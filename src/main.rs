@@ -15,9 +15,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use utils::{get_foreground_window, get_last_error};
-use windows::core::Interface;
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HMODULE, HWND, LPARAM, TRUE, WPARAM};
+use windows::core::{w, Interface, BOOL, PCWSTR};
+use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, TRUE, WPARAM};
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Device4, ID2D1Factory5, D2D1_FACTORY_TYPE_MULTI_THREADED,
 };
@@ -166,8 +165,6 @@ impl AppState {
 fn create_directx_devices(
     factory: &ID2D1Factory5,
 ) -> anyhow::Result<(ID3D11Device, IDXGIDevice, ID2D1Device4)> {
-    // NOTE: if you add D3D11_CREATE_DEVICE_DEBUG here, be sure to remove it once done or
-    // else it will crash on computers without the Graphics Tools feature installed
     let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
     let feature_levels = [

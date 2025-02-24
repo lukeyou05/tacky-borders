@@ -15,9 +15,10 @@ regex = "1.11.1"
 log = "0.4.26"
 sp_log = "0.2.1"
 anyhow = "1.0.96"
+windows-numerics = "0.1.1"
 
 [dependencies.windows]
-version = "0.59.0"
+version = "0.60.0"
 features = [
   "Win32_Foundation",
   "Foundation_Numerics",

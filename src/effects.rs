@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context};
 use serde::Deserialize;
 use std::slice;
-use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_DESTINATION_OUT;
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D12DAffineTransform, CLSID_D2D1Composite, CLSID_D2D1GaussianBlur, CLSID_D2D1Opacity,
@@ -12,6 +11,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_PROPERTY_TYPE_FLOAT, D2D1_PROPERTY_TYPE_MATRIX_3X2,
     D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_OPTIMIZATION,
 };
+use windows_numerics::Matrix3x2;
 
 use crate::config::{serde_default_bool, serde_default_f32};
 use crate::render_backend::RenderBackend;
