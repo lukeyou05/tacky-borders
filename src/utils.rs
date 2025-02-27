@@ -426,6 +426,7 @@ impl std::fmt::Display for BezierError {
         }
     }
 }
+impl std::error::Error for BezierError {}
 
 struct Point {
     x: f32,
@@ -509,4 +510,22 @@ pub fn cubic_bezier(control_points: &[f32; 4]) -> Result<impl Fn(f32) -> f32, Be
         // After finding 't', evalaute the y-component of the Bezier curve
         de_casteljau(t, p_i.y, p1.y, p2.y, p_f.y)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cubic_bezier() -> anyhow::Result<()> {
+        let easing_fn = cubic_bezier(&[0.45, 0.0, 0.55, 1.0])?;
+
+        let y_coord_0_2 = easing_fn(0.2);
+        let y_coord_0_5 = easing_fn(0.5);
+
+        assert!((0.07..=0.08).contains(&y_coord_0_2));
+        assert!((0.499..=0.501).contains(&y_coord_0_5));
+
+        Ok(())
+    }
 }

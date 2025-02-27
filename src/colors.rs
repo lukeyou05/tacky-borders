@@ -452,3 +452,84 @@ fn parse_hex(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
         Err(anyhow!("invalid hex: {s}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vertical_gradient_90() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Gradient(GradientBrushConfig {
+            colors: vec!["#ffffff".to_string(), "#000000".to_string()],
+            direction: GradientDirection::Angle("90deg".to_string()),
+        });
+        let color_brush = color_brush_config.to_color(true);
+
+        if let ColorBrush::Gradient(ref gradient) = color_brush {
+            assert!(gradient.direction.start == [0.5, 1.0]);
+            assert!(gradient.direction.end == [0.5, 0.0]);
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vertical_gradient_neg90() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Gradient(GradientBrushConfig {
+            colors: vec!["#ffffff".to_string(), "#000000".to_string()],
+            direction: GradientDirection::Angle("-90deg".to_string()),
+        });
+        let color_brush = color_brush_config.to_color(true);
+
+        if let ColorBrush::Gradient(ref gradient) = color_brush {
+            assert!(gradient.direction.start == [0.5, 0.0]);
+            assert!(gradient.direction.end == [0.5, 1.0]);
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gradient_excess_angle() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Gradient(GradientBrushConfig {
+            colors: vec!["#ffffff".to_string(), "#000000".to_string()],
+            direction: GradientDirection::Angle("-540deg".to_string()),
+        });
+        let color_brush = color_brush_config.to_color(true);
+
+        if let ColorBrush::Gradient(ref gradient) = color_brush {
+            assert!(gradient.direction.start == [1.0, 0.5]);
+            assert!(gradient.direction.end == [0.0, 0.5]);
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_color_parser_translucent() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("#ffffff80".to_string());
+        let color_brush = color_brush_config.to_color(true);
+
+        if let ColorBrush::Solid(ref solid) = color_brush {
+            assert!(
+                solid.color
+                    == D2D1_COLOR_F {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 128.0 / 255.0
+                    }
+            );
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+}

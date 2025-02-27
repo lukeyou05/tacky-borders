@@ -16,6 +16,7 @@ impl AnimationTimer {
         let stop_flag = Arc::new(Mutex::new(false));
         let stop_flag_clone = stop_flag.clone();
 
+        // Convert hwnd to an isize so we can pass it into the thread
         let hwnd_isize = hwnd.0 as isize;
 
         // Spawn a worker thread for the timer
@@ -24,25 +25,20 @@ impl AnimationTimer {
             let interval = Duration::from_millis(interval_ms);
 
             while !*stop_flag_clone.lock().unwrap() {
-                if let Err(e) = post_message_w(Some(hwnd), WM_APP_ANIMATE, WPARAM(0), LPARAM(0)) {
-                    error!(
-                        "could not send animation timer message for {:?}: {}",
-                        hwnd, e
-                    );
+                if let Err(err) = post_message_w(Some(hwnd), WM_APP_ANIMATE, WPARAM(0), LPARAM(0)) {
+                    error!("could not send animation timer message for {hwnd:?}: {err}");
                     break;
                 }
                 thread::sleep(interval);
             }
         });
 
-        // Return the timer instance
         Self { stop_flag }
     }
 
     pub fn stop(&mut self) {
-        // Signal the worker thread to stop
-        if let Ok(mut flag) = self.stop_flag.lock() {
-            *flag = true;
+        if let Ok(mut stop_flag) = self.stop_flag.lock() {
+            *stop_flag = true;
         }
     }
 }

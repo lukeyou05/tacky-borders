@@ -5,9 +5,9 @@ use std::{io, mem, ptr};
 use windows::core::PSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
-    bind, closesocket, listen, AcceptEx, WSARecv, WSASocketW, ADDRESS_FAMILY, AF_UNIX, SOCKADDR,
-    SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOCK_STREAM, SOMAXCONN, WSABUF, WSA_FLAG_OVERLAPPED,
-    WSA_IO_PENDING,
+    bind, closesocket, connect, listen, AcceptEx, WSARecv, WSASend, WSASocketW, ADDRESS_FAMILY,
+    AF_UNIX, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOCK_STREAM, SOMAXCONN, WSABUF,
+    WSA_FLAG_OVERLAPPED, WSA_IO_PENDING,
 };
 use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::System::IO::{
@@ -35,6 +35,7 @@ impl UnixListener {
     pub fn bind(socket_path: &Path) -> anyhow::Result<Self> {
         let server_socket = UnixDomainSocket::new()?;
         server_socket.bind(socket_path)?;
+        server_socket.listen(SOMAXCONN as i32)?;
 
         Ok(Self {
             socket: server_socket,
@@ -42,10 +43,6 @@ impl UnixListener {
             overlapped: Box::new(OVERLAPPED::default()),
             flags: 0,
         })
-    }
-
-    pub fn listen(&self) -> anyhow::Result<()> {
-        self.socket.listen(SOMAXCONN as i32)
     }
 
     pub fn accept(&mut self) -> anyhow::Result<UnixStream> {
@@ -94,12 +91,32 @@ unsafe impl Sync for UnixStream {}
 
 #[allow(unused)]
 impl UnixStream {
+    pub fn connect(path: &Path) -> anyhow::Result<Self> {
+        let client_socket = UnixDomainSocket::new()?;
+        client_socket.connect(path)?;
+
+        Ok(Self {
+            socket: client_socket,
+            buffer: Vec::new(),
+            overlapped: Box::new(OVERLAPPED::default()),
+            flags: 0,
+        })
+    }
+
+    // NOTE: This takes ownership of the input buffer to avoid race conditions
     pub fn read(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<()> {
-        // Take ownership of this output buffer
+        // Here is where we take ownership of the buffer
         self.buffer = outputbuffer;
 
         self.socket
             .read(&mut self.buffer, self.overlapped.as_mut(), &mut self.flags)
+    }
+
+    // NOTE: The input buffer must be mutable because we put it in a WSABUF struct, which requires
+    // a mutable pointer. As far as I'm aware, it will not actually be modified.
+    pub fn write(&mut self, inputbuffer: &mut [u8]) -> anyhow::Result<()> {
+        self.socket
+            .write(inputbuffer, self.overlapped.as_mut(), self.flags)
     }
 
     pub fn token(&self) -> usize {
@@ -140,21 +157,7 @@ impl UnixDomainSocket {
     }
 
     pub fn bind(&self, path: &Path) -> anyhow::Result<()> {
-        let mut sun_path = [0i8; 108];
-        let path_bytes = path.as_os_str().as_encoded_bytes();
-
-        if path_bytes.len() > sun_path.len() {
-            return Err(anyhow!("socket path is too long"));
-        }
-
-        for (i, byte) in path_bytes.iter().enumerate() {
-            sun_path[i] = *byte as i8;
-        }
-
-        let sockaddr_un = SOCKADDR_UN {
-            sun_family: ADDRESS_FAMILY(AF_UNIX),
-            sun_path,
-        };
+        let sockaddr_un = sockaddr_un(path)?;
 
         let iresult = unsafe {
             bind(
@@ -167,6 +170,25 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
             unsafe { closesocket(self.0) };
             return Err(anyhow!("could not bind socket: {:?}", last_error));
+        }
+
+        Ok(())
+    }
+
+    pub fn connect(&self, path: &Path) -> anyhow::Result<()> {
+        let sockaddr_un = sockaddr_un(path)?;
+
+        if unsafe {
+            connect(
+                self.0,
+                ptr::addr_of!(sockaddr_un) as *const SOCKADDR,
+                mem::size_of_val(&sockaddr_un) as i32,
+            )
+        } == SOCKET_ERROR
+        {
+            let last_error = io::Error::last_os_error();
+            unsafe { closesocket(self.0) };
+            return Err(anyhow!("could not connect to socket: {:?}", last_error));
         }
 
         Ok(())
@@ -255,6 +277,40 @@ impl UnixDomainSocket {
         Ok(())
     }
 
+    pub fn write(
+        &mut self,
+        lpinputbuffer: &mut [u8],
+        lpoverlapped: &mut OVERLAPPED,
+        lpflags: u32,
+    ) -> anyhow::Result<()> {
+        let lpbuffers = WSABUF {
+            len: lpinputbuffer.len() as u32,
+            buf: PSTR(lpinputbuffer.as_mut_ptr()),
+        };
+
+        let iresult = unsafe {
+            WSASend(
+                self.0,
+                &[lpbuffers],
+                None,
+                lpflags,
+                Some(lpoverlapped),
+                None,
+            )
+        };
+
+        if iresult == SOCKET_ERROR {
+            let last_error = io::Error::last_os_error();
+
+            if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
+                unsafe { closesocket(self.0) };
+                return Err(anyhow!("could not write data: {:?}", last_error));
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn to_handle(&self) -> HANDLE {
         HANDLE(self.0 .0 as _)
     }
@@ -264,6 +320,24 @@ impl From<UnixDomainSocket> for HANDLE {
     fn from(value: UnixDomainSocket) -> Self {
         Self(value.0 .0 as _)
     }
+}
+
+fn sockaddr_un(path: &Path) -> anyhow::Result<SOCKADDR_UN> {
+    let mut sun_path = [0i8; 108];
+    let path_bytes = path.as_os_str().as_encoded_bytes();
+
+    if path_bytes.len() > sun_path.len() {
+        return Err(anyhow!("socket path is too long"));
+    }
+
+    for (i, byte) in path_bytes.iter().enumerate() {
+        sun_path[i] = *byte as i8;
+    }
+
+    Ok(SOCKADDR_UN {
+        sun_family: ADDRESS_FAMILY(AF_UNIX),
+        sun_path,
+    })
 }
 
 #[derive(Debug, Default)]

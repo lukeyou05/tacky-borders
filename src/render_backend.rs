@@ -35,7 +35,7 @@ pub enum RenderBackendConfig {
     Legacy,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub enum RenderBackend {
     V2(V2RenderBackend),
     Legacy(LegacyRenderBackend),
@@ -43,7 +43,7 @@ pub enum RenderBackend {
     None,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct V2RenderBackend {
     pub d2d_context: ID2D1DeviceContext4,
@@ -58,7 +58,7 @@ pub struct V2RenderBackend {
     pub mask_bitmap: Option<ID2D1Bitmap1>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LegacyRenderBackend {
     pub render_target: ID2D1HwndRenderTarget,
 }

@@ -56,8 +56,6 @@ impl KomorebiIntegration {
             })
     }
 
-    // Frankly, this is just a really crappy, Windows-only, version of something like compio.
-    // Good learning experience though.
     pub fn start(&mut self) -> anyhow::Result<()> {
         debug!("starting komorebic integration");
 
@@ -84,7 +82,6 @@ impl KomorebiIntegration {
         }
 
         let mut listener = UnixListener::bind(&socket_path)?;
-        listener.listen()?;
 
         let port = CompletionPort::new(2)?;
         port.associate_handle(listener.socket.to_handle(), listener.token())?;
@@ -358,6 +355,12 @@ impl KomorebiIntegration {
                     .log_if_err();
             }
         }
+    }
+}
+
+impl Default for KomorebiIntegration {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

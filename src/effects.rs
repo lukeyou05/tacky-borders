@@ -51,7 +51,7 @@ impl EffectsConfig {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Effects {
     pub active: Vec<EffectParams>,
     pub inactive: Vec<EffectParams>,

@@ -18,7 +18,7 @@ use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::LogIfErr;
 use crate::window_border::WindowState;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct BorderDrawer {
     pub border_width: i32,
     pub border_offset: i32,
@@ -96,17 +96,6 @@ impl BorderDrawer {
             .init_brush(renderer, window_rect, &brush_properties)?;
         self.inactive_color
             .init_brush(renderer, window_rect, &brush_properties)?;
-
-        // TODO: testing; remove when done
-        // actually just make this a unit test instead
-        /*self.render_backend
-            .update(width, height, self.effects.is_enabled())
-            .log_if_err();
-        if self.render_backend.supports_effects() {
-            self.effects
-                .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")?;
-        }*/
 
         Ok(())
     }

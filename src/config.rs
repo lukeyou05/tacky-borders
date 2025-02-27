@@ -4,7 +4,7 @@ use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::render_backend::RenderBackendConfig;
 use crate::utils::{get_adjusted_radius, get_window_corner_preference, LogIfErr};
-use crate::{create_directx_devices, display_error_box, reload_borders, DirectXDevices, APP_STATE};
+use crate::{create_directx_devices, display_error_box, reload_borders, APP_STATE};
 use anyhow::{anyhow, Context};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -264,19 +264,13 @@ impl Config {
                     if config.render_backend == RenderBackendConfig::V2
                         && directx_devices_opt.is_none()
                     {
-                        let (d3d11_device, dxgi_device, d2d_device) = create_directx_devices(
-                            &APP_STATE.render_factory,
-                        )
-                        .unwrap_or_else(|err| {
-                            error!("could not create directx devices: {err}");
-                            panic!("could not create directx devices: {err}");
-                        });
+                        let direct_x_devices = create_directx_devices(&APP_STATE.render_factory)
+                            .unwrap_or_else(|err| {
+                                error!("could not create directx devices: {err}");
+                                panic!("could not create directx devices: {err}");
+                            });
 
-                        *directx_devices_opt = Some(DirectXDevices {
-                            d3d11_device,
-                            dxgi_device,
-                            d2d_device,
-                        })
+                        *directx_devices_opt = Some(direct_x_devices);
                     } else if config.render_backend == RenderBackendConfig::Legacy
                         && directx_devices_opt.is_some()
                     {

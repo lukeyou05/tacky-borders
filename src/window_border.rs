@@ -36,7 +36,7 @@ use crate::utils::{
 };
 use crate::APP_STATE;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct WindowBorder {
     border_window: HWND,
     tracking_window: HWND,
@@ -503,6 +503,9 @@ impl WindowBorder {
         unsafe { PostQuitMessage(0) };
     }
 
+    /// # Safety
+    ///
+    /// This should only really be used as a callback function
     pub unsafe extern "system" fn s_wnd_proc(
         window: HWND,
         message: u32,
@@ -716,10 +719,12 @@ impl WindowBorder {
                 let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
                 let focus_state = komorebi_integration.focus_state.lock().unwrap();
 
-                // TODO: idk what to do with None so i just do unwrap_or() rn
                 let window_kind = *focus_state
                     .get(&(self.tracking_window.0 as isize))
-                    .unwrap_or(&WindowKind::Single);
+                    .unwrap_or_else(|| {
+                        error!("could not get window_kind for komorebi integration");
+                        &WindowKind::Single
+                    });
 
                 drop(focus_state);
                 drop(komorebi_integration);
