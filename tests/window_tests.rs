@@ -11,7 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
 #[test]
 #[serial]
-fn clear_borders_test() -> anyhow::Result<()> {
+fn test_clear_borders() -> anyhow::Result<()> {
     register_border_window_class()?;
 
     for _ in 0..5 {
@@ -36,7 +36,7 @@ fn clear_borders_test() -> anyhow::Result<()> {
 // This tests whether all borders are properly cleaned up when reload_borders() is called, and if
 // not, it tests whether we still have their handles so they can still be cleaned up when
 // clear_borders() is called later.
-fn reload_borders_test() -> anyhow::Result<()> {
+fn test_reload_borders() -> anyhow::Result<()> {
     register_border_window_class()?;
     create_borders_for_existing_windows()?;
 
@@ -64,3 +64,5 @@ unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) ->
 
     TRUE
 }
+
+// TODO: test border window rect with positive border offsets and negative effects translations

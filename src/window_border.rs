@@ -246,9 +246,9 @@ impl WindowBorder {
             effects,
         );
 
-        // This padding is used to increase the size of the border window such that effects don't
-        // get clipped. However, effects are not supported by the Legacy rendering backend, so
-        // we'll set the padding to 0 if that's what's being used.
+        // This padding is used to adjust the border window such that the border and its effects
+        // don't get clipped. However, effects are not supported by the Legacy render backend, so
+        // we'll just set the padding to border_offset if that's what's being used.
         self.window_padding = match config.render_backend {
             RenderBackendConfig::V2 => {
                 let max_active_padding = self
@@ -259,15 +259,19 @@ impl WindowBorder {
                     .max_by_key(|params| {
                         // Try to find the effect params with the largest required padding
                         let max_std_dev = params.std_dev;
-                        let max_translation = (params.translation.x).max(params.translation.y);
+                        let max_translation =
+                            f32::max(params.translation.x.abs(), params.translation.y.abs());
 
+                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
                         ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
                         let max_std_dev = params.std_dev;
-                        let max_translation = (params.translation.x).max(params.translation.y);
+                        let max_translation =
+                            f32::max(params.translation.x.abs(), params.translation.y.abs());
 
+                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
                         (max_std_dev * 3.0).ceil() + max_translation.ceil()
                     })
                     .unwrap_or(0.0);
@@ -279,24 +283,24 @@ impl WindowBorder {
                     .max_by_key(|params| {
                         // Try to find the effect params with the largest required padding
                         let max_std_dev = params.std_dev;
-                        let max_translation = (params.translation.x).max(params.translation.y);
+                        let max_translation =
+                            f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
                         ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
                         let max_std_dev = params.std_dev;
-                        let max_translation = (params.translation.x).max(params.translation.y);
+                        let max_translation =
+                            f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        // 3 standard deviations gets us 99.7% coverage, which should be good enough
                         (max_std_dev * 3.0).ceil() + max_translation.ceil()
                     })
                     .unwrap_or(0.0);
 
-                max_active_padding.max(max_inactive_padding).ceil() as i32
+                f32::max(max_active_padding, max_inactive_padding).ceil() as i32 + border_offset
             }
-            RenderBackendConfig::Legacy => 0,
+            RenderBackendConfig::Legacy => border_offset,
         };
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
