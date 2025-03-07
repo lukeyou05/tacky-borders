@@ -1,7 +1,7 @@
 use windows::core::BOOL;
 use windows::Win32::Foundation::{
     GetLastError, SetLastError, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS,
-    FALSE, HWND, LPARAM, RECT, WIN32_ERROR, WPARAM,
+    FALSE, HWND, LPARAM, LRESULT, RECT, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -16,9 +16,9 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic, IsWindowVisible, PostMessageW,
-    RealGetWindowClassW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
-    WS_MAXIMIZE,
+    RealGetWindowClassW, SendMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
 
 use anyhow::{anyhow, Context};
@@ -222,6 +222,15 @@ pub fn post_message_w(
     unsafe { PostMessageW(hwnd, msg, wparam, lparam) }
 }
 
+pub fn send_message_w(
+    hwnd: HWND,
+    msg: u32,
+    wparam: Option<WPARAM>,
+    lparam: Option<LPARAM>,
+) -> LRESULT {
+    unsafe { SendMessageW(hwnd, msg, wparam, lparam) }
+}
+
 pub fn send_notify_message_w(
     hwnd: HWND,
     msg: u32,
@@ -265,7 +274,6 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
 
         // Otherwise, continue creating the border window
         let mut border = WindowBorder::new(tracking_window);
-
         let border_window = match border.create_window() {
             Ok(hwnd) => hwnd,
             Err(err) => {
@@ -275,19 +283,22 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
         };
 
         borders_hashmap.insert(tracking_window_isize, border_window.0 as isize);
-
         drop(borders_hashmap);
 
         // Drop these values (to save some RAM?) before calling init and entering a message loop
         let _ = tracking_window;
         let _ = tracking_window_isize;
 
-        // Note: init() contains a loop
+        // NOTE: init() contains a message loop
         border.init(window_rule).log_if_err();
 
-        // TODO: It's probably better to remove the border from the hashmap right here instead of
-        // from WindowBorder's cleanup_and_queue_exit(). This ensures it is removed even if
-        // WindowBorder's init() returns an error and exits early.
+        // If init() exits, that means the border has been destroyed, so we should remove it from
+        // the hashmap
+        APP_STATE
+            .borders
+            .lock()
+            .unwrap()
+            .remove(&tracking_window_isize);
     });
 }
 

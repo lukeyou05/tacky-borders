@@ -4,6 +4,7 @@ extern crate sp_log;
 
 use anyhow::{anyhow, Context};
 use config::{Config, ConfigWatcher, EnableMode};
+use core::time;
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
@@ -11,13 +12,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
+use std::thread;
 use utils::{
     create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
     has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
-    LogIfErr,
+    send_message_w, LogIfErr,
 };
 use windows::core::{w, Interface, BOOL, PCWSTR};
-use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HMODULE, HWND, LPARAM, TRUE, WPARAM};
+use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HMODULE, HWND, LPARAM, TRUE};
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Device4, ID2D1Factory5, D2D1_FACTORY_TYPE_MULTI_THREADED,
 };
@@ -268,23 +270,44 @@ pub fn create_borders_for_existing_windows() -> windows::core::Result<()> {
     Ok(())
 }
 
-pub fn clear_borders() {
-    let mut borders = APP_STATE.borders.lock().unwrap();
+pub fn destroy_borders() {
+    const MAX_ATTEMPTS: u32 = 3;
 
-    // Send destroy messages to all the border windows
-    for value in borders.values() {
-        let border_window = HWND(*value as _);
-        post_message_w(Some(border_window), WM_NCDESTROY, WPARAM(0), LPARAM(0))
-            .context("reload_borders")
-            .log_if_err();
+    for i in 0..MAX_ATTEMPTS {
+        // Copy the hashmap's values to prevent mutex deadlocks
+        let border_hwnds: Vec<HWND> = APP_STATE
+            .borders
+            .lock()
+            .unwrap()
+            .values()
+            .map(|hwnd_isize| HWND(*hwnd_isize as _))
+            .collect();
+
+        for hwnd in border_hwnds {
+            let _ = send_message_w(hwnd, WM_NCDESTROY, None, None);
+        }
+
+        // SendMessageW ensures that the border windows have processed their messages, but it
+        // does not guarantee that the thread has exited, so we still must wait a few ms
+        thread::sleep(time::Duration::from_millis(5));
+
+        let remaining_borders = APP_STATE.borders.lock().unwrap();
+        if remaining_borders.is_empty() {
+            break;
+        } else if i == MAX_ATTEMPTS - 1 {
+            error!(
+                "could not successfully destroy all borders (still remaining: {:?})",
+                *remaining_borders
+            );
+        }
     }
 
-    // Clear the borders hashmap
-    borders.clear();
+    // NOTE: we will rely on each border thread to remove themselves from the hashmap, so we won't
+    // do any manual cleanup here
 }
 
 pub fn reload_borders() {
-    clear_borders();
+    destroy_borders();
     APP_STATE.initial_windows.lock().unwrap().clear();
     create_borders_for_existing_windows().log_if_err();
 }

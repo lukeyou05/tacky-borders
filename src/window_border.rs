@@ -499,11 +499,6 @@ impl WindowBorder {
     fn cleanup_and_queue_exit(&mut self) {
         self.is_paused = true;
         self.border_drawer.animations.destroy_timer();
-        APP_STATE
-            .borders
-            .lock()
-            .unwrap()
-            .remove(&(self.tracking_window.0 as isize));
         unsafe { PostQuitMessage(0) };
     }
 
