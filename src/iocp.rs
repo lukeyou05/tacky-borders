@@ -1,19 +1,19 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use core::time;
 use std::path::Path;
 use std::{io, mem, ptr};
-use windows::core::PSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
-    bind, closesocket, connect, listen, AcceptEx, WSARecv, WSASend, WSASocketW, ADDRESS_FAMILY,
-    AF_UNIX, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOCK_STREAM, SOMAXCONN, WSABUF,
-    WSA_FLAG_OVERLAPPED, WSA_IO_PENDING,
+    ADDRESS_FAMILY, AF_UNIX, AcceptEx, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR,
+    SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSARecv, WSASend, WSASocketW, bind,
+    closesocket, connect, listen,
 };
-use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx, OVERLAPPED,
     OVERLAPPED_ENTRY,
 };
+use windows::Win32::System::Threading::INFINITE;
+use windows::core::PSTR;
 
 use crate::utils::LogIfErr;
 
@@ -63,7 +63,7 @@ impl UnixListener {
     }
 
     pub fn token(&self) -> usize {
-        self.socket.0 .0
+        self.socket.0.0
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -120,7 +120,7 @@ impl UnixStream {
     }
 
     pub fn token(&self) -> usize {
-        self.socket.0 .0
+        self.socket.0.0
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -312,13 +312,13 @@ impl UnixDomainSocket {
     }
 
     pub fn to_handle(&self) -> HANDLE {
-        HANDLE(self.0 .0 as _)
+        HANDLE(self.0.0 as _)
     }
 }
 
 impl From<UnixDomainSocket> for HANDLE {
     fn from(value: UnixDomainSocket) -> Self {
-        Self(value.0 .0 as _)
+        Self(value.0.0 as _)
     }
 }
 

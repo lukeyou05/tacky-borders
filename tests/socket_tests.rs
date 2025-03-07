@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use tacky_borders::config::Config;
 use tacky_borders::iocp::{CompletionPort, UnixListener, UnixStream};
 use windows::Win32::{
-    Networking::WinSock::{WSACleanup, WSAStartup, WSADATA},
+    Networking::WinSock::{WSACleanup, WSADATA, WSAStartup},
     System::IO::OVERLAPPED_ENTRY,
 };
 

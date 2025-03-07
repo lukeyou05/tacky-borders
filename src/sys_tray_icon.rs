@@ -1,11 +1,11 @@
 use anyhow::Context;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-use windows::Win32::UI::Accessibility::{UnhookWinEvent, HWINEVENTHOOK};
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
 use crate::config::Config;
-use crate::{reload_borders, APP_STATE};
+use crate::{APP_STATE, reload_borders};
 
 pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
@@ -69,7 +69,9 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
             if unhook_bool && stop_res.is_ok() && close_res.is_ok() {
                 PostQuitMessage(0);
             } else {
-                error!("attempt to unhook win event: {unhook_bool:?}; attempt to stop config watcher: {stop_res:?}; attempt to close socket: {close_res:?}");
+                error!(
+                    "attempt to unhook win event: {unhook_bool:?}; attempt to stop config watcher: {stop_res:?}; attempt to close socket: {close_res:?}"
+                );
             }
         },
         _ => {}

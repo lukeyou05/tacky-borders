@@ -1,33 +1,33 @@
-use windows::core::BOOL;
 use windows::Win32::Foundation::{
-    GetLastError, SetLastError, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS,
-    FALSE, HWND, LPARAM, LRESULT, RECT, WIN32_ERROR, WPARAM,
+    ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, FALSE, GetLastError, HWND,
+    LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
-    DWM_WINDOW_CORNER_PREFERENCE,
+    DWM_WINDOW_CORNER_PREFERENCE, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DwmGetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::UI::HiDpi::{
-    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+    DPI_AWARENESS_CONTEXT, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic, IsWindowVisible, PostMessageW,
-    RealGetWindowClassW, SendMessageW, SendNotifyMessageW, GWL_EXSTYLE, GWL_STYLE, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic,
+    IsWindowVisible, PostMessageW, RealGetWindowClassW, SendMessageW, SendNotifyMessageW,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
+use windows::core::BOOL;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use regex::Regex;
 use std::{ptr, thread};
 
+use crate::APP_STATE;
 use crate::config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
 use crate::window_border::WindowBorder;
-use crate::APP_STATE;
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
 pub const WM_APP_REORDER: u32 = WM_APP + 1;
@@ -464,7 +464,7 @@ fn de_casteljau(t: f32, p_i: f32, p1: f32, p2: f32, p_f: f32) -> f32 {
 }
 
 // Generates a cubic Bézier curve function from control points.
-pub fn cubic_bezier(control_points: &[f32; 4]) -> Result<impl Fn(f32) -> f32, BezierError> {
+pub fn cubic_bezier(control_points: &[f32; 4]) -> Result<impl Fn(f32) -> f32 + use<>, BezierError> {
     let [x1, y1, x2, y2] = *control_points;
 
     // Ensure control points are within bounds.

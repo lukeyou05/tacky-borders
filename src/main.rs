@@ -8,14 +8,14 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::Context;
-use tacky_borders::utils::{imm_disable_ime, set_process_dpi_awareness_context, LogIfErr};
+use tacky_borders::utils::{LogIfErr, imm_disable_ime, set_process_dpi_awareness_context};
 use tacky_borders::{
     create_borders_for_existing_windows, create_logger, register_border_window_class,
     set_event_hook, sys_tray_icon,
 };
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, TranslateMessage, MSG,
+    DispatchMessageW, GetMessageW, MSG, TranslateMessage,
 };
 
 fn main() {

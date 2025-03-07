@@ -5,9 +5,9 @@ use tacky_borders::{
     create_borders_for_existing_windows, destroy_borders, register_border_window_class,
     reload_borders,
 };
-use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+use windows::core::BOOL;
 
 #[test]
 #[serial]

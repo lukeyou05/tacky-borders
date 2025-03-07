@@ -1,40 +1,40 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::ptr;
 use std::thread;
 use std::time;
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::D2DERR_RECREATE_TARGET;
 use windows::Win32::Foundation::{COLORREF, FALSE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM};
-use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::Graphics::Direct2D::D2D1_BRUSH_PROPERTIES;
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::Graphics::Dwm::{
-    DwmEnableBlurBehindWindow, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
-    DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
+    DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_EXTENDED_FRAME_BOUNDS,
+    DwmEnableBlurBehindWindow, DwmGetWindowAttribute,
 };
-use windows::Win32::Graphics::Gdi::{CreateRectRgn, ValidateRect, HMONITOR};
+use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindow,
-    GetWindowLongPtrW, PostQuitMessage, SetLayeredWindowAttributes, SetWindowLongPtrW,
-    SetWindowPos, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, GW_HWNDPREV,
-    HWND_TOP, LWA_ALPHA, MSG, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
-    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, WM_CREATE,
+    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GW_HWNDPREV,
+    GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
+    LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
+    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_CREATE,
     WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
     WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
+use windows::core::{PCWSTR, w};
 
+use crate::APP_STATE;
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
-    are_rects_same_size, get_dpi_for_window, get_monitor_info, get_window_rule, get_window_title,
-    has_native_border, is_rect_visible, is_window_minimized, is_window_visible,
-    monitor_from_window, post_message_w, LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND,
-    WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
-    WM_APP_MINIMIZESTART, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
+    LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
+    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
+    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_window, get_monitor_info,
+    get_window_rule, get_window_title, has_native_border, is_rect_visible, is_window_minimized,
+    is_window_visible, monitor_from_window, post_message_w,
 };
-use crate::APP_STATE;
 
 #[derive(Debug, Default, Clone)]
 pub struct WindowBorder {
@@ -512,19 +512,20 @@ impl WindowBorder {
         lparam: LPARAM,
     ) -> LRESULT {
         // Retrieve the pointer to this WindowBorder struct using GWLP_USERDATA
-        let mut border_pointer: *mut WindowBorder = GetWindowLongPtrW(window, GWLP_USERDATA) as _;
+        let mut border_pointer: *mut WindowBorder =
+            unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as _;
 
         // If a pointer has not yet been assigned to GWLP_USERDATA, assign it here using the LPARAM
         // from CreateWindowExW
         if border_pointer.is_null() && message == WM_CREATE {
             let create_struct: *mut CREATESTRUCTW = lparam.0 as *mut _;
-            border_pointer = (*create_struct).lpCreateParams as *mut _;
-            SetWindowLongPtrW(window, GWLP_USERDATA, border_pointer as _);
+            border_pointer = unsafe { (*create_struct).lpCreateParams } as *mut _;
+            unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, border_pointer as _) };
         }
 
         match !border_pointer.is_null() {
-            true => (*border_pointer).wnd_proc(window, message, wparam, lparam),
-            false => DefWindowProcW(window, message, wparam, lparam),
+            true => unsafe { (*border_pointer).wnd_proc(window, message, wparam, lparam) },
+            false => unsafe { DefWindowProcW(window, message, wparam, lparam) },
         }
     }
 
@@ -619,7 +620,8 @@ impl WindowBorder {
                 // When the tracking window reorders its contents, it may change the z-order. So,
                 // we first check whether the border is still above the tracking window, and if
                 // not, we must update its position and place it back on top
-                if GetWindow(self.tracking_window, GW_HWNDPREV) != Ok(self.border_window) {
+                if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) } != Ok(self.border_window)
+                {
                     self.update_position(None).log_if_err();
                 }
             }
@@ -796,17 +798,17 @@ impl WindowBorder {
                     .log_if_err();
             }
             WM_PAINT => {
-                let _ = ValidateRect(Some(window), None);
+                let _ = unsafe { ValidateRect(Some(window), None) };
             }
             WM_NCDESTROY => {
                 // TODO not actually sure if we need to set GWLP_USERDATA to 0 here
-                SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+                unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
                 self.cleanup_and_queue_exit();
             }
             // Ignore these window position messages
             WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}
             _ => {
-                return DefWindowProcW(window, message, wparam, lparam);
+                return unsafe { DefWindowProcW(window, message, wparam, lparam) };
             }
         }
         LRESULT(0)

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use dirs::home_dir;
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
@@ -8,16 +8,16 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::{fs, thread, time};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Networking::WinSock::{closesocket, WSACleanup, WSAStartup, WSADATA};
-use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup, closesocket};
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
+use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
+use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
-use crate::config::{serde_default_bool, Config};
+use crate::config::{Config, serde_default_bool};
 use crate::iocp::{CompletionPort, UnixDomainSocket};
 use crate::iocp::{UnixListener, UnixStream};
-use crate::utils::{get_foreground_window, post_message_w, LogIfErr, WM_APP_KOMOREBI};
-use crate::APP_STATE;
+use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, post_message_w};
 
 const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(600);
 const BUFFER_SIZE: usize = 32768;

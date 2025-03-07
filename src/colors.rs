@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
-use windows::core::BOOL;
 use windows::Win32::Foundation::{FALSE, RECT};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D_POINT_2F};
+use windows::Win32::Graphics::Direct2D::Common::{D2D_POINT_2F, D2D1_COLOR_F, D2D1_GRADIENT_STOP};
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget, ID2D1SolidColorBrush,
     D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
-    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget,
+    ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
+use windows::core::BOOL;
 use windows_numerics::Matrix3x2;
 
 use crate::LogIfErr;
@@ -166,7 +166,9 @@ impl ColorBrushConfig {
                             90.0..270.0 => (1.0, 0.0),
                             270.0..360.0 => (0.0, 1.0),
                             _ => {
-                                debug!("reached a gradient angle that is not covered by the match statement in colors.rs");
+                                debug!(
+                                    "reached a gradient angle that is not covered by the match statement in colors.rs"
+                                );
                                 (0.0, 1.0)
                             }
                         };

@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use std::time;
 use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, E_FAIL, E_POINTER, HWND, RECT, S_OK};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D_RECT_F, D2D_SIZE_U,
+    D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
 };
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1RenderTarget, D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR,
-    D2D1_ROUNDED_RECT,
+    D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT, ID2D1Brush,
+    ID2D1RenderTarget,
 };
 use windows::Win32::Graphics::Dxgi::DXGI_PRESENT;
 use windows_numerics::Matrix3x2;

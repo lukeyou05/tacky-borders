@@ -2,7 +2,7 @@
 extern crate log;
 extern crate sp_log;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode};
 use core::time;
 use komorebi::KomorebiIntegration;
@@ -14,31 +14,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::thread;
 use utils::{
-    create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
+    LogIfErr, create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
     has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
-    send_message_w, LogIfErr,
+    send_message_w,
 };
-use windows::core::{w, Interface, BOOL, PCWSTR};
 use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HMODULE, HWND, LPARAM, TRUE};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Device4, ID2D1Factory5, D2D1_FACTORY_TYPE_MULTI_THREADED,
+    D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device4, ID2D1Factory5,
 };
 use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1,
-    D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_9_1, D3D_FEATURE_LEVEL_9_2,
-    D3D_FEATURE_LEVEL_9_3,
+    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_9_1, D3D_FEATURE_LEVEL_9_2,
+    D3D_FEATURE_LEVEL_9_3, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_11_1,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, LoadCursorW, MessageBoxW, RegisterClassExW, EVENT_MAX, EVENT_MIN, IDC_ARROW,
-    MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, WINEVENT_OUTOFCONTEXT,
+    EVENT_MAX, EVENT_MIN, EnumWindows, IDC_ARROW, LoadCursorW, MB_ICONERROR, MB_OK,
+    MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW, RegisterClassExW, WINEVENT_OUTOFCONTEXT,
     WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
+use windows::core::{BOOL, Interface, PCWSTR, w};
 
 pub mod anim_timer;
 pub mod animations;

@@ -10,13 +10,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     OBJID_WINDOW,
 };
 
-use crate::utils::{
-    destroy_border_for_window, get_border_for_window, get_foreground_window,
-    hide_border_for_window, is_window_visible, post_message_w, send_notify_message_w,
-    show_border_for_window, LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
-    WM_APP_MINIMIZESTART, WM_APP_REORDER,
-};
 use crate::APP_STATE;
+use crate::utils::{
+    LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
+    WM_APP_REORDER, destroy_border_for_window, get_border_for_window, get_foreground_window,
+    hide_border_for_window, is_window_visible, post_message_w, send_notify_message_w,
+    show_border_for_window,
+};
 
 pub extern "system" fn process_win_event(
     _h_win_event_hook: HWINEVENTHOOK,
