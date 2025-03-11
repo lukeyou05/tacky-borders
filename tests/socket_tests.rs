@@ -1,10 +1,10 @@
+use std::{fs, thread};
+
 use anyhow::{Context, anyhow};
 use tacky_borders::config::Config;
 use tacky_borders::iocp::{CompletionPort, UnixListener, UnixStream};
-use windows::Win32::{
-    Networking::WinSock::{WSACleanup, WSADATA, WSAStartup},
-    System::IO::OVERLAPPED_ENTRY,
-};
+use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup};
+use windows::Win32::System::IO::OVERLAPPED_ENTRY;
 
 #[test]
 fn test_socket_write_read() -> anyhow::Result<()> {
@@ -18,8 +18,8 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     let socket_path_clone = socket_path.clone();
 
     // If the socket file already exists, we cannot bind to it, so we must delete it first
-    if std::fs::exists(&socket_path).context("could not check if test socket exists")? {
-        std::fs::remove_file(&socket_path)?;
+    if fs::exists(&socket_path).context("could not check if test socket exists")? {
+        fs::remove_file(&socket_path)?;
     }
 
     let port = CompletionPort::new(2)?;
@@ -29,13 +29,13 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     port.associate_handle(listener.socket.to_handle(), listener.token())?;
 
     // Queue up an accept operation (asynchronous)
-    let mut read_stream = Box::new(listener.accept()?);
+    let mut read_stream = listener.accept()?;
     port.associate_handle(read_stream.socket.to_handle(), read_stream.token())?;
 
     let mut text = "Hello World!".to_string();
     let mut text_clone = text.clone();
 
-    std::thread::spawn(move || -> anyhow::Result<()> {
+    thread::spawn(move || -> anyhow::Result<()> {
         let mut write_stream = UnixStream::connect(&socket_path_clone)?;
         let input_buffer = unsafe { text_clone.as_bytes_mut() };
 
@@ -53,7 +53,7 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     read_stream.read(output_buffer)?;
     port.poll_single(None, &mut entry)?;
 
-    std::fs::remove_file(&socket_path)?;
+    fs::remove_file(&socket_path)?;
     unsafe { WSACleanup() };
 
     let correct_output = unsafe { text.as_bytes_mut() };

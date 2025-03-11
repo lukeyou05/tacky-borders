@@ -4,7 +4,7 @@ use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::render_backend::RenderBackendConfig;
 use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
-use crate::{APP_STATE, create_directx_devices, display_error_box, reload_borders};
+use crate::{APP_STATE, DirectXDevices, display_error_box, reload_borders};
 use anyhow::{Context, anyhow};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -147,7 +147,7 @@ impl RadiusConfig {
             // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
             RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
                 match get_window_corner_preference(tracking_window) {
-                    // TODO check if the user is running Windows 11 or 10
+                    // TODO: check if the user is running Windows 11 or 10
                     DWMWCP_DEFAULT => get_adjusted_radius(8.0, dpi, border_width),
                     DWMWCP_DONOTROUND => 0.0,
                     DWMWCP_ROUND => get_adjusted_radius(8.0, dpi, border_width),
@@ -220,7 +220,6 @@ impl Config {
 
         let config_dir = home_dir.join(".config").join("tacky-borders");
 
-        // If the config directory doesn't exist, try to create it
         if !config_dir.exists() {
             DirBuilder::new()
                 .recursive(true)
@@ -264,7 +263,7 @@ impl Config {
                     if config.render_backend == RenderBackendConfig::V2
                         && directx_devices_opt.is_none()
                     {
-                        let direct_x_devices = create_directx_devices(&APP_STATE.render_factory)
+                        let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
                             .unwrap_or_else(|err| {
                                 error!("could not create directx devices: {err}");
                                 panic!("could not create directx devices: {err}");
@@ -331,7 +330,6 @@ impl ConfigWatcher {
             return Err(anyhow!("config watcher is already running"));
         }
 
-        // NOTE: apparently you can use context() on an Option lol
         let config_dir = self
             .config_path
             .parent()

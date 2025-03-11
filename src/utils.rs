@@ -1,3 +1,6 @@
+use anyhow::{Context, anyhow};
+use regex::Regex;
+use std::{ptr, thread};
 use windows::Win32::Foundation::{
     ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, FALSE, GetLastError, HWND,
     LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
@@ -20,10 +23,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
 use windows::core::BOOL;
-
-use anyhow::{Context, anyhow};
-use regex::Regex;
-use std::{ptr, thread};
 
 use crate::APP_STATE;
 use crate::config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
@@ -81,7 +80,7 @@ pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
         let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
-        // TODO figure out whats with the invalid window handles
+        // TODO: figure out whats with the invalid window handles
         if !matches!(
             last_error,
             ERROR_ENVVAR_NOT_FOUND | ERROR_SUCCESS | ERROR_INVALID_WINDOW_HANDLE
@@ -103,7 +102,7 @@ pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
         let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
-        // TODO figure out whats with the invalid window handles
+        // TODO: figure out whats with the invalid window handles
         if !matches!(
             last_error,
             ERROR_ENVVAR_NOT_FOUND | ERROR_SUCCESS | ERROR_INVALID_WINDOW_HANDLE

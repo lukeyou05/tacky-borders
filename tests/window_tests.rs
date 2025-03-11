@@ -11,7 +11,7 @@ use windows::core::BOOL;
 
 #[test]
 #[serial]
-fn test_clear_borders() -> anyhow::Result<()> {
+fn test_destroy_borders() -> anyhow::Result<()> {
     register_border_window_class()?;
 
     for _ in 0..5 {
@@ -22,7 +22,7 @@ fn test_clear_borders() -> anyhow::Result<()> {
 
         destroy_borders();
 
-        unsafe { EnumWindows(Some(enum_windows_callback), LPARAM::default()) }?;
+        unsafe { EnumWindows(Some(enum_windows_tests_callback), LPARAM::default()) }?;
     }
 
     Ok(())
@@ -40,12 +40,12 @@ fn test_reload_borders() -> anyhow::Result<()> {
     }
     destroy_borders();
 
-    unsafe { EnumWindows(Some(enum_windows_callback), LPARAM::default()) }?;
+    unsafe { EnumWindows(Some(enum_windows_tests_callback), LPARAM::default()) }?;
 
     Ok(())
 }
 
-unsafe extern "system" fn enum_windows_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
+unsafe extern "system" fn enum_windows_tests_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
     let window_class = get_window_class(_hwnd).unwrap();
     assert!(window_class != "border");
 

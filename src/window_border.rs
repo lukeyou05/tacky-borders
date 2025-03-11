@@ -155,7 +155,7 @@ impl WindowBorder {
                 self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                 self.render().log_if_err();
 
-                // TODO sometimes, the border doesn't show up on the first try. So, we just wait
+                // TODO: sometimes, the border doesn't show up on the first try. So, we just wait
                 // 5ms and call render() again. This seems to be an issue with the visibility of
                 // the window itself.
                 thread::sleep(time::Duration::from_millis(5));
@@ -168,7 +168,6 @@ impl WindowBorder {
                 .set_timer_if_enabled(self.border_window, &mut self.border_drawer.last_anim_time);
 
             // Handle the case where the tracking window is already minimized
-            // TODO: maybe put this in a better spot but idk where
             if is_window_minimized(self.tracking_window) {
                 post_message_w(
                     Some(self.border_window),
@@ -191,6 +190,7 @@ impl WindowBorder {
         Ok(())
     }
 
+    // TODO: adjust and update border offset based on monitor dpi as well
     pub fn load_from_config(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
@@ -229,8 +229,8 @@ impl WindowBorder {
         let border_offset = offset_config;
         let border_radius =
             radius_config.to_radius(border_width, self.current_dpi, self.tracking_window);
-        let active_color = active_color_config.to_color(true);
-        let inactive_color = inactive_color_config.to_color(false);
+        let active_color = active_color_config.to_color_brush(true);
+        let inactive_color = inactive_color_config.to_color_brush(false);
 
         let animations = animations_config.to_animations();
         let effects = effects_config.to_effects();
@@ -445,6 +445,28 @@ impl WindowBorder {
         );
     }
 
+    fn update_border_drawer(&mut self) {
+        let m_info = match get_monitor_info(self.current_monitor) {
+            Ok(info) => info,
+            Err(err) => {
+                error!("could not get monitor info: {err}");
+                self.cleanup_and_queue_exit();
+                return;
+            }
+        };
+        let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
+        let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
+
+        self.border_drawer
+            .update_renderer(
+                screen_width + ((self.border_drawer.border_width + self.window_padding) * 2) as u32,
+                screen_height
+                    + ((self.border_drawer.border_width + self.window_padding) * 2) as u32,
+            )
+            .context("could not update border drawer")
+            .log_if_err();
+    }
+
     fn render(&mut self) -> anyhow::Result<()> {
         if let Err(err) =
             self.border_drawer
@@ -504,7 +526,8 @@ impl WindowBorder {
 
     /// # Safety
     ///
-    /// This should only really be used as a callback function
+    /// This is only here because clippy is throwing warnings at me lol. It's just a window
+    /// procedure; don't use it for other things.
     pub unsafe extern "system" fn s_wnd_proc(
         window: HWND,
         message: u32,
@@ -551,19 +574,19 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                let old_rect = self.window_rect;
+                let prev_rect = self.window_rect;
                 self.update_window_rect().log_if_err();
 
                 // TODO: After restoring a minimized window, render() may use the minimized
                 // (invisible) rect instead of the updated one. This is a temporary "fix".
                 if !is_rect_visible(&self.window_rect) {
-                    self.window_rect = old_rect;
+                    self.window_rect = prev_rect;
                     return LRESULT(0);
                 }
 
                 // If the window rect changes size, we need to re-render the border
-                if !are_rects_same_size(&self.window_rect, &old_rect) {
-                    should_render |= true;
+                if !are_rects_same_size(&self.window_rect, &prev_rect) {
+                    should_render = true;
                 }
 
                 let update_pos_flags =
@@ -573,42 +596,21 @@ impl WindowBorder {
                 let new_monitor = monitor_from_window(self.tracking_window);
                 if new_monitor != self.current_monitor {
                     self.current_monitor = new_monitor;
-
-                    // TODO: maybe dont lock this behind the new_monitor != current_monitor
-                    // condition because it's possible to have dpi change but monitor not change if
-                    // someone changes the display scaling
-                    let new_dpi = match get_dpi_for_window(self.tracking_window) {
-                        Ok(dpi) => dpi as f32,
-                        Err(err) => {
-                            error!("could not get dpi for window: {err}");
-                            self.cleanup_and_queue_exit();
-                            return LRESULT(0);
-                        }
-                    };
-                    if new_dpi != self.current_dpi {
-                        self.current_dpi = new_dpi;
-                        self.update_width_radius();
+                    self.update_border_drawer();
+                    should_render = true;
+                }
+                let new_dpi = match get_dpi_for_window(self.tracking_window) {
+                    Ok(dpi) => dpi as f32,
+                    Err(err) => {
+                        error!("could not get dpi for window: {err}");
+                        self.cleanup_and_queue_exit();
+                        return LRESULT(0);
                     }
-
-                    let m_info = get_monitor_info(self.current_monitor)
-                        .context("mi")
-                        .unwrap();
-                    let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
-                    let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
-
-                    self.border_drawer
-                        .update_renderer(
-                            screen_width
-                                + ((self.border_drawer.border_width + self.window_padding) * 2)
-                                    as u32,
-                            screen_height
-                                + ((self.border_drawer.border_width + self.window_padding) * 2)
-                                    as u32,
-                        )
-                        .context("could not update border drawer")
-                        .log_if_err();
-
-                    should_render |= true;
+                };
+                if new_dpi != self.current_dpi {
+                    self.current_dpi = new_dpi;
+                    self.update_width_radius();
+                    should_render = true;
                 }
 
                 if should_render {
@@ -636,11 +638,11 @@ impl WindowBorder {
                 // With GlazeWM, if I switch to another workspace while a window is minimized and
                 // switch back, then we will receive this message even though the window is not yet
                 // visible. And, the window rect will be all weird. So, we apply the following fix.
-                let old_rect = self.window_rect;
+                let prev_rect = self.window_rect;
                 self.update_window_rect().log_if_err();
 
                 if !is_rect_visible(&self.window_rect) {
-                    self.window_rect = old_rect;
+                    self.window_rect = prev_rect;
                     return LRESULT(0);
                 }
 
@@ -756,22 +758,22 @@ impl WindowBorder {
                     .unwrap_or_default();
 
                 self.border_drawer.active_color = match window_kind {
-                    WindowKind::Single => active_color_config.to_color(true),
+                    WindowKind::Single => active_color_config.to_color_brush(true),
                     WindowKind::Stack => komorebi_colors_config
                         .stack_color
                         .as_ref()
                         .unwrap_or(active_color_config)
-                        .to_color(true),
+                        .to_color_brush(true),
                     WindowKind::Monocle => komorebi_colors_config
                         .monocle_color
                         .as_ref()
                         .unwrap_or(active_color_config)
-                        .to_color(true),
+                        .to_color_brush(true),
                     WindowKind::Floating => komorebi_colors_config
                         .floating_color
                         .as_ref()
                         .unwrap_or(active_color_config)
-                        .to_color(true),
+                        .to_color_brush(true),
                     WindowKind::Unfocused => {
                         debug!("what."); // It shouldn't be possible to reach this match branch
                         return LRESULT(0);
@@ -801,7 +803,8 @@ impl WindowBorder {
                 let _ = unsafe { ValidateRect(Some(window), None) };
             }
             WM_NCDESTROY => {
-                // TODO not actually sure if we need to set GWLP_USERDATA to 0 here
+                // We'll set GWLP_USERDATA to 0 so that the window procedure can't find the
+                // border's pointer anymore, making it stop processing our custom messages.
                 unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
                 self.cleanup_and_queue_exit();
             }

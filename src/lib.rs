@@ -68,12 +68,6 @@ struct AppState {
     komorebi_integration: Mutex<KomorebiIntegration>,
 }
 
-struct DirectXDevices {
-    d3d11_device: ID3D11Device,
-    dxgi_device: IDXGIDevice,
-    d2d_device: ID2D1Device4,
-}
-
 unsafe impl Send for AppState {}
 unsafe impl Sync for AppState {}
 
@@ -85,7 +79,7 @@ impl AppState {
             Config::get_dir()
                 .map(|dir| dir.join("config.yaml"))
                 .unwrap_or_else(|err| {
-                    error!("{err}");
+                    error!("could not get path for config watcher: {err}");
                     PathBuf::default()
                 }),
             500,
@@ -124,13 +118,12 @@ impl AppState {
         let directx_devices_opt = match config.render_backend {
             RenderBackendConfig::V2 => {
                 // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
-                let direct_x_devices =
-                    create_directx_devices(&render_factory).unwrap_or_else(|err| {
-                        error!("could not create directx devices: {err}");
-                        panic!("could not create directx devices: {err}");
-                    });
+                let directx_devices = DirectXDevices::new(&render_factory).unwrap_or_else(|err| {
+                    error!("could not create directx devices: {err}");
+                    panic!("could not create directx devices: {err}");
+                });
 
-                Some(direct_x_devices)
+                Some(directx_devices)
             }
             RenderBackendConfig::Legacy => None,
         };
@@ -157,52 +150,60 @@ impl AppState {
     }
 }
 
-fn create_directx_devices(factory: &ID2D1Factory5) -> anyhow::Result<DirectXDevices> {
-    let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+struct DirectXDevices {
+    d3d11_device: ID3D11Device,
+    dxgi_device: IDXGIDevice,
+    d2d_device: ID2D1Device4,
+}
 
-    let feature_levels = [
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_1,
-        D3D_FEATURE_LEVEL_10_0,
-        D3D_FEATURE_LEVEL_9_3,
-        D3D_FEATURE_LEVEL_9_2,
-        D3D_FEATURE_LEVEL_9_1,
-    ];
+impl DirectXDevices {
+    fn new(factory: &ID2D1Factory5) -> anyhow::Result<Self> {
+        let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
-    let mut device_opt: Option<ID3D11Device> = None;
-    let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
+        let feature_levels = [
+            D3D_FEATURE_LEVEL_11_1,
+            D3D_FEATURE_LEVEL_11_0,
+            D3D_FEATURE_LEVEL_10_1,
+            D3D_FEATURE_LEVEL_10_0,
+            D3D_FEATURE_LEVEL_9_3,
+            D3D_FEATURE_LEVEL_9_2,
+            D3D_FEATURE_LEVEL_9_1,
+        ];
 
-    unsafe {
-        D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
-            HMODULE::default(),
-            creation_flags,
-            Some(&feature_levels),
-            D3D11_SDK_VERSION,
-            Some(&mut device_opt),
-            Some(&mut feature_level),
-            None,
-        )
-    }?;
+        let mut device_opt: Option<ID3D11Device> = None;
+        let mut feature_level: D3D_FEATURE_LEVEL = D3D_FEATURE_LEVEL::default();
 
-    debug!("directx feature_level: {feature_level:X?}");
+        unsafe {
+            D3D11CreateDevice(
+                None,
+                D3D_DRIVER_TYPE_HARDWARE,
+                HMODULE::default(),
+                creation_flags,
+                Some(&feature_levels),
+                D3D11_SDK_VERSION,
+                Some(&mut device_opt),
+                Some(&mut feature_level),
+                None,
+            )
+        }?;
 
-    let d3d11_device = device_opt.context("could not get d3d11 device")?;
-    let dxgi_device: IDXGIDevice = d3d11_device.cast().context("id3d11device cast")?;
-    let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+        debug!("directx feature_level: {feature_level:X?}");
 
-    Ok(DirectXDevices {
-        d3d11_device,
-        dxgi_device,
-        d2d_device,
-    })
+        let d3d11_device = device_opt.context("could not get d3d11 device")?;
+        let dxgi_device: IDXGIDevice = d3d11_device.cast().context("id3d11device cast")?;
+        let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+
+        Ok(Self {
+            d3d11_device,
+            dxgi_device,
+            d2d_device,
+        })
+    }
 }
 
 pub fn create_logger() -> anyhow::Result<()> {
     // NOTE: there are two Config structs in this function: tacky-borders' and sp_log's
-    let log_path = Config::get_dir()?.join("tacky-borders.log");
+    let log_path = crate::Config::get_dir()?.join("tacky-borders.log");
     let Some(path_str) = log_path.to_str() else {
         return Err(anyhow!("could not convert log_path to str"));
     };
@@ -319,7 +320,7 @@ pub fn display_error_box<T: std::fmt::Display>(err: T) {
         .chain(std::iter::once(0))
         .collect();
 
-    let _ = std::thread::spawn(move || {
+    let _ = thread::spawn(move || {
         let _ = unsafe {
             MessageBoxW(
                 None,

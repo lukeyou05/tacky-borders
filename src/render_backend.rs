@@ -343,9 +343,6 @@ impl V2RenderBackend {
         }
         .context("swap_chain.ResizeBuffers()")?;
 
-        // Supposedly, cloning d2d_context or swap_chain just increases the underlying object's
-        // reference count, so it's not actually cloning the object itself. Unfortunately, I need
-        // to do it because Rust's borrow checker is a little stupid.
         (self.target_bitmap, self.border_bitmap, self.mask_bitmap) = Self::create_bitmaps(
             &self.d2d_context,
             &self.swap_chain,

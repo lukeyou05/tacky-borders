@@ -72,14 +72,13 @@ pub struct SolidBrush {
 
 #[derive(Debug, Clone)]
 pub struct GradientBrush {
-    gradient_stops: Vec<D2D1_GRADIENT_STOP>, // Array of gradient stops
+    gradient_stops: Vec<D2D1_GRADIENT_STOP>,
     direction: GradientCoordinates,
     brush: Option<ID2D1LinearGradientBrush>,
 }
 
 impl ColorBrushConfig {
-    // Convert the ColorConfig struct to a Color struct
-    pub fn to_color(&self, is_active_color: bool) -> ColorBrush {
+    pub fn to_color_brush(&self, is_active_color: bool) -> ColorBrush {
         match self {
             ColorBrushConfig::Solid(solid_config) => {
                 if solid_config == "accent" {
@@ -465,7 +464,7 @@ mod tests {
             colors: vec!["#ffffff".to_string(), "#000000".to_string()],
             direction: GradientDirection::Angle("90deg".to_string()),
         });
-        let color_brush = color_brush_config.to_color(true);
+        let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Gradient(ref gradient) = color_brush {
             assert!(gradient.direction.start == [0.5, 1.0]);
@@ -483,7 +482,7 @@ mod tests {
             colors: vec!["#ffffff".to_string(), "#000000".to_string()],
             direction: GradientDirection::Angle("-90deg".to_string()),
         });
-        let color_brush = color_brush_config.to_color(true);
+        let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Gradient(ref gradient) = color_brush {
             assert!(gradient.direction.start == [0.5, 0.0]);
@@ -501,7 +500,7 @@ mod tests {
             colors: vec!["#ffffff".to_string(), "#000000".to_string()],
             direction: GradientDirection::Angle("-540deg".to_string()),
         });
-        let color_brush = color_brush_config.to_color(true);
+        let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Gradient(ref gradient) = color_brush {
             assert!(gradient.direction.start == [1.0, 0.5]);
@@ -516,7 +515,7 @@ mod tests {
     #[test]
     fn test_color_parser_translucent() -> anyhow::Result<()> {
         let color_brush_config = ColorBrushConfig::Solid("#ffffff80".to_string());
-        let color_brush = color_brush_config.to_color(true);
+        let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Solid(ref solid) = color_brush {
             assert!(

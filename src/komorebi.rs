@@ -15,8 +15,7 @@ use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
 use crate::config::{Config, serde_default_bool};
-use crate::iocp::{CompletionPort, UnixDomainSocket};
-use crate::iocp::{UnixListener, UnixStream};
+use crate::iocp::{CompletionPort, UnixDomainSocket, UnixListener, UnixStream};
 use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, post_message_w};
 
 const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(600);
