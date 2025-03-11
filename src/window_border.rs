@@ -190,7 +190,6 @@ impl WindowBorder {
         Ok(())
     }
 
-    // TODO: adjust and update border offset based on monitor dpi as well
     pub fn load_from_config(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
@@ -224,9 +223,9 @@ impl WindowBorder {
             }
         };
 
-        // Adjust the border width and radius based on the window/monitor dpi
+        // Adjust the border parameters based on the window/monitor dpi
         let border_width = (width_config * self.current_dpi / 96.0).round() as i32;
-        let border_offset = offset_config;
+        let border_offset = (offset_config as f32 * self.current_dpi / 96.0).round() as i32;
         let border_radius =
             radius_config.to_radius(border_width, self.current_dpi, self.tracking_window);
         let active_color = active_color_config.to_color_brush(true);
@@ -426,18 +425,21 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0);
     }
 
-    fn update_width_radius(&mut self) {
+    fn update_border_appearance(&mut self) {
         let window_rule = get_window_rule(self.tracking_window);
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
 
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
+        let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
         let radius_config = window_rule
             .border_radius
             .as_ref()
             .unwrap_or(&global.border_radius);
 
         self.border_drawer.border_width = (width_config * self.current_dpi / 96.0).round() as i32;
+        self.border_drawer.border_offset =
+            (offset_config as f32 * self.current_dpi / 96.0).round() as i32;
         self.border_drawer.border_radius = radius_config.to_radius(
             self.border_drawer.border_width,
             self.current_dpi,
@@ -445,7 +447,7 @@ impl WindowBorder {
         );
     }
 
-    fn update_border_drawer(&mut self) {
+    fn update_border_renderer(&mut self) {
         let m_info = match get_monitor_info(self.current_monitor) {
             Ok(info) => info,
             Err(err) => {
@@ -596,7 +598,7 @@ impl WindowBorder {
                 let new_monitor = monitor_from_window(self.tracking_window);
                 if new_monitor != self.current_monitor {
                     self.current_monitor = new_monitor;
-                    self.update_border_drawer();
+                    self.update_border_renderer();
                     should_render = true;
                 }
                 let new_dpi = match get_dpi_for_window(self.tracking_window) {
@@ -609,7 +611,7 @@ impl WindowBorder {
                 };
                 if new_dpi != self.current_dpi {
                     self.current_dpi = new_dpi;
-                    self.update_width_radius();
+                    self.update_border_appearance();
                     should_render = true;
                 }
 
