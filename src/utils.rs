@@ -305,7 +305,9 @@ pub fn get_adjusted_radius(radius: f32, dpi: f32, border_width: i32) -> f32 {
     radius * dpi / 96.0 + (border_width as f32 / 2.0)
 }
 
-pub fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_PREFERENCE {
+pub fn get_window_corner_preference(
+    tracking_window: HWND,
+) -> anyhow::Result<DWM_WINDOW_CORNER_PREFERENCE> {
     let mut corner_preference = DWM_WINDOW_CORNER_PREFERENCE::default();
 
     unsafe {
@@ -316,10 +318,9 @@ pub fn get_window_corner_preference(tracking_window: HWND) -> DWM_WINDOW_CORNER_
             size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
         )
     }
-    .context("could not retrieve window corner preference")
-    .log_if_err();
+    .context("could not retrieve window corner preference")?;
 
-    corner_preference
+    Ok(corner_preference)
 }
 
 // TODO: idk what might cause GetDpiForWindow to return 0

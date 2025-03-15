@@ -18,6 +18,7 @@ use utils::{
     has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
     send_message_w,
 };
+use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HMODULE, HWND, LPARAM, TRUE};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device4, ID2D1Factory5,
@@ -32,6 +33,7 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_MAX, EVENT_MIN, EnumWindows, IDC_ARROW, LoadCursorW, MB_ICONERROR, MB_OK,
@@ -54,6 +56,22 @@ pub mod sys_tray_icon;
 pub mod utils;
 pub mod window_border;
 
+static IS_WINDOWS_11: LazyLock<bool> = LazyLock::new(|| {
+    let mut version_info = OSVERSIONINFOW {
+        dwOSVersionInfoSize: size_of::<OSVERSIONINFOW>() as u32,
+        ..Default::default()
+    };
+    unsafe { RtlGetVersion(&mut version_info) }
+        .ok()
+        .log_if_err();
+
+    debug!(
+        "windows version: {}.{}.{}",
+        version_info.dwMajorVersion, version_info.dwMinorVersion, version_info.dwBuildNumber
+    );
+
+    version_info.dwBuildNumber >= 22000
+});
 static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
 
 struct AppState {

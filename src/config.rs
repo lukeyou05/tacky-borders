@@ -4,7 +4,7 @@ use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::render_backend::RenderBackendConfig;
 use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
-use crate::{APP_STATE, DirectXDevices, display_error_box, reload_borders};
+use crate::{APP_STATE, DirectXDevices, IS_WINDOWS_11, display_error_box, reload_borders};
 use anyhow::{Context, anyhow};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -146,9 +146,15 @@ impl RadiusConfig {
         match self {
             // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
             RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
-                match get_window_corner_preference(tracking_window) {
-                    // TODO: check if the user is running Windows 11 or 10
-                    DWMWCP_DEFAULT => get_adjusted_radius(8.0, dpi, border_width),
+                // I believe this will error on Windows 10, so we'll just use a default
+                match get_window_corner_preference(tracking_window).unwrap_or(DWMWCP_DEFAULT) {
+                    DWMWCP_DEFAULT => {
+                        if *IS_WINDOWS_11 {
+                            get_adjusted_radius(8.0, dpi, border_width)
+                        } else {
+                            0.0
+                        }
+                    }
                     DWMWCP_DONOTROUND => 0.0,
                     DWMWCP_ROUND => get_adjusted_radius(8.0, dpi, border_width),
                     DWMWCP_ROUNDSMALL => get_adjusted_radius(4.0, dpi, border_width),
