@@ -11,6 +11,7 @@ use windows::Win32::Graphics::Dwm::{
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
+use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GW_HWNDPREV,
     GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
@@ -31,7 +32,7 @@ use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
     LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
     WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
-    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_window, get_monitor_info,
+    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_monitor_info,
     get_window_rule, get_window_title, has_native_border, is_rect_visible, is_window_minimized,
     is_window_visible, monitor_from_window, post_message_w,
 };
@@ -215,11 +216,11 @@ impl WindowBorder {
         let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
 
         self.current_monitor = monitor_from_window(self.tracking_window);
-        self.current_dpi = match get_dpi_for_window(self.tracking_window) {
+        self.current_dpi = match get_dpi_for_monitor(self.current_monitor, MDT_DEFAULT) {
             Ok(dpi) => dpi as f32,
             Err(err) => {
                 self.cleanup_and_queue_exit();
-                return Err(anyhow!("could not get dpi for window: {err}"));
+                return Err(anyhow!("could not get dpi for monitor: {err}"));
             }
         };
 
@@ -601,10 +602,10 @@ impl WindowBorder {
                     self.update_border_renderer();
                     should_render = true;
                 }
-                let new_dpi = match get_dpi_for_window(self.tracking_window) {
+                let new_dpi = match get_dpi_for_monitor(self.current_monitor, MDT_DEFAULT) {
                     Ok(dpi) => dpi as f32,
                     Err(err) => {
-                        error!("could not get dpi for window: {err}");
+                        error!("could not get dpi for monitor: {err}");
                         self.cleanup_and_queue_exit();
                         return LRESULT(0);
                     }

@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT, GetDpiForWindow, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT, GetDpiForMonitor, MONITOR_DPI_TYPE, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -323,12 +323,12 @@ pub fn get_window_corner_preference(
     Ok(corner_preference)
 }
 
-// TODO: idk what might cause GetDpiForWindow to return 0
-pub fn get_dpi_for_window(hwnd: HWND) -> anyhow::Result<u32> {
-    match unsafe { GetDpiForWindow(hwnd) } {
-        0 => Err(anyhow!("received invalid dpi of 0 for {hwnd:?}")),
-        valid_dpi => Ok(valid_dpi),
-    }
+pub fn get_dpi_for_monitor(hmonitor: HMONITOR, dpitype: MONITOR_DPI_TYPE) -> anyhow::Result<u32> {
+    let (mut dpi_x, mut dpi_y) = (0, 0);
+    unsafe { GetDpiForMonitor(hmonitor, dpitype, &mut dpi_x, &mut dpi_y) }?;
+
+    // According to the docs, dpi_x and dpi_y will always be identical, so we only need one
+    Ok(dpi_x)
 }
 
 pub fn monitor_from_window(hwnd: HWND) -> HMONITOR {
