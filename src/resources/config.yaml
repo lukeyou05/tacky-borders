@@ -179,9 +179,8 @@ window_rules:
     name: "XamlExplorerHostIslandWindow"
     enabled: False
 
-  - match: Title
-    strategy: Contains
-    name: "Zebar"
+  - match: Process
+    name: "zebar"
     enabled: False
 
   - match: Title
@@ -197,8 +196,8 @@ window_rules:
     enabled: False
 
   # Example rule:
-  # - match: Class                   # Match based on Class or Title
-  #   name: "MozillaWindowClass"     # Class or title name to match
+  # - match: Class                   # Match based on Class, Title, or Process
+  #   name: "MozillaWindowClass"     # Class/title/process name to match
   #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
   #   enabled: True                  # Border enabled: True, False, or Auto (default: Auto)
   #

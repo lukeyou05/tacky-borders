@@ -1,9 +1,10 @@
 use anyhow::{Context, anyhow};
 use regex::Regex;
+use std::path::PathBuf;
 use std::{ptr, thread};
 use windows::Win32::Foundation::{
-    ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, FALSE, GetLastError, HWND,
-    LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
+    CloseHandle, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, FALSE,
+    GetLastError, HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -12,17 +13,20 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT, GetDpiForMonitor, MONITOR_DPI_TYPE, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowTextW, IsIconic,
-    IsWindowVisible, PostMessageW, RealGetWindowClassW, SendMessageW, SendNotifyMessageW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, RealGetWindowClassW,
+    SendMessageW, SendNotifyMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_NCDESTROY,
+    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
-use windows::core::BOOL;
+use windows::core::{BOOL, PWSTR};
 
 use crate::APP_STATE;
 use crate::config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
@@ -74,9 +78,9 @@ pub fn has_filtered_style(hwnd: HWND) -> bool {
 }
 
 pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
-    let mut title_arr: [u16; 256] = [0; 256];
+    let mut title_buf: [u16; 256] = [0; 256];
 
-    if unsafe { GetWindowTextW(hwnd, &mut title_arr) } == 0 {
+    if unsafe { GetWindowTextW(hwnd, &mut title_buf) } == 0 {
         let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
@@ -91,14 +95,14 @@ pub fn get_window_title(hwnd: HWND) -> anyhow::Result<String> {
         }
     }
 
-    let title_binding = String::from_utf16_lossy(&title_arr);
+    let title_binding = String::from_utf16_lossy(&title_buf);
     Ok(title_binding.split_once("\0").unwrap().0.to_string())
 }
 
 pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
-    let mut class_arr: [u16; 256] = [0; 256];
+    let mut class_buf: [u16; 256] = [0; 256];
 
-    if unsafe { RealGetWindowClassW(hwnd, &mut class_arr) } == 0 {
+    if unsafe { RealGetWindowClassW(hwnd, &mut class_buf) } == 0 {
         let last_error = get_last_error();
 
         // ERROR_ENVVAR_NOT_FOUND just means the title is empty which isn't necessarily an issue
@@ -113,42 +117,99 @@ pub fn get_window_class(hwnd: HWND) -> anyhow::Result<String> {
         }
     }
 
-    let class_binding = String::from_utf16_lossy(&class_arr);
+    let class_binding = String::from_utf16_lossy(&class_buf);
     Ok(class_binding.split_once("\0").unwrap().0.to_string())
+}
+
+pub fn get_window_process_name(hwnd: HWND) -> anyhow::Result<String> {
+    let mut process_id = 0;
+    // This function returns the thread id. If it's 0, that means we likely passed an invalid hwnd.
+    if unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) } == 0 {
+        return Err(anyhow!(
+            "could not get thread and process id for {hwnd:?}: {:?}",
+            get_last_error()
+        ));
+    }
+
+    let hprocess = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
+        .context("could not open process of {hwnd}")?;
+
+    let mut process_buf = [0u16; 256];
+    let mut lpdwsize = process_buf.len() as u32;
+
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            hprocess,
+            PROCESS_NAME_WIN32,
+            PWSTR(process_buf.as_mut_ptr()),
+            &mut lpdwsize,
+        )
+    }
+    .context("could not query process image name for {hwnd}");
+
+    unsafe { CloseHandle(hprocess) }.context("could not close {hprocess:?}")?;
+
+    result?;
+
+    // QueryFullProcessImageNameW will update lpdwsize with the number of characters written
+    // (excluding the null terminating char), so if it's about the same as the size of our buffer,
+    // it means we may not have gotten all of it
+    if lpdwsize >= process_buf.len() as u32 - 1 {
+        warn!("process buffer size too small; truncation may occur");
+    }
+
+    let exe_path = PathBuf::from(
+        String::from_utf16(&process_buf[..lpdwsize as usize])
+            .context("could not convert process name buffer to a string")?,
+    );
+
+    Ok(exe_path
+        .file_stem()
+        .and_then(|osstr| osstr.to_str())
+        .context("could not get exe file stem from process path")?
+        .to_string())
 }
 
 // Get the window rule from 'window_rules' in the config
 pub fn get_window_rule(hwnd: HWND) -> WindowRule {
-    let title = match get_window_title(hwnd) {
-        Ok(val) => val,
-        Err(err) => {
+    let mut title_opt: Option<String> = None;
+    let mut class_opt: Option<String> = None;
+    let mut process_opt: Option<String> = None;
+
+    let title = || -> String {
+        get_window_title(hwnd).unwrap_or_else(|err| {
             error!("could not retrieve window title for {hwnd:?}: {err}");
             "".to_string()
-        }
+        })
     };
-
-    let class = match get_window_class(hwnd) {
-        Ok(val) => val,
-        Err(err) => {
+    let class = || -> String {
+        get_window_class(hwnd).unwrap_or_else(|err| {
             error!("could not retrieve window class for {hwnd:?}: {err}");
             "".to_string()
-        }
+        })
+    };
+    let process = || -> String {
+        get_window_process_name(hwnd).unwrap_or_else(|err| {
+            error!("could not retrieve window process name for {hwnd:?}: {err}");
+            "".to_string()
+        })
     };
 
     let config = APP_STATE.config.read().unwrap();
 
     for rule in config.window_rules.iter() {
-        let window_name = match rule.kind {
-            Some(MatchKind::Title) => &title,
-            Some(MatchKind::Class) => &class,
+        let window_name: &String = match rule.kind {
+            Some(MatchKind::Title) => title_opt.get_or_insert_with(title),
+            Some(MatchKind::Class) => class_opt.get_or_insert_with(class),
+            Some(MatchKind::Process) => process_opt.get_or_insert_with(process),
             None => {
-                error!("expected 'match' for window rule but none found!");
+                error!("expected 'match' for window rule but None found!");
                 continue;
             }
         };
 
         let Some(match_name) = &rule.name else {
-            error!("expected `name` for window rule but none found!");
+            error!("expected `name` for window rule but None found!");
             continue;
         };
 

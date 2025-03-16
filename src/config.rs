@@ -121,6 +121,7 @@ pub struct WindowRule {
 pub enum MatchKind {
     Title,
     Class,
+    Process,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
