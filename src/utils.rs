@@ -1,5 +1,7 @@
 use anyhow::{Context, anyhow};
 use regex::Regex;
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::{ptr, thread};
 use windows::Win32::Foundation::{
@@ -158,16 +160,13 @@ pub fn get_window_process_name(hwnd: HWND) -> anyhow::Result<String> {
         warn!("process buffer size too small; truncation may occur");
     }
 
-    let exe_path = PathBuf::from(
-        String::from_utf16(&process_buf[..lpdwsize as usize])
-            .context("could not convert process name buffer to a string")?,
-    );
+    let exe_path = PathBuf::from(OsString::from_wide(&process_buf[..lpdwsize as usize]));
 
     Ok(exe_path
         .file_stem()
-        .and_then(|osstr| osstr.to_str())
         .context("could not get exe file stem from process path")?
-        .to_string())
+        .to_string_lossy()
+        .into_owned())
 }
 
 // Get the window rule from 'window_rules' in the config
