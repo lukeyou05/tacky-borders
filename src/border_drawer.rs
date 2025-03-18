@@ -1,6 +1,6 @@
 use anyhow::{Context, anyhow};
 use std::time;
-use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, E_FAIL, E_POINTER, HWND, RECT, S_OK};
+use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, E_POINTER, HWND, RECT, S_OK};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
 };
@@ -15,7 +15,7 @@ use crate::animations::{AnimType, Animations};
 use crate::colors::ColorBrush;
 use crate::effects::Effects;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::LogIfErr;
+use crate::utils::ToWindowsResult;
 use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone)]
@@ -148,7 +148,10 @@ impl BorderDrawer {
             RenderBackend::V2(_) => self.render_v2(window_rect, window_state)?,
             RenderBackend::Legacy(_) => self.render_legacy(window_rect, window_state)?,
             RenderBackend::None => {
-                return Err(windows::core::Error::new(E_FAIL, "render_backend is None"));
+                return Err(windows::core::Error::new(
+                    E_POINTER,
+                    "render_backend is None",
+                ));
             }
         }
 
@@ -185,7 +188,7 @@ impl BorderDrawer {
             render_target.BeginDraw();
             render_target.Clear(None);
 
-            if bottom_color.get_opacity() > Some(0.0) {
+            if bottom_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -195,7 +198,7 @@ impl BorderDrawer {
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            if top_color.get_opacity() > Some(0.0) {
+            if top_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = top_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -235,7 +238,7 @@ impl BorderDrawer {
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
-            if bottom_color.get_opacity() > Some(0.0) {
+            if bottom_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -245,7 +248,7 @@ impl BorderDrawer {
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            if top_color.get_opacity() > Some(0.0) {
+            if top_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = top_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -310,7 +313,7 @@ impl BorderDrawer {
                 .border_bitmap
                 .as_ref()
                 .context("could not get border_bitmap")
-                .map_err(|err| windows::core::Error::new(E_POINTER, err.to_string()))?;
+                .to_windows_result(E_POINTER)?;
             d2d_context.SetTarget(border_bitmap);
 
             // Draw to the border_bitmap
@@ -320,7 +323,7 @@ impl BorderDrawer {
             // We use filled rectangles here because it helps make the effects more visible.
             // Additionally, if someone sets the border width to 0, the effects will still be
             // visible (whereas they wouldn't be if we used a hollow rectangle).
-            if bottom_color.get_opacity() > Some(0.0) {
+            if bottom_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -332,7 +335,7 @@ impl BorderDrawer {
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            if top_color.get_opacity() > Some(0.0) {
+            if top_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = top_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -352,7 +355,7 @@ impl BorderDrawer {
                 .mask_bitmap
                 .as_ref()
                 .context("could not get mask_bitmap")
-                .map_err(|err| windows::core::Error::new(E_POINTER, err.to_string()))?;
+                .to_windows_result(E_POINTER)?;
             d2d_context.SetTarget(mask_bitmap);
 
             // Create a rect that covers up to the inner edge of the border
@@ -392,14 +395,14 @@ impl BorderDrawer {
                 .target_bitmap
                 .as_ref()
                 .context("could not get target_bitmap")
-                .map_err(|err| windows::core::Error::new(E_POINTER, err.to_string()))?;
+                .to_windows_result(E_POINTER)?;
             d2d_context.SetTarget(target_bitmap);
 
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
             let command_list = self
                 .effects
                 .get_current_command_list(window_state)
-                .map_err(|err| windows::core::Error::new(E_POINTER, err.to_string()))?;
+                .to_windows_result(E_POINTER)?;
 
             // Draw to the target_bitmap
             d2d_context.BeginDraw();
@@ -464,51 +467,52 @@ impl BorderDrawer {
         }
     }
 
-    pub fn animate(&mut self, window_rect: &RECT, window_padding: i32, window_state: WindowState) {
+    pub fn animate(
+        &mut self,
+        window_rect: &RECT,
+        window_padding: i32,
+        window_state: WindowState,
+    ) -> anyhow::Result<()> {
         let anim_elapsed = self
             .last_anim_time
-            .map(|instant| instant.elapsed())
-            .unwrap_or_default();
+            .get_or_insert_with(time::Instant::now)
+            .elapsed();
         let render_elapsed = self
             .last_render_time
-            .map(|instant| instant.elapsed())
-            .unwrap_or_default();
+            .get_or_insert_with(time::Instant::now)
+            .elapsed();
 
         let mut update = false;
 
         for anim_params in self.animations.get_current(window_state).clone().iter() {
             match anim_params.anim_type {
-                AnimType::Spiral => {
+                AnimType::Spiral | AnimType::ReverseSpiral => {
                     self.animations.animate_spiral(
                         window_rect,
                         &self.active_color,
                         &self.inactive_color,
                         &anim_elapsed,
                         anim_params,
-                        false,
-                    );
-                    update = true;
-                }
-                AnimType::ReverseSpiral => {
-                    self.animations.animate_spiral(
-                        window_rect,
-                        &self.active_color,
-                        &self.inactive_color,
-                        &anim_elapsed,
-                        anim_params,
-                        true,
                     );
                     update = true;
                 }
                 AnimType::Fade => {
-                    if self.animations.should_fade {
+                    let correct_active_opacity = if window_state == WindowState::Active {
+                        1.0
+                    } else {
+                        0.0
+                    };
+
+                    if self.active_color.get_opacity()? != correct_active_opacity
+                        || self.inactive_color.get_opacity()? != 1.0 - correct_active_opacity
+                    {
                         self.animations.animate_fade(
                             window_state,
                             &self.active_color,
                             &self.inactive_color,
                             &anim_elapsed,
                             anim_params,
-                        );
+                        )?;
                         update = true;
                     }
                 }
@@ -520,8 +524,9 @@ impl BorderDrawer {
         let render_interval = 1.0 / self.animations.fps as f32;
         let time_diff = render_elapsed.as_secs_f32() - render_interval;
         if update && (time_diff.abs() <= 0.001 || time_diff >= 0.0) {
-            self.render(window_rect, window_padding, window_state)
-                .log_if_err();
+            self.render(window_rect, window_padding, window_state)?;
         }
+
+        Ok(())
     }
 }

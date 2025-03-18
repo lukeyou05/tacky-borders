@@ -280,31 +280,47 @@ impl ColorBrush {
         }
     }
 
-    pub fn set_opacity(&self, opacity: f32) {
+    pub fn set_opacity(&self, opacity: f32) -> anyhow::Result<()> {
         match self {
-            ColorBrush::Gradient(gradient) => {
-                if let Some(ref id2d1_brush) = gradient.brush {
-                    unsafe { id2d1_brush.SetOpacity(opacity) }
-                }
-            }
             ColorBrush::Solid(solid) => {
-                if let Some(ref id2d1_brush) = solid.brush {
-                    unsafe { id2d1_brush.SetOpacity(opacity) }
-                }
+                let id2d1_brush = solid
+                    .brush
+                    .as_ref()
+                    .context("brush has not been created yet")?;
+
+                unsafe { id2d1_brush.SetOpacity(opacity) };
+            }
+            ColorBrush::Gradient(gradient) => {
+                let id2d1_brush = gradient
+                    .brush
+                    .as_ref()
+                    .context("brush has not been created yet")?;
+
+                unsafe { id2d1_brush.SetOpacity(opacity) };
             }
         }
+
+        Ok(())
     }
 
-    pub fn get_opacity(&self) -> Option<f32> {
+    pub fn get_opacity(&self) -> anyhow::Result<f32> {
         match self {
-            ColorBrush::Solid(solid) => solid
-                .brush
-                .as_ref()
-                .map(|id2d1_brush| unsafe { id2d1_brush.GetOpacity() }),
-            ColorBrush::Gradient(gradient) => gradient
-                .brush
-                .as_ref()
-                .map(|id2d1_brush| unsafe { id2d1_brush.GetOpacity() }),
+            ColorBrush::Solid(solid) => {
+                let id2d1_brush = solid
+                    .brush
+                    .as_ref()
+                    .context("brush has not been created yet")?;
+
+                Ok(unsafe { id2d1_brush.GetOpacity() })
+            }
+            ColorBrush::Gradient(gradient) => {
+                let id2d1_brush = gradient
+                    .brush
+                    .as_ref()
+                    .context("brush has not been created yet")?;
+
+                Ok(unsafe { id2d1_brush.GetOpacity() })
+            }
         }
     }
 

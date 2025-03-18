@@ -28,7 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SendMessageW, SendNotifyMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_NCDESTROY,
     WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
-use windows::core::{BOOL, PWSTR};
+use windows::core::{BOOL, HRESULT, PWSTR};
 
 use crate::APP_STATE;
 use crate::config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
@@ -56,6 +56,16 @@ where
         if let Err(e) = self {
             error!("{e:#}");
         }
+    }
+}
+
+pub trait ToWindowsResult<T> {
+    fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T>;
+}
+
+impl<T> ToWindowsResult<T> for anyhow::Result<T> {
+    fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T> {
+        self.map_err(|err| windows::core::Error::new(hresult, err.to_string()))
     }
 }
 

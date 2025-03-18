@@ -220,7 +220,11 @@ impl WindowBorder {
             Ok(dpi) => dpi as f32,
             Err(err) => {
                 self.cleanup_and_queue_exit();
-                return Err(anyhow!("could not get dpi for monitor: {err}"));
+                return Err(anyhow!(
+                    "could not get dpi for {:?}: {}",
+                    self.current_monitor,
+                    err
+                ));
             }
         };
 
@@ -405,7 +409,7 @@ impl WindowBorder {
                     .animations
                     .update_fade_progress(self.window_state)
             }
-            true => self.border_drawer.animations.should_fade = true,
+            true => {} // We will rely on the animations callback to update color
         }
 
         Ok(())
@@ -422,8 +426,8 @@ impl WindowBorder {
                 &mut self.border_drawer.active_color,
             ),
         };
-        top_color.set_opacity(1.0);
-        bottom_color.set_opacity(0.0);
+        top_color.set_opacity(1.0).log_if_err();
+        bottom_color.set_opacity(0.0).log_if_err();
     }
 
     fn update_border_appearance(&mut self) {
@@ -475,48 +479,42 @@ impl WindowBorder {
             self.border_drawer
                 .render(&self.window_rect, self.window_padding, self.window_state)
         {
-            self.handle_render_error(err)?
-        };
+            if err.code() == D2DERR_RECREATE_TARGET {
+                // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
+                // This error can be caused by things like waking up from sleep, updating GPU
+                // drivers, changing screen resolution, etc.
+                warn!("render target has been lost; attempting to recreate");
 
-        Ok(())
-    }
+                let pixel_size = self.border_drawer.render_backend.get_pixel_size()?;
+                let render_backend_config = match self.border_drawer.render_backend {
+                    RenderBackend::V2(_) => RenderBackendConfig::V2,
+                    RenderBackend::Legacy(_) => RenderBackendConfig::Legacy,
+                    RenderBackend::None => {
+                        // This branch should be unreachable (theoretically)
+                        self.cleanup_and_queue_exit();
+                        return Err(anyhow!("render_backend is None"));
+                    }
+                };
 
-    fn handle_render_error(&mut self, err: windows::core::Error) -> anyhow::Result<()> {
-        if err.code() == D2DERR_RECREATE_TARGET {
-            // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
-            // This error can be caused by things like waking up from sleep, updating GPU
-            // drivers, changing screen resolution, etc.
-            warn!("render target has been lost; attempting to recreate");
-
-            let pixel_size = self.border_drawer.render_backend.get_pixel_size()?;
-            let render_backend_config = match self.border_drawer.render_backend {
-                RenderBackend::V2(_) => RenderBackendConfig::V2,
-                RenderBackend::Legacy(_) => RenderBackendConfig::Legacy,
-                RenderBackend::None => {
-                    // This branch should be unreachable (theoretically)
+                if let Err(err_2) = self.border_drawer.init_renderer(
+                    pixel_size.width,
+                    pixel_size.height,
+                    self.border_window,
+                    &self.window_rect,
+                    render_backend_config,
+                ) {
                     self.cleanup_and_queue_exit();
-                    return Err(anyhow!("render_backend is None"));
-                }
-            };
+                    return Err(anyhow!(
+                        "could not recreate render target; exiting thread: {err_2}"
+                    ));
+                };
 
-            if let Err(err2) = self.border_drawer.init_renderer(
-                pixel_size.width,
-                pixel_size.height,
-                self.border_window,
-                &self.window_rect,
-                render_backend_config,
-            ) {
+                info!("successfully recreated render target; resuming thread");
+            } else {
                 self.cleanup_and_queue_exit();
-                return Err(anyhow!(
-                    "could not recreate render target; exiting thread: {err2}"
-                ));
-            };
-
-            info!("successfully recreated render target; resuming thread");
-        } else {
-            self.cleanup_and_queue_exit();
-            return Err(anyhow!("self.render() failed; exiting thread: {err}"));
-        }
+                return Err(anyhow!("self.render() failed; exiting thread: {err}"));
+            }
+        };
 
         Ok(())
     }
@@ -605,7 +603,7 @@ impl WindowBorder {
                 let new_dpi = match get_dpi_for_monitor(self.current_monitor, MDT_DEFAULT) {
                     Ok(dpi) => dpi as f32,
                     Err(err) => {
-                        error!("could not get dpi for monitor: {err}");
+                        error!("could not get dpi for {:?}: {}", self.current_monitor, err);
                         self.cleanup_and_queue_exit();
                         return LRESULT(0);
                     }
@@ -672,8 +670,14 @@ impl WindowBorder {
             WM_APP_MINIMIZESTART => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
 
-                self.border_drawer.active_color.set_opacity(0.0);
-                self.border_drawer.inactive_color.set_opacity(0.0);
+                self.border_drawer
+                    .active_color
+                    .set_opacity(0.0)
+                    .log_if_err();
+                self.border_drawer
+                    .inactive_color
+                    .set_opacity(0.0)
+                    .log_if_err();
 
                 self.border_drawer.animations.destroy_timer();
                 self.is_paused = true;
@@ -701,11 +705,9 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                self.border_drawer.animate(
-                    &self.window_rect,
-                    self.window_padding,
-                    self.window_state,
-                );
+                self.border_drawer
+                    .animate(&self.window_rect, self.window_padding, self.window_state)
+                    .log_if_err();
             }
             WM_APP_KOMOREBI => {
                 let window_rule = get_window_rule(self.tracking_window);

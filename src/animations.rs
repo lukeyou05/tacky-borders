@@ -54,10 +54,7 @@ pub struct Animations {
     pub timer: Option<AnimationTimer>,
     pub fps: i32,
     pub fade_progress: f32,
-    pub fade_to_visible: bool,
-    pub should_fade: bool,
     pub spiral_progress: f32,
-    pub spiral_angle: f32,
 }
 
 impl Animations {
@@ -68,11 +65,11 @@ impl Animations {
         inactive_color: &ColorBrush,
         anim_elapsed: &time::Duration,
         anim_params: &AnimParams,
-        reverse: bool,
     ) {
-        let direction = match reverse {
-            true => -1.0,
-            false => 1.0,
+        let direction = if anim_params.anim_type == AnimType::ReverseSpiral {
+            -1.0
+        } else {
+            1.0
         };
 
         let delta_x = anim_elapsed.as_secs_f32() * 1000.0 / anim_params.duration * direction;
@@ -84,13 +81,11 @@ impl Animations {
 
         let y_coord = anim_params.easing_fn.as_ref()(self.spiral_progress);
 
-        self.spiral_angle = 360.0 * y_coord;
-
         // Calculate the center point of the window
         let center_x = (window_rect.right - window_rect.left) / 2;
         let center_y = (window_rect.bottom - window_rect.top) / 2;
 
-        let transform = Matrix3x2::rotation(self.spiral_angle, center_x as f32, center_y as f32);
+        let transform = Matrix3x2::rotation(360.0 * y_coord, center_x as f32, center_y as f32);
 
         active_color.set_transform(&transform);
         inactive_color.set_transform(&transform);
@@ -103,17 +98,21 @@ impl Animations {
         inactive_color: &ColorBrush,
         anim_elapsed: &time::Duration,
         anim_params: &AnimParams,
-    ) {
-        // If both are 0, that means the window has been opened for the first time or has been
-        // unminimized. If that is the case, only one of the colors should be visible while fading.
-        if active_color.get_opacity() == Some(0.0) && inactive_color.get_opacity() == Some(0.0) {
-            // Set fade_progress here so we start from 0 opacity for the visible color
+    ) -> anyhow::Result<()> {
+        let prev_active_opacity = active_color.get_opacity()?;
+        let prev_inactive_opacity = inactive_color.get_opacity()?;
+
+        // We reset 'fade_progress' if either color has 0 opacity (i.e. when the animation is not
+        // in progress). This ensures we start from the correct position in the following cases:
+        // 1. The border has just been created.
+        // 2. The fade progress hasn't updated properly, which can occur if only one of the
+        //    active/inactive animations lists contains the fade animation type.
+        // NOTE: opacities can be negative
+        if prev_active_opacity == 0.0 || prev_inactive_opacity == 0.0 {
             self.fade_progress = match window_state {
                 WindowState::Active => 0.0,
                 WindowState::Inactive => 1.0,
             };
-
-            self.fade_to_visible = true;
         }
 
         // Determine which direction we should move fade_progress
@@ -129,27 +128,28 @@ impl Animations {
         if !(0.0..=1.0).contains(&self.fade_progress) {
             let final_opacity = self.fade_progress.clamp(0.0, 1.0);
 
-            active_color.set_opacity(final_opacity);
-            inactive_color.set_opacity(1.0 - final_opacity);
+            active_color.set_opacity(final_opacity)?;
+            inactive_color.set_opacity(1.0 - final_opacity)?;
 
             self.fade_progress = final_opacity;
-            self.fade_to_visible = false;
-            self.should_fade = false;
-            return;
+            return Ok(());
         }
 
         let y_coord = anim_params.easing_fn.as_ref()(self.fade_progress);
 
-        let (new_active_opacity, new_inactive_opacity) = match self.fade_to_visible {
-            true => match window_state {
-                WindowState::Active => (y_coord, 0.0),
-                WindowState::Inactive => (0.0, 1.0 - y_coord),
-            },
-            false => (y_coord, 1.0 - y_coord),
-        };
+        // Don't question it; trust the process
+        // Ok, it's mainly done this way to handle edge cases when the border has just been created
+        let opacity_diff = f32::min(
+            f32::abs(y_coord - prev_active_opacity),
+            f32::abs(y_coord - (1.0 - prev_inactive_opacity)),
+        ) * direction;
+        let new_active_opacity = prev_active_opacity + opacity_diff;
+        let new_inactive_opacity = prev_inactive_opacity - opacity_diff;
 
-        active_color.set_opacity(new_active_opacity);
-        inactive_color.set_opacity(new_inactive_opacity);
+        active_color.set_opacity(new_active_opacity)?;
+        inactive_color.set_opacity(new_inactive_opacity)?;
+
+        Ok(())
     }
 
     pub fn get_current(&self, window_state: WindowState) -> &Vec<AnimParams> {
