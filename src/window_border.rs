@@ -455,10 +455,9 @@ impl WindowBorder {
         border_width: i32,
         window_padding: i32,
     ) -> D2D_SIZE_U {
-        // TODO: fix add with overflow panic (if border_width + window_padding < 0)
         D2D_SIZE_U {
-            width: screen_width + ((border_width + window_padding) * 2) as u32,
-            height: screen_height + ((border_width + window_padding) * 2) as u32,
+            width: (screen_width as i32 + ((border_width + window_padding) * 2)) as u32,
+            height: (screen_height as i32 + ((border_width + window_padding) * 2)) as u32,
         }
     }
 
