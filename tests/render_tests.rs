@@ -64,7 +64,7 @@ fn test_border_drawer_update() -> anyhow::Result<()> {
     register_border_window_class()?;
     let hwnd = border_window.create_window()?;
 
-    border_drawer.configure_border(
+    border_drawer.configure_appearance(
         4,
         -1,
         8.0,
@@ -80,7 +80,7 @@ fn test_border_drawer_update() -> anyhow::Result<()> {
             .render(&RECT::default(), 0, WindowState::default())
             .is_ok()
     );
-    assert!(border_drawer.update_renderer(1280, 720).is_ok());
+    assert!(border_drawer.update_renderer_size(1280, 720).is_ok());
     assert!(
         border_drawer
             .render(&RECT::default(), 0, WindowState::default())
