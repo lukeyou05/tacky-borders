@@ -19,8 +19,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
     SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
     SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_CREATE,
-    WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
-    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED,
+    WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -849,6 +850,25 @@ impl WindowBorder {
                 // border's pointer anymore, making it stop processing our custom messages.
                 unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
                 self.cleanup_and_queue_exit();
+            }
+            // This message is sent when a display setting has changed (e.g. resolution change). It
+            // is not sent when the window moves to a different monitor.
+            WM_DISPLAYCHANGE => {
+                // The LPARAM supposedly will contain the new? resolution of the primary display,
+                // but it may not be relevant to our border window in a multi-monitor setup, so
+                // we'll run our own tests to determine whether we actually need to update anything.
+                let needs_render =
+                    match self.update_appearance_and_renderer_if_necessary(self.current_monitor) {
+                        Ok(is_updated) => is_updated,
+                        Err(err) => {
+                            error!("could not update appearance and renderer: {err}");
+                            return LRESULT(0);
+                        }
+                    };
+
+                if needs_render && is_window_visible(self.border_window) {
+                    self.render().log_if_err();
+                }
             }
             // Although we already check for DPI changes when the window moves between monitors,
             // it's possible for the DPI to change without moving to a different monitor, or
