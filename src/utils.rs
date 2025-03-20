@@ -371,8 +371,8 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
     });
 }
 
-pub fn get_adjusted_radius(radius: f32, dpi: f32, border_width: i32) -> f32 {
-    radius * dpi / 96.0 + (border_width as f32 / 2.0)
+pub fn get_adjusted_radius(radius: f32, dpi: u32, border_width: i32) -> f32 {
+    radius * dpi as f32 / 96.0 + (border_width as f32 / 2.0)
 }
 
 pub fn get_window_corner_preference(
@@ -405,6 +405,14 @@ pub fn monitor_from_window(hwnd: HWND) -> HMONITOR {
     unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }
 }
 
+pub fn hiword(val: usize) -> u16 {
+    ((val >> 16) & 0xFFFF) as u16
+}
+
+pub fn loword(val: usize) -> u16 {
+    (val & 0xFFFF) as u16
+}
+
 pub fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFO> {
     let mut mi = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
@@ -420,6 +428,14 @@ pub fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFO> {
     };
 
     Ok(mi)
+}
+
+pub fn get_monitor_resolution(hmonitor: HMONITOR) -> anyhow::Result<(u32, u32)> {
+    let m_info = get_monitor_info(hmonitor).context("could not get m_info")?;
+    let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
+    let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
+
+    Ok((screen_width, screen_height))
 }
 
 pub fn destroy_border_for_window(tracking_window: HWND) {

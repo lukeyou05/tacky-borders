@@ -37,7 +37,7 @@ pub struct BorderDrawer {
 
 impl BorderDrawer {
     #[allow(clippy::too_many_arguments)]
-    pub fn configure_border(
+    pub fn configure_appearance(
         &mut self,
         border_width: i32,
         border_offset: i32,
@@ -100,7 +100,7 @@ impl BorderDrawer {
         Ok(())
     }
 
-    pub fn update_renderer(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+    pub fn update_renderer_size(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
         self.render_backend
             .update(width, height, self.effects.is_enabled())
             .context("could not update render resources")?;

@@ -2,10 +2,11 @@ use anyhow::{Context, anyhow};
 use std::ptr;
 use std::thread;
 use std::time;
-use windows::Win32::Foundation::D2DERR_RECREATE_TARGET;
-use windows::Win32::Foundation::{COLORREF, FALSE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM};
-use windows::Win32::Graphics::Direct2D::D2D1_BRUSH_PROPERTIES;
-use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
+use windows::Win32::Foundation::{
+    COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
+};
+use windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U;
+use windows::Win32::Graphics::Direct2D::{D2D1_BRUSH_PROPERTIES, ID2D1RenderTarget};
 use windows::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_EXTENDED_FRAME_BOUNDS,
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute,
@@ -18,8 +19,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
     SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
     SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_CREATE,
-    WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
+    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -29,12 +30,13 @@ use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
+use crate::utils::get_monitor_resolution;
 use crate::utils::{
     LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
     WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
-    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_monitor_info,
-    get_window_rule, get_window_title, has_native_border, is_rect_visible, is_window_minimized,
-    is_window_visible, monitor_from_window, post_message_w,
+    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_window_rule,
+    get_window_title, has_native_border, is_rect_visible, is_window_minimized, is_window_visible,
+    loword, monitor_from_window, post_message_w,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -45,7 +47,7 @@ pub struct WindowBorder {
     window_rect: RECT,
     window_padding: i32,
     current_monitor: HMONITOR,
-    current_dpi: f32,
+    current_dpi: u32,
     border_drawer: BorderDrawer,
     initialize_delay: u64,
     unminimize_delay: u64,
@@ -107,7 +109,13 @@ impl WindowBorder {
     }
 
     pub fn init(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
-        self.load_from_config(window_rule)?;
+        self.current_monitor = monitor_from_window(self.tracking_window);
+        self.current_dpi =
+            get_dpi_for_monitor(self.current_monitor, MDT_DEFAULT).map_err(|err| {
+                self.cleanup_and_queue_exit();
+                anyhow!("could not get dpi for {:?}: {}", self.current_monitor, err)
+            })?;
+        self.load_from_config(window_rule, self.current_dpi)?;
 
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(self.initialize_delay));
@@ -132,16 +140,19 @@ impl WindowBorder {
             SetLayeredWindowAttributes(self.border_window, COLORREF(0x00000000), 255, LWA_ALPHA)
                 .context("could not set LWA_ALPHA")?;
 
-            let m_info = get_monitor_info(self.current_monitor).context("mi")?;
-            let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
-            let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
+            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
+                .context("could not get monitor resolution")?;
 
+            let renderer_size = Self::compute_proper_renderer_size(
+                screen_width,
+                screen_height,
+                self.border_drawer.border_width,
+                self.window_padding,
+            );
             self.border_drawer
                 .init_renderer(
-                    screen_width
-                        + ((self.border_drawer.border_width + self.window_padding) * 2) as u32,
-                    screen_height
-                        + ((self.border_drawer.border_width + self.window_padding) * 2) as u32,
+                    renderer_size.width,
+                    renderer_size.height,
                     self.border_window,
                     &self.window_rect,
                     APP_STATE.config.read().unwrap().render_backend,
@@ -191,7 +202,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    pub fn load_from_config(&mut self, window_rule: WindowRule) -> anyhow::Result<()> {
+    pub fn load_from_config(&mut self, window_rule: WindowRule, dpi: u32) -> anyhow::Result<()> {
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
 
@@ -215,32 +226,17 @@ impl WindowBorder {
             .unwrap_or(&global.animations);
         let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
 
-        self.current_monitor = monitor_from_window(self.tracking_window);
-        self.current_dpi = match get_dpi_for_monitor(self.current_monitor, MDT_DEFAULT) {
-            Ok(dpi) => dpi as f32,
-            Err(err) => {
-                self.cleanup_and_queue_exit();
-                return Err(anyhow!(
-                    "could not get dpi for {:?}: {}",
-                    self.current_monitor,
-                    err
-                ));
-            }
-        };
-
         // Adjust the border parameters based on the window/monitor dpi
-        let border_width = (width_config * self.current_dpi / 96.0).round() as i32;
-        let border_offset = (offset_config as f32 * self.current_dpi / 96.0).round() as i32;
-        let border_radius =
-            radius_config.to_radius(border_width, self.current_dpi, self.tracking_window);
+        let border_width = (width_config * dpi as f32 / 96.0).round() as i32;
+        let border_offset = (offset_config as f32 * dpi as f32 / 96.0).round() as i32;
+        let border_radius = radius_config.to_radius(border_width, dpi, self.tracking_window);
         let active_color = active_color_config.to_color_brush(true);
         let inactive_color = inactive_color_config.to_color_brush(false);
 
         let animations = animations_config.to_animations();
         let effects = effects_config.to_effects();
 
-        // Configure the border's appearance using above variables
-        self.border_drawer.configure_border(
+        self.border_drawer.configure_appearance(
             border_width,
             border_offset,
             border_radius,
@@ -430,7 +426,7 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
-    fn update_border_appearance(&mut self) {
+    fn update_appearance(&mut self, new_dpi: u32) {
         let window_rule = get_window_rule(self.tracking_window);
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
@@ -442,36 +438,86 @@ impl WindowBorder {
             .as_ref()
             .unwrap_or(&global.border_radius);
 
-        self.border_drawer.border_width = (width_config * self.current_dpi / 96.0).round() as i32;
+        self.border_drawer.border_width = (width_config * new_dpi as f32 / 96.0).round() as i32;
         self.border_drawer.border_offset =
-            (offset_config as f32 * self.current_dpi / 96.0).round() as i32;
+            (offset_config as f32 * new_dpi as f32 / 96.0).round() as i32;
         self.border_drawer.border_radius = radius_config.to_radius(
             self.border_drawer.border_width,
-            self.current_dpi,
+            new_dpi,
             self.tracking_window,
         );
     }
 
-    fn update_border_renderer(&mut self) {
-        let m_info = match get_monitor_info(self.current_monitor) {
-            Ok(info) => info,
-            Err(err) => {
-                error!("could not get monitor info: {err}");
-                self.cleanup_and_queue_exit();
-                return;
-            }
-        };
-        let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
-        let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
+    fn compute_proper_renderer_size(
+        screen_width: u32,
+        screen_height: u32,
+        border_width: i32,
+        window_padding: i32,
+    ) -> D2D_SIZE_U {
+        // TODO: fix add with overflow panic (if border_width + window_padding < 0)
+        D2D_SIZE_U {
+            width: screen_width + ((border_width + window_padding) * 2) as u32,
+            height: screen_height + ((border_width + window_padding) * 2) as u32,
+        }
+    }
 
+    fn update_renderer_size(&mut self, screen_width: u32, screen_height: u32) {
+        let renderer_size = Self::compute_proper_renderer_size(
+            screen_width,
+            screen_height,
+            self.border_drawer.border_width,
+            self.window_padding,
+        );
         self.border_drawer
-            .update_renderer(
-                screen_width + ((self.border_drawer.border_width + self.window_padding) * 2) as u32,
-                screen_height
-                    + ((self.border_drawer.border_width + self.window_padding) * 2) as u32,
-            )
-            .context("could not update border drawer")
+            .update_renderer_size(renderer_size.width, renderer_size.height)
+            .context("could not update renderer")
             .log_if_err();
+    }
+
+    fn needs_renderer_update(&self, screen_width: u32, screen_height: u32) -> anyhow::Result<bool> {
+        let correct_renderer_size = Self::compute_proper_renderer_size(
+            screen_width,
+            screen_height,
+            self.border_drawer.border_width,
+            self.window_padding,
+        );
+        let actual_renderer_size = self
+            .border_drawer
+            .render_backend
+            .get_pixel_size()
+            .context("could not get actual renderer size")?;
+
+        Ok(correct_renderer_size != actual_renderer_size)
+    }
+
+    fn update_appearance_and_renderer_if_necessary(
+        &mut self,
+        new_monitor: HMONITOR,
+    ) -> anyhow::Result<bool> {
+        let mut is_updated = false;
+
+        let new_dpi =
+            get_dpi_for_monitor(new_monitor, MDT_DEFAULT).context("could not get new_dpi")?;
+        if new_dpi != self.current_dpi {
+            self.current_dpi = new_dpi;
+            debug!("dpi has changed! new dpi: {new_dpi}");
+            is_updated = true;
+
+            self.update_appearance(new_dpi);
+        }
+
+        let (screen_width, screen_height) =
+            get_monitor_resolution(new_monitor).context("could not get monitor resolution")?;
+
+        if self
+            .needs_renderer_update(screen_width, screen_height)
+            .context("could not check if renderer needs update")?
+        {
+            self.update_renderer_size(screen_width, screen_height);
+            is_updated = true;
+        }
+
+        Ok(is_updated)
     }
 
     fn render(&mut self) -> anyhow::Result<()> {
@@ -567,8 +613,6 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                let mut should_render = false;
-
                 // Hide tacky-borders' custom border if no native border is present
                 if !has_native_border(self.tracking_window) {
                     self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
@@ -585,36 +629,29 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                // If the window rect changes size, we need to re-render the border
-                if !are_rects_same_size(&self.window_rect, &prev_rect) {
-                    should_render = true;
-                }
-
                 let update_pos_flags =
                     (!is_window_visible(self.border_window)).then_some(SWP_SHOWWINDOW);
                 self.update_position(update_pos_flags).log_if_err();
 
+                // If the window rect changes size, we need to re-render the border
+                let mut needs_render = !are_rects_same_size(&self.window_rect, &prev_rect);
+
                 let new_monitor = monitor_from_window(self.tracking_window);
                 if new_monitor != self.current_monitor {
                     self.current_monitor = new_monitor;
-                    self.update_border_renderer();
-                    should_render = true;
-                }
-                let new_dpi = match get_dpi_for_monitor(self.current_monitor, MDT_DEFAULT) {
-                    Ok(dpi) => dpi as f32,
-                    Err(err) => {
-                        error!("could not get dpi for {:?}: {}", self.current_monitor, err);
-                        self.cleanup_and_queue_exit();
-                        return LRESULT(0);
-                    }
-                };
-                if new_dpi != self.current_dpi {
-                    self.current_dpi = new_dpi;
-                    self.update_border_appearance();
-                    should_render = true;
+                    debug!("monitor has changed! new monitor: {new_monitor:?}");
+
+                    needs_render |=
+                        match self.update_appearance_and_renderer_if_necessary(new_monitor) {
+                            Ok(is_updated) => is_updated,
+                            Err(err) => {
+                                error!("could not update appearance and renderer: {err}");
+                                return LRESULT(0);
+                            }
+                        };
                 }
 
-                if should_render {
+                if needs_render {
                     self.render().log_if_err();
                 }
             }
@@ -812,6 +849,32 @@ impl WindowBorder {
                 // border's pointer anymore, making it stop processing our custom messages.
                 unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
                 self.cleanup_and_queue_exit();
+            }
+            // Although we already check for DPI changes when the window moves between monitors,
+            // it's possible for the DPI to change without moving to a different monitor, or
+            // without even moving at all. That's why we still handle this message.
+            WM_DPICHANGED => {
+                // According to MSDN, the X-axis and Y-axis values for the new dpi should be
+                // identical for Windows apps, so we'll just grab the X-axis value here
+                let new_dpi = loword(wparam.0) as u32;
+                if new_dpi != self.current_dpi {
+                    self.current_dpi = new_dpi;
+                    debug!("dpi has changed! new dpi: {new_dpi}");
+
+                    self.update_appearance(new_dpi);
+
+                    let (screen_width, screen_height) =
+                        match get_monitor_resolution(self.current_monitor) {
+                            Ok(resolution) => resolution,
+                            Err(err) => {
+                                error!("could not get monitor resolution: {err}");
+                                return LRESULT(0);
+                            }
+                        };
+
+                    self.update_renderer_size(screen_width, screen_height);
+                    self.render().log_if_err();
+                }
             }
             // Ignore these window position messages
             WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}

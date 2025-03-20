@@ -143,7 +143,7 @@ pub enum RadiusConfig {
 }
 
 impl RadiusConfig {
-    pub fn to_radius(&self, border_width: i32, dpi: f32, tracking_window: HWND) -> f32 {
+    pub fn to_radius(&self, border_width: i32, dpi: u32, tracking_window: HWND) -> f32 {
         match self {
             // We also check Custom(-1.0) for legacy reasons (don't wanna break anyone's old config)
             RadiusConfig::Auto | RadiusConfig::Custom(-1.0) => {
