@@ -126,17 +126,21 @@ impl BorderDrawer {
         let border_offset = self.border_offset as f32;
         let window_padding = window_padding as f32;
 
-        self.render_rect.rect = D2D_RECT_F {
-            left: border_width / 2.0 + window_padding - border_offset,
-            top: border_width / 2.0 + window_padding - border_offset,
-            right: (window_rect.right - window_rect.left) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
-            bottom: (window_rect.bottom - window_rect.top) as f32
-                - border_width / 2.0
-                - window_padding
-                + border_offset,
+        self.render_rect = D2D1_ROUNDED_RECT {
+            rect: D2D_RECT_F {
+                left: border_width / 2.0 + window_padding - border_offset,
+                top: border_width / 2.0 + window_padding - border_offset,
+                right: (window_rect.right - window_rect.left) as f32
+                    - border_width / 2.0
+                    - window_padding
+                    + border_offset,
+                bottom: (window_rect.bottom - window_rect.top) as f32
+                    - border_width / 2.0
+                    - window_padding
+                    + border_offset,
+            },
+            radiusX: self.border_radius,
+            radiusY: self.border_radius,
         };
 
         // I ignore the pattern matching here, instead opting to grab the render backend from
