@@ -4,9 +4,9 @@ version = "1.1.0"
 edition = "2024"
 
 [dependencies]
-serde = "1.0.218"
+serde = "1.0.219"
 serde_yml = "0.0.12"
-serde_json = "1.0.139"
+serde_json = "1.0.140"
 serde_json_borrow = "0.7.1"
 tray-icon = "0.20.0"
 open = "5.3.2"
@@ -14,16 +14,12 @@ dirs = "6.0.0"
 regex = "1.11.1"
 log = "0.4.26"
 sp_log = "0.2.1"
-anyhow = "1.0.96"
-windows-numerics = "0.1.1"
+anyhow = "1.0.97"
+windows-numerics = "0.2.0"
 
 [dependencies.windows]
-version = "0.60.0"
+version = "0.61.1"
 features = [
-  "Win32_Foundation",
-  "Foundation_Numerics",
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",
   "Win32_Graphics_Direct3D",
@@ -31,20 +27,21 @@ features = [
   "Win32_Graphics_DirectComposition",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
+  "Win32_Storage_FileSystem",
   "Win32_UI_Accessibility",
   "Win32_UI_HiDpi",
   "Win32_UI_Input_Ime",
   "Win32_UI_WindowsAndMessaging",
-  "Win32_System_SystemServices",
-  "Win32_System_LibraryLoader",
-  "Win32_Security",
-  "Win32_System_IO",
-  "Win32_Storage_FileSystem",
-  "Win32_Networking_WinSock",
   "Wdk_System_SystemServices",
-  "Win32_System_SystemInformation",
-  "Win32_System_Diagnostics_Debug",
 ]
 
 [dev-dependencies]

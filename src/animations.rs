@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time;
 use windows::Win32::Foundation::{HWND, RECT};
 
-use windows_numerics::Matrix3x2;
+use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::anim_timer::AnimationTimer;
 use crate::colors::ColorBrush;
@@ -85,7 +85,13 @@ impl Animations {
         let center_x = (window_rect.right - window_rect.left) / 2;
         let center_y = (window_rect.bottom - window_rect.top) / 2;
 
-        let transform = Matrix3x2::rotation(360.0 * y_coord, center_x as f32, center_y as f32);
+        let transform = Matrix3x2::rotation_around(
+            360.0 * y_coord,
+            Vector2 {
+                X: center_x as f32,
+                Y: center_y as f32,
+            },
+        );
 
         active_color.set_transform(&transform);
         inactive_color.set_transform(&transform);

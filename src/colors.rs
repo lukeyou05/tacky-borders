@@ -3,7 +3,7 @@ use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 use windows::Win32::Foundation::{FALSE, RECT};
-use windows::Win32::Graphics::Direct2D::Common::{D2D_POINT_2F, D2D1_COLOR_F, D2D1_GRADIENT_STOP};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget,
@@ -11,7 +11,7 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 use windows::core::BOOL;
-use windows_numerics::Matrix3x2;
+use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::LogIfErr;
 
@@ -241,13 +241,13 @@ impl ColorBrush {
                 // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
                 // convert it into coordinates in terms of pixels
                 let gradient_properties = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                    startPoint: D2D_POINT_2F {
-                        x: gradient.direction.start[0] * width,
-                        y: gradient.direction.start[1] * height,
+                    startPoint: Vector2 {
+                        X: gradient.direction.start[0] * width,
+                        Y: gradient.direction.start[1] * height,
                     },
-                    endPoint: D2D_POINT_2F {
-                        x: gradient.direction.end[0] * width,
-                        y: gradient.direction.end[1] * height,
+                    endPoint: Vector2 {
+                        X: gradient.direction.end[0] * width,
+                        Y: gradient.direction.end[1] * height,
                     },
                 };
 
@@ -364,13 +364,13 @@ impl GradientBrush {
 
         // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
         // convert it into coordinates in terms of pixels
-        let start_point = D2D_POINT_2F {
-            x: self.direction.start[0] * width,
-            y: self.direction.start[1] * height,
+        let start_point = Vector2 {
+            X: self.direction.start[0] * width,
+            Y: self.direction.start[1] * height,
         };
-        let end_point = D2D_POINT_2F {
-            x: self.direction.end[0] * width,
-            y: self.direction.end[1] * height,
+        let end_point = Vector2 {
+            X: self.direction.end[0] * width,
+            Y: self.direction.end[1] * height,
         };
 
         if let Some(ref id2d1_brush) = self.brush {
