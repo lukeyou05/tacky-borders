@@ -1,6 +1,6 @@
 use anyhow::{Context, anyhow};
 use std::time;
-use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, E_POINTER, HWND, RECT, S_OK};
+use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, HWND, RECT, S_OK};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
 };
@@ -15,7 +15,7 @@ use crate::animations::{AnimType, Animations};
 use crate::colors::ColorBrush;
 use crate::effects::Effects;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::ToWindowsResult;
+use crate::utils::{T_E_UNINIT, ToWindowsResult};
 use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone)]
@@ -153,7 +153,7 @@ impl BorderDrawer {
             RenderBackend::Legacy(_) => self.render_legacy(window_rect, window_state)?,
             RenderBackend::None => {
                 return Err(windows::core::Error::new(
-                    E_POINTER,
+                    T_E_UNINIT,
                     "render_backend is None",
                 ));
             }
@@ -169,7 +169,7 @@ impl BorderDrawer {
     ) -> windows::core::Result<()> {
         let RenderBackend::Legacy(ref backend) = self.render_backend else {
             return Err(windows::core::Error::new(
-                E_POINTER,
+                T_E_UNINIT,
                 "could not get render_backend within render()",
             ));
         };
@@ -192,7 +192,7 @@ impl BorderDrawer {
             render_target.BeginDraw();
             render_target.Clear(None);
 
-            if bottom_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
+            if bottom_color.get_opacity().to_windows_result(T_E_UNINIT)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -202,7 +202,7 @@ impl BorderDrawer {
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            if top_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
+            if top_color.get_opacity().to_windows_result(T_E_UNINIT)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = top_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -226,7 +226,7 @@ impl BorderDrawer {
     ) -> windows::core::Result<()> {
         let RenderBackend::V2(ref backend) = self.render_backend else {
             return Err(windows::core::Error::new(
-                E_POINTER,
+                T_E_UNINIT,
                 "could not get render_backend within render()",
             ));
         };
@@ -242,7 +242,7 @@ impl BorderDrawer {
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
-            if bottom_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
+            if bottom_color.get_opacity().to_windows_result(T_E_UNINIT)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -252,7 +252,7 @@ impl BorderDrawer {
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            if top_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
+            if top_color.get_opacity().to_windows_result(T_E_UNINIT)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = top_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -286,7 +286,7 @@ impl BorderDrawer {
     ) -> windows::core::Result<()> {
         let RenderBackend::V2(ref backend) = self.render_backend else {
             return Err(windows::core::Error::new(
-                E_POINTER,
+                T_E_UNINIT,
                 "could not get render_backend within render()",
             ));
         };
@@ -317,7 +317,7 @@ impl BorderDrawer {
                 .border_bitmap
                 .as_ref()
                 .context("could not get border_bitmap")
-                .to_windows_result(E_POINTER)?;
+                .to_windows_result(T_E_UNINIT)?;
             d2d_context.SetTarget(border_bitmap);
 
             // Draw to the border_bitmap
@@ -327,7 +327,7 @@ impl BorderDrawer {
             // We use filled rectangles here because it helps make the effects more visible.
             // Additionally, if someone sets the border width to 0, the effects will still be
             // visible (whereas they wouldn't be if we used a hollow rectangle).
-            if bottom_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
+            if bottom_color.get_opacity().to_windows_result(T_E_UNINIT)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = bottom_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -339,7 +339,7 @@ impl BorderDrawer {
                     None => debug!("ID2D1Brush for bottom_color has not been created yet"),
                 }
             }
-            if top_color.get_opacity().to_windows_result(E_POINTER)? > 0.0 {
+            if top_color.get_opacity().to_windows_result(T_E_UNINIT)? > 0.0 {
                 if let ColorBrush::Gradient(gradient) = top_color {
                     gradient.update_start_end_points(window_rect);
                 }
@@ -359,7 +359,7 @@ impl BorderDrawer {
                 .mask_bitmap
                 .as_ref()
                 .context("could not get mask_bitmap")
-                .to_windows_result(E_POINTER)?;
+                .to_windows_result(T_E_UNINIT)?;
             d2d_context.SetTarget(mask_bitmap);
 
             // Create a rect that covers up to the inner edge of the border
@@ -399,14 +399,14 @@ impl BorderDrawer {
                 .target_bitmap
                 .as_ref()
                 .context("could not get target_bitmap")
-                .to_windows_result(E_POINTER)?;
+                .to_windows_result(T_E_UNINIT)?;
             d2d_context.SetTarget(target_bitmap);
 
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
             let command_list = self
                 .effects
                 .get_current_command_list(window_state)
-                .to_windows_result(E_POINTER)?;
+                .to_windows_result(T_E_UNINIT)?;
 
             // Draw to the target_bitmap
             d2d_context.BeginDraw();

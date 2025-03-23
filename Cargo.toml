@@ -44,6 +44,7 @@ features = [
   "Win32_Networking_WinSock",
   "Wdk_System_SystemServices",
   "Win32_System_SystemInformation",
+  "Win32_System_Diagnostics_Debug",
 ]
 
 [dev-dependencies]

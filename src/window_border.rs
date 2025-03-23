@@ -31,13 +31,12 @@ use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::get_monitor_resolution;
 use crate::utils::{
-    LogIfErr, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
+    LogIfErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
     WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
-    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_window_rule,
-    get_window_title, has_native_border, is_rect_visible, is_window_minimized, is_window_visible,
-    loword, monitor_from_window, post_message_w,
+    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_monitor_resolution,
+    get_window_rule, get_window_title, has_native_border, is_rect_visible, is_window_minimized,
+    is_window_visible, loword, monitor_from_window, post_message_w,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -556,6 +555,11 @@ impl WindowBorder {
                 };
 
                 info!("successfully recreated render target; resuming thread");
+            } else if err.code() == T_E_UNINIT {
+                // Functions like render() may be called via callback functions before init()
+                // completes, leading to errors due to uninitialized objects. This is likely only
+                // temporary, so I'll just use debug! instead of logging it as a full error.
+                debug!("an object is currently unitialized: {err}");
             } else {
                 self.cleanup_and_queue_exit();
                 return Err(anyhow!("self.render() failed; exiting thread: {err}"));

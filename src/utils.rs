@@ -15,6 +15,7 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
+use windows::Win32::System::Diagnostics::Debug::FACILITY_ITF;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
@@ -44,6 +45,13 @@ pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 
+// Custom HRESULT error code indicating an uninitialized COM object within this application.
+// T_E_UNINIT typically represents an Option::None where an Option::Some(_) was expected. This is
+// used instead of something like E_POINTER to prevent overlap with Windows COM interface errors.
+// The code 0x2222 is completely arbitrary, but is within Microsoft's recommended range for custom
+// FACILITY_ITF errors (0x0200 to 0xFFFF).
+pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2222));
+
 pub trait LogIfErr {
     fn log_if_err(&self);
 }
@@ -53,8 +61,8 @@ where
     T: std::fmt::Display,
 {
     fn log_if_err(&self) {
-        if let Err(e) = self {
-            error!("{e:#}");
+        if let Err(err) = self {
+            error!("{err:#}");
         }
     }
 }
