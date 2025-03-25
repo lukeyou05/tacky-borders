@@ -125,7 +125,7 @@ impl ColorBrushConfig {
                             return ColorBrush::default();
                         };
 
-                        // Convert degrees to radians. We multiply `degree` by -1 because Win32
+                        // Convert degrees to radians. We multiply `degree` by -1 because Direct2D
                         // uses the top left for the origin instead of the bottom left
                         let rad = -degree * PI / 180.0;
 

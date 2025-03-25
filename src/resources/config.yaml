@@ -1,11 +1,9 @@
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
 
-# rendering_backend: Renderer type. Supported values:
-#   - V2: A more complex renderer that supports new features. Found in v1.2.0 and above.
-#   - Legacy: A simpler, more limited renderer. Found in v0.1.0 and above.
-#
-# Performance between the two may vary system-to-system, so I leave the choice up to you.
+# rendering_backend: Type of renderer. Supported values:
+#   - V2: A more complex, feature-rich renderer. Available in v1.2.0 and above.
+#   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
 rendering_backend: V2
 
 # Global configuration options
@@ -25,6 +23,16 @@ global:
   #   - RoundSmall: Slightly rounded corners
   #   - Or specify any numeric value for a custom radius
   border_radius: Auto
+
+  # initialize_delay: Time (in ms) before the border appears after opening a new window
+  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
+  #
+  # These settings help accommodate window animations (e.g., open or unminimize animations).
+  # Set these to 0 if window animations are disabled.
+  #
+  # These can also be used to accommodate border animations (e.g., fade animations).
+  initialize_delay: 200
+  unminimize_delay: 150
 
   # active_color: the color of the active window's border
   # inactive_color: the color of the inactive window's border
@@ -158,16 +166,6 @@ global:
         opacity: 1.0
 
     enabled: False
-
-  # initialize_delay: Time (in ms) before the border appears after opening a new window
-  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
-  #
-  # These settings help accommodate window animations (e.g., open or unminimize animations).
-  # If window animations are disabled, set these to 0.
-  #
-  # These can also be used to accomodate border animations (e.g., fade animations).
-  initialize_delay: 200
-  unminimize_delay: 150
 
 # Per-application configuration overrides
 window_rules:
