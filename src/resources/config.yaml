@@ -4,6 +4,8 @@ watch_config_changes: True
 # rendering_backend: Type of renderer. Supported values:
 #   - V2: A more complex, feature-rich renderer. Available in v1.2.0 and above.
 #   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
+#
+# NOTE: Performance between the two may vary system-to-system. Choose whichever works best.
 rendering_backend: V2
 
 # Global configuration options
