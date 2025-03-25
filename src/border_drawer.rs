@@ -436,7 +436,7 @@ impl BorderDrawer {
         Ok(())
     }
 
-    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
+    // NOTE: ID2D1DeviceContext implements From<&ID2D1DeviceContext> for &ID2D1RenderTarget
     fn draw_rectangle(&self, renderer: &ID2D1RenderTarget, brush: &ID2D1Brush) {
         unsafe {
             match self.border_radius {
@@ -456,7 +456,7 @@ impl BorderDrawer {
         }
     }
 
-    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
+    // NOTE: ID2D1DeviceContext implements From<&ID2D1DeviceContext> for &ID2D1RenderTarget
     fn fill_rectangle(
         &self,
         render_rect: &D2D1_ROUNDED_RECT,

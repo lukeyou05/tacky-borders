@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_BITMAP_PROPERTIES1, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_PRESENT_OPTIONS_IMMEDIATELY, D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, ID2D1Bitmap1,
-    ID2D1DeviceContext4, ID2D1HwndRenderTarget,
+    ID2D1DeviceContext, ID2D1HwndRenderTarget,
 };
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice3, IDCompositionDesktopDevice, IDCompositionDevice3,
@@ -22,7 +22,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 };
 use windows::Win32::Graphics::Dxgi::{
     DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
-    DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory7, IDXGISurface,
+    DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory2, IDXGISurface,
     IDXGISwapChain1,
 };
 use windows::core::Interface;
@@ -47,7 +47,7 @@ pub enum RenderBackend {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct V2RenderBackend {
-    pub d2d_context: ID2D1DeviceContext4,
+    pub d2d_context: ID2D1DeviceContext,
     pub swap_chain: IDXGISwapChain1,
     pub d_comp_device: IDCompositionDevice3,
     pub d_comp_target: IDCompositionTarget,
@@ -174,7 +174,7 @@ impl V2RenderBackend {
                 .dxgi_device
                 .GetAdapter()
                 .context("dxgi_adapter")?;
-            let dxgi_factory: IDXGIFactory7 = dxgi_adapter.GetParent().context("dxgi_factory")?;
+            let dxgi_factory: IDXGIFactory2 = dxgi_adapter.GetParent().context("dxgi_factory")?;
 
             let swap_chain = dxgi_factory
                 .CreateSwapChainForComposition(
@@ -189,7 +189,8 @@ impl V2RenderBackend {
             // IDCompositionDevice4... why?). Instead, we'll create IDCompositionDesktopDevice
             // first, which does implement CreateTargetForHwnd, then cast() it.
             let d_comp_desktop_device: IDCompositionDesktopDevice =
-                DCompositionCreateDevice3(&directx_devices.dxgi_device)?;
+                DCompositionCreateDevice3(&directx_devices.dxgi_device)
+                    .context("d_comp_desktop_device")?;
             let d_comp_target = d_comp_desktop_device
                 .CreateTargetForHwnd(border_window, true)
                 .context("d_comp_target")?;
@@ -198,7 +199,7 @@ impl V2RenderBackend {
                 .cast()
                 .context("d_comp_desktop_device.cast()")?;
 
-            let d_comp_visual = d_comp_device.CreateVisual().context("visual")?;
+            let d_comp_visual = d_comp_device.CreateVisual().context("d_comp_visual")?;
 
             d_comp_visual
                 .SetContent(&swap_chain)
@@ -230,7 +231,7 @@ impl V2RenderBackend {
     }
 
     fn create_bitmaps(
-        d2d_context: &ID2D1DeviceContext4,
+        d2d_context: &ID2D1DeviceContext,
         swap_chain: &IDXGISwapChain1,
         width: u32,
         height: u32,

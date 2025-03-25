@@ -21,7 +21,7 @@ use utils::{
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HMODULE, HWND, LPARAM, TRUE};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device4, ID2D1Factory5,
+    D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
 };
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_9_1, D3D_FEATURE_LEVEL_9_2,
@@ -81,7 +81,7 @@ struct AppState {
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<ConfigWatcher>,
-    render_factory: ID2D1Factory5,
+    render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
 }
@@ -126,7 +126,7 @@ impl AppState {
             }
         };
 
-        let render_factory: ID2D1Factory5 = unsafe {
+        let render_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
                 error!("could not create ID2D1Factory: {err}");
                 panic!()
@@ -171,11 +171,11 @@ impl AppState {
 struct DirectXDevices {
     d3d11_device: ID3D11Device,
     dxgi_device: IDXGIDevice,
-    d2d_device: ID2D1Device4,
+    d2d_device: ID2D1Device,
 }
 
 impl DirectXDevices {
-    fn new(factory: &ID2D1Factory5) -> anyhow::Result<Self> {
+    fn new(factory: &ID2D1Factory1) -> anyhow::Result<Self> {
         let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
         let feature_levels = [
@@ -207,8 +207,8 @@ impl DirectXDevices {
 
         debug!("directx feature_level: {feature_level:X?}");
 
-        let d3d11_device = device_opt.context("could not get d3d11 device")?;
-        let dxgi_device: IDXGIDevice = d3d11_device.cast().context("id3d11device cast")?;
+        let d3d11_device = device_opt.context("could not get d3d11_device")?;
+        let dxgi_device = d3d11_device.cast().context("dxgi_device")?;
         let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
 
         Ok(Self {

@@ -216,7 +216,7 @@ impl Line {
 }
 
 impl ColorBrush {
-    // NOTE: ID2D1DeviceContext7 implements From<&ID2D1DeviceContext7> for &ID2D1RenderTarget
+    // NOTE: ID2D1DeviceContext implements From<&ID2D1DeviceContext> for &ID2D1RenderTarget
     pub fn init_brush(
         &mut self,
         renderer: &ID2D1RenderTarget,
