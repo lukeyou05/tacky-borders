@@ -4,28 +4,38 @@
 _tacky-borders_ lets you customize window borders on Windows 10 and 11.
 
 ## Installation
+
 ### Pre-built Release
+
 The easiest way to install _tacky-borders_ is to download a pre-built release from the [releases](https://github.com/lukeyou05/tacky-borders/releases) page.
 
 When you run the .exe for the first time, _tacky-borders_ will automatically generate a config file for you in ```%userprofile%/.config/tacky-borders/```.
 
 ### Build It Yourself
+
 Alternatively, if you wish to build it yourself, you can follow these steps:
+
 1. Install the necessary tools:
    - [Rust](https://www.rust-lang.org/tools/install)
    - [MSVC build tools](https://visualstudio.microsoft.com/downloads/)
 2. Clone the repository:
+
    ```sh
    git clone https://github.com/lukeyou05/tacky-borders.git
    ```
+
 3. Navigate to the project directory:
+
    ```sh
    cd tacky-borders
    ```
+
 3. Build or run the project:
+
    ```sh
    cargo build --release
    ```
+
    or
 
    ```sh
@@ -33,6 +43,7 @@ Alternatively, if you wish to build it yourself, you can follow these steps:
    ```
 
 ## Uninstallation
+
 To uninstall, it's as easy as deleting `tacky-borders.exe`.
 
 > [!NOTE]
@@ -47,6 +58,11 @@ The following auto-generated config.yaml is included as reference:
 ```yaml
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
+
+# rendering_backend: Type of renderer. Supported values:
+#   - V2: A more complex, feature-rich renderer. Available in v1.2.0 and above.
+#   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
+rendering_backend: V2
 
 # Global configuration options
 global:
@@ -65,6 +81,16 @@ global:
   #   - RoundSmall: Slightly rounded corners
   #   - Or specify any numeric value for a custom radius
   border_radius: Auto
+
+  # initialize_delay: Time (in ms) before the border appears after opening a new window
+  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
+  #
+  # These settings help accommodate window animations (e.g., open or unminimize animations).
+  # Set these to 0 if window animations are disabled.
+  #
+  # These can also be used to accommodate border animations (e.g., fade animations).
+  initialize_delay: 200
+  unminimize_delay: 150
 
   # active_color: the color of the active window's border
   # inactive_color: the color of the inactive window's border
@@ -97,20 +123,19 @@ global:
       start: [0.0, 1.0]
       end: [1.0, 0.0]
 
-  # initialize_delay: Time (in ms) before the border appears after opening a new window
-  # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
-  #
-  # These settings help accommodate window animations (e.g., open or unminimize animations).
-  # If window animations are disabled, set these to 0.
-  #
-  # These can also be used to accomodate border animations (e.g., fade animations).
-  initialize_delay: 200
-  unminimize_delay: 150
+  # komorebi_colors: Additional integration for komorebi's special window kinds
+  #   - active_color is used for komorebi's "Single" window kind
+  #   - inactive_color is used for komorebi's "Unfocused" window kind
+  komorebi_colors:
+    stack_color: "#e762b7"
+    monocle_color: "#62e793"
+    floating_color: "#f5f5a5"
+    enabled: False
 
   # animations: Configure animation behavior for window borders
-  #   fps: Animation frame rate
   #   active: Animations for active windows
   #   inactive: Animations for inactive windows
+  #   fps: Animation frame rate
   #
   # Supported animation types:
   #   - Spiral
@@ -119,7 +144,7 @@ global:
   #
   # Specify animation types and parameters as follows:
   #   active:
-  #     - type: Spiral
+  #     - type: ReverseSpiral
   #       duration: 1800
   #       easing: Linear
   #
@@ -129,17 +154,76 @@ global:
   #
   # NOTE: Spiral animations may be resource-intensive on low-end systems.
   animations:
-    fps: 60
-
     active:
+      - type: ReverseSpiral
+        duration: 1800
+        easing: Linear
+
       - type: Fade
         duration: 200
         easing: EaseInOutQuad
 
     inactive:
+      - type: Spiral
+        duration: 1800
+        easing: Linear
+
       - type: Fade
         duration: 200
         easing: EaseInOutQuad
+
+    fps: 60
+    enabled: False
+
+  # effects: Configure visual effects for window borders
+  #   active: Effects for active windows
+  #   inactive: Effects for inactive windows
+  #
+  # Supported effect types:
+  #   - Shadow
+  #   - Glow
+  #
+  # Specify effect types and parameters as follows:
+  #   active:
+  #    - type: Shadow
+  #      radius: 2.0
+  #      opacity: 1.0
+  #      translation:
+  #        x: 0
+  #        y: 20
+  #
+  #    - type: Glow
+  #      radius: 8.0
+  #      opacity: 1.0
+  #
+  # NOTE: These effects can significantly increase CPU and GPU usage.
+  # Additionally, effects require rendering_backend: V2 to work.
+  effects:
+    active:
+      - type: Shadow
+        radius: 2.0
+        opacity: 1.0
+        translation:
+          x: 0
+          y: 0
+
+      - type: Glow
+        radius: 8.0
+        opacity: 1.0
+
+    inactive:
+      - type: Shadow
+        radius: 2.0
+        opacity: 1.0
+        translation:
+          x: 0
+          y: 0
+
+      - type: Glow
+        radius: 8.0
+        opacity: 1.0
+
+    enabled: False
 
 # Per-application configuration overrides
 window_rules:
@@ -151,9 +235,8 @@ window_rules:
     name: "XamlExplorerHostIslandWindow"
     enabled: False
 
-  - match: Title
-    strategy: Contains
-    name: "Zebar"
+  - match: Process
+    name: "zebar"
     enabled: False
 
   - match: Title
@@ -169,10 +252,10 @@ window_rules:
     enabled: False
 
   # Example rule:
-  # - match: Class                   # Match based on Class or Title
-  #   name: "MozillaWindowClass"     # Class or title name to match
+  # - match: Class                   # Match based on Class, Title, or Process
+  #   name: "MozillaWindowClass"     # Class/title/process name to match
   #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
-  #   enabled: True                  # Enable mode: True, False, or Auto (default: Auto)
+  #   enabled: True                  # Border enabled: True, False, or Auto (default: Auto)
   #
   # Notes:
   #   - Any option in the global config can also be defined in window_rules.
@@ -181,15 +264,17 @@ window_rules:
 
 ## Comparison to cute-borders
 
-Here is another great app that achieves similar functionality: <https://github.com/keifufu/cute-borders>. I've taken a lot of inspiration from them and would highly recommend checking them out! 
+Here is another great app that achieves similar functionality: <https://github.com/keifufu/cute-borders>. I've taken a lot of inspiration from them and would highly recommend checking them out!
 
 Although both apps aim to customize window borders, they have totally different implementations, each with their own strengths and limitations. Which one you should use boils down to the following:
 
 **Choose _tacky-borders_ if you want**:
+
 - Customizable border width
 - Gradient support
 - Multiple animation types
 - Windows 10 support (not fully tested, but it has been reported to work)
 
 **Choose _cute-borders_ if you want**:
+
 - Stability and performance due to its use of native Windows API for the borders.
