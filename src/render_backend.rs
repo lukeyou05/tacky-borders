@@ -97,8 +97,8 @@ impl RenderBackend {
             RenderBackend::V2(backend) => {
                 backend.update(width, height, create_extra_bitmaps)?;
             }
-            // TODO: We already update/resize the buffers in the render() function within
-            // BorderDrawer, but I might want to move it here instead?
+            // TODO: We already update/resize the buffers of the Legacy renderer within
+            // BorderDrawer::render(), but I might want to move it here instead?
             RenderBackend::Legacy(_) => return Ok(()),
             RenderBackend::None => return Err(anyhow!("render backend is None")),
         }
@@ -184,17 +184,16 @@ impl V2RenderBackend {
                 )
                 .context("swap_chain")?;
 
+            // Not only does IDCompositionDevice3 not implement CreateTargetForHwnd, but you can't
+            // even create one using DCompositionCreateDevice3 without casting (but you can with
+            // IDCompositionDevice4... why?). Instead, we'll create IDCompositionDesktopDevice
+            // first, which does implement CreateTargetForHwnd, then cast() it.
             let d_comp_desktop_device: IDCompositionDesktopDevice =
                 DCompositionCreateDevice3(&directx_devices.dxgi_device)?;
             let d_comp_target = d_comp_desktop_device
                 .CreateTargetForHwnd(border_window, true)
                 .context("d_comp_target")?;
 
-            // This is weird, but it's the only way that works afaik. IDCompositionDevice4 doesn't
-            // implement CreateTargetForHwnd, so we have to first create an intermediate device
-            // like IDCompositionDevice or IDCompositionDesktopDevice, create the target, then
-            // .cast() it. Sidenote, you can't create an IDCompositionDevice3 using
-            // DCompositionCreateDevice3, but you can create an IDCompositionDevice4... why?
             let d_comp_device: IDCompositionDevice3 = d_comp_desktop_device
                 .cast()
                 .context("d_comp_desktop_device.cast()")?;
@@ -267,7 +266,8 @@ impl V2RenderBackend {
 
         // If border effects are enabled, we need to create two more bitmaps
         if create_extra_bitmaps {
-            // We create two bitmaps because the first (target_bitmap) cannot be used for effects
+            // We need border_bitmap because you cannot directly apply effects on target_bitmap
+            // due to its D2D1_BITMAP_OPTIONS, so we'll apply effects on border_bitmap instead
             let bitmap_properties = D2D1_BITMAP_PROPERTIES1 {
                 bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
                 pixelFormat: D2D1_PIXEL_FORMAT {
@@ -290,7 +290,7 @@ impl V2RenderBackend {
                 .context("border_bitmap")?,
             );
 
-            // Aaaand yet another for the mask
+            // Aaaand we need yet another bitmap for the mask
             let bitmap_properties = D2D1_BITMAP_PROPERTIES1 {
                 bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
                 pixelFormat: D2D1_PIXEL_FORMAT {
@@ -317,8 +317,8 @@ impl V2RenderBackend {
         Ok((Some(target_bitmap), border_bitmap_opt, mask_bitmap_opt))
     }
 
-    // After updating resources, we also need to update anything that relies on references to the
-    // resources (e.g. border effects)
+    // NOTE: after updating resources, we also need to update anything that relies on references to
+    // the resources (e.g. border effects)
     pub fn update(
         &mut self,
         width: u32,

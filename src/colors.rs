@@ -113,7 +113,9 @@ impl ColorBrushConfig {
                     .collect();
 
                 let direction = match gradient_config.direction {
-                    // If we have an angle, we need to convert it into Coordinates
+                    // We'll convert an angle to coordinates by representing the angle as a linear
+                    // line, then checking for collisions within the unit square bounded by (0.0,
+                    // 0.0) and (1.0, 1.0)
                     GradientDirection::Angle(ref angle) => {
                         let Some(degree) = angle
                             .strip_suffix("deg")
@@ -123,13 +125,12 @@ impl ColorBrushConfig {
                             return ColorBrush::default();
                         };
 
-                        // We multiply degree by -1 to account for the fact that Win32's coordinate
-                        // system has its origin at the top left instead of the bottom left
+                        // Convert degrees to radians. We multiply `degree` by -1 because Win32
+                        // uses the top left for the origin instead of the bottom left
                         let rad = -degree * PI / 180.0;
 
-                        // Calculate the slope of the line whilst accounting for edge cases like 90
-                        // and 270 degrees where we would otherwise be dividing by 0 or something
-                        // close to 0.
+                        // Calculate the slope of the line. We also handle edge cases like 90
+                        // degrees or 270 degrees to avoid division by 0.
                         let m = match degree.abs() % 360.0 {
                             90.0 | 270.0 => degree.signum() * f32::MAX,
                             _ => rad.sin() / rad.cos(),
@@ -137,9 +138,9 @@ impl ColorBrushConfig {
 
                         // y - y_p = m(x - x_p);
                         // y = m(x - x_p) + y_p;
-                        // y = m*x - m*x_p + y_p;
-                        // b = -m*x_p + y_p;
-
+                        // y = (m * x) - (m * x_p) + y_p;
+                        // b = -(m * x_p) + y_p;
+                        //
                         // Calculate the y-intercept of the line such that it goes through the
                         // center point (0.5, 0.5)
                         let b = -m * 0.5 + 0.5;
@@ -147,19 +148,7 @@ impl ColorBrushConfig {
                         // Create the line with the given slope and y-intercept
                         let line = Line { m, b };
 
-                        // y = mx + b
-                        // 0 = mx + b
-                        // mx = -b
-                        // x = -b/m
-
-                        // y = mx + b
-                        // 1 = mx + b
-                        // mx = 1 - b
-                        // x = (1 - b)/m
-
-                        // When we cross certain angle thresholds, like 90 degrees, we need to flip
-                        // the x values (0.0 and 1.0) that we use to the calculate the start and
-                        // end points below due to the slope changing
+                        // Determine initial x-value estimates for the start and end points
                         let (x_s, x_e) = match degree.abs() % 360.0 {
                             0.0..90.0 => (0.0, 1.0),
                             90.0..270.0 => (1.0, 0.0),
@@ -172,22 +161,31 @@ impl ColorBrushConfig {
                             }
                         };
 
-                        // Here, we are checking three cases to make sure the calculated point
-                        // lies within the first quadrant:
+                        // y = mx + b
+                        // 0 = mx + b
+                        // mx = -b
+                        // x = -b/m
                         //
-                        // Case 1: the y-coordinate at x_s is between 0 and 1
-                        // Case 2: the y-coordinate at x_s is greater than 1
-                        // Case 3: the y-coordinate at x_s is less than 0
+                        // y = mx + b
+                        // 1 = mx + b
+                        // mx = 1 - b
+                        // x = (1 - b)/m
+                        //
+                        // Determine our coordinates by checking collisions with the unit square
+                        // using the above x_s and x_e, handling three separate cases:
+                        //  1. the y-coordinate at x_s/x_e is between 0 and 1
+                        //  2. the y-coordinate at x_s/x_e is greater than 1
+                        //  3. the y-coordinate at x_s/x_e is less than 0
                         let start = match line.plug_in_x(x_s) {
-                            0.0..=1.0 => [x_s, line.plug_in_x(x_s)],
-                            1.0.. => [(1.0 - line.b) / line.m, 1.0],
-                            _ => [-line.b / line.m, 0.0],
+                            0.0..=1.0 => [x_s, line.plug_in_x(x_s)], // Case 1
+                            1.0.. => [(1.0 - line.b) / line.m, 1.0], // Case 2
+                            _ => [-line.b / line.m, 0.0],            // Case 3
                         };
 
                         let end = match line.plug_in_x(x_e) {
-                            0.0..=1.0 => [x_e, line.plug_in_x(x_e)],
-                            1.0.. => [(1.0 - line.b) / line.m, 1.0],
-                            _ => [-line.b / line.m, 0.0],
+                            0.0..=1.0 => [x_e, line.plug_in_x(x_e)], // Case 1
+                            1.0.. => [(1.0 - line.b) / line.m, 1.0], // Case 2
+                            _ => [-line.b / line.m, 0.0],            // Case 3
                         };
 
                         GradientCoordinates { start, end }
@@ -239,7 +237,7 @@ impl ColorBrush {
                 let height = (window_rect.bottom - window_rect.top) as f32;
 
                 // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
-                // convert it into coordinates in terms of pixels
+                // convert it into coordinates in terms of the screen's pixels
                 let gradient_properties = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
                     startPoint: Vector2 {
                         X: gradient.direction.start[0] * width,

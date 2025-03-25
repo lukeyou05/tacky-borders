@@ -80,7 +80,7 @@ impl Drop for UnixListener {
 pub struct UnixStream {
     pub socket: UnixDomainSocket,
     pub buffer: Vec<u8>,
-    // I'm not sure if I need the Box, but I'll keep in just in case because I don't if
+    // I'm not sure if I need the Box, but I'll keep in just in case because I don't know if
     // GetQueuedCompletionStatus can get the OVERLAPPED pointers if the structs move in memory.
     pub overlapped: Box<OVERLAPPED>,
     pub flags: u32,
@@ -113,7 +113,7 @@ impl UnixStream {
     }
 
     // NOTE: The input buffer must be mutable because we put it in a WSABUF struct, which requires
-    // a mutable pointer. As far as I'm aware, it will not actually be modified.
+    // a mutable pointer. But as far as I'm aware, the buffer will not actually be modified.
     pub fn write(&mut self, inputbuffer: &mut [u8]) -> anyhow::Result<()> {
         self.socket
             .write(inputbuffer, self.overlapped.as_mut(), self.flags)

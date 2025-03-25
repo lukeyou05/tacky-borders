@@ -129,8 +129,8 @@ fn handle_foreground_event(potential_active_hwnd: HWND, event_hwnd: HWND) {
     // Send foreground messages to all the border windows
     for (key, val) in APP_STATE.borders.lock().unwrap().iter() {
         let border_window = HWND(*val as _);
-        // NOTE: some apps can become foreground even if they're not visible, so we also
-        // have to check the keys against the active_window HWND from earlier
+        // Some apps can become foreground even if they're not visible, so we also have to check
+        // the keys against the active_window HWND from earlier
         if is_window_visible(border_window) || *key == new_active_window {
             post_message_w(Some(border_window), WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                 .context("EVENT_OBJECT_FOCUS")

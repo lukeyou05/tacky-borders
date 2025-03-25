@@ -133,7 +133,6 @@ impl WindowBorder {
                     fTransitionOnMaximized: FALSE,
                 };
             }
-            // These functions below are pretty important, so if they fail, just return an Error
             DwmEnableBlurBehindWindow(self.border_window, &bh)
                 .context("could not make window transparent")?;
 
@@ -159,7 +158,6 @@ impl WindowBorder {
                 )
                 .context("could not initialize border drawer in init()")?;
 
-            // Update the border's color
             self.update_color(Some(self.initialize_delay)).log_if_err();
             self.update_window_rect().log_if_err();
 
@@ -179,7 +177,7 @@ impl WindowBorder {
                 .animations
                 .set_timer_if_enabled(self.border_window, &mut self.border_drawer.last_anim_time);
 
-            // Handle the case where the tracking window is already minimized
+            // Handle the edge case where the tracking window is already minimized
             if is_window_minimized(self.tracking_window) {
                 post_message_w(
                     Some(self.border_window),

@@ -15,7 +15,7 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
             error!("could not retrieve icon from tacky-borders.exe for tray menu: {err}");
 
             // If we could not retrieve an icon from the exe, then try to create an empty icon. If
-            // even that fails, just return an Error using '?'.
+            // even that fails, then we'll just return an Error.
             let rgba: Vec<u8> = vec![0, 0, 0, 0];
             Icon::from_rgba(rgba, 1, 1).context("could not create empty tray icon")?
         }

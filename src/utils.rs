@@ -49,7 +49,7 @@ pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 // T_E_UNINIT typically represents an Option::None where an Option::Some(_) was expected. This is
 // used instead of something like E_POINTER to prevent overlap with Windows COM interface errors.
 // The code 0x2222 is completely arbitrary, but is within Microsoft's recommended range for custom
-// FACILITY_ITF errors (0x0200 to 0xFFFF).
+// FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
 pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2222));
 
 pub trait LogIfErr {

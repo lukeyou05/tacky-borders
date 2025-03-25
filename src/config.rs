@@ -182,8 +182,8 @@ impl Config {
         let config_dir = Self::get_dir()?;
         let config_path = config_dir.join("config.yaml");
 
-        // When saving files with a text editor like VSCode or Neovim, there may be a small period
-        // where the target file is empty or doesn't exist, so we use 2 retries as a workaround.
+        // When saving files with a text editor like VSCode or Neovim, there may be a small time
+        // period where the target file is empty or doesn't exist, so we'll use some retries.
         let mut exists = fs::exists(&config_path).context("could not check if config exists")?;
         for _ in 0..2 {
             if !exists {
@@ -204,7 +204,7 @@ impl Config {
             info!("generating default config in {}", config_dir.display());
         }
 
-        // We implement retries here for the same reasons listed earlier
+        // We also implement retries here for the same reasons listed earlier
         let mut contents = fs::read_to_string(&config_path).context("could not read config")?;
         for _ in 0..2 {
             if contents.is_empty() {
@@ -294,17 +294,6 @@ impl Config {
             }
         };
         *APP_STATE.config.write().unwrap() = new_config;
-    }
-
-    pub fn config_watcher_callback() {
-        let old_config = (*APP_STATE.config.read().unwrap()).clone();
-        Self::reload();
-        let new_config = APP_STATE.config.read().unwrap();
-
-        if old_config != *new_config {
-            info!("config.yaml has changed; reloading borders");
-            reload_borders();
-        }
     }
 }
 
@@ -473,5 +462,16 @@ impl ConfigWatcher {
 
     pub fn is_running(&self) -> bool {
         self.config_dir_handle.is_some()
+    }
+}
+
+pub fn config_watcher_callback() {
+    let old_config = (*APP_STATE.config.read().unwrap()).clone();
+    Config::reload();
+    let new_config = APP_STATE.config.read().unwrap();
+
+    if old_config != *new_config {
+        info!("config.yaml has changed; reloading borders");
+        reload_borders();
     }
 }

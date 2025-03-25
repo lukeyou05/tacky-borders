@@ -96,7 +96,6 @@ impl Effects {
         &mut self,
         render_backend: &RenderBackend,
     ) -> anyhow::Result<()> {
-        // If not enabled, then don't create the command lists
         if !self.is_enabled() {
             return Ok(());
         }

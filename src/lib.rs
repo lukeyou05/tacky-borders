@@ -3,7 +3,7 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::{Context, anyhow};
-use config::{Config, ConfigWatcher, EnableMode};
+use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
 use core::time;
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
@@ -101,7 +101,7 @@ impl AppState {
                     PathBuf::default()
                 }),
             500,
-            Config::config_watcher_callback,
+            config_watcher_callback,
         );
 
         let mut komorebi_integration = KomorebiIntegration::new();

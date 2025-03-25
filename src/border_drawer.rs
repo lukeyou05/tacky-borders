@@ -55,6 +55,7 @@ impl BorderDrawer {
         self.animations = animations;
         self.effects = effects;
     }
+
     pub fn init_renderer(
         &mut self,
         width: u32,
@@ -91,7 +92,6 @@ impl BorderDrawer {
             radiusY: self.border_radius,
         };
 
-        // Initialize the brushes
         self.active_color
             .init_brush(renderer, window_rect, &brush_properties)?;
         self.inactive_color
@@ -143,8 +143,8 @@ impl BorderDrawer {
             radiusY: self.border_radius,
         };
 
-        // I ignore the pattern matching here, instead opting to grab the render backend from
-        // within the other render functions. This is because Rust borrow checker grrr.
+        // Note that Rust's borrow checker prevents passing the render backend from the match arm,
+        // so I'll need to grab it from within the respective functions instead
         match self.render_backend {
             RenderBackend::V2(_) if self.effects.should_apply(window_state) => {
                 self.render_v2_with_effects(window_rect, window_state)?

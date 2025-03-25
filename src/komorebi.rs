@@ -180,7 +180,7 @@ impl KomorebiIntegration {
         debug!("stopping komorebi integration");
 
         // If this is Some, it means WinSock is (most likely) running, so we need to cleanup. Doing
-        // so should also cause the socket worker thread to automatically exit.
+        // so should also cause the socket worker thread to automatically fail and exit.
         if let Some(ref socket) = self.listen_socket {
             unsafe { WSACleanup() };
 
