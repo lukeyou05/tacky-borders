@@ -1,6 +1,6 @@
 # tacky-borders
 
-![image](https://github.com/user-attachments/assets/e1786c07-4168-42ca-8ada-ccbabcf74a63)
+![image](https://github.com/user-attachments/assets/37754479-2311-400e-b019-e0ad1db642a9)
 _tacky-borders_ lets you customize window borders on Windows 10 and 11.
 
 ## Installation
