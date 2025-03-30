@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::{iter, ptr, slice, thread, time};
+use std::{env, iter, ptr, slice, thread, time};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::Graphics::Dwm::{
     DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
@@ -221,11 +221,13 @@ impl Config {
     }
 
     pub fn get_dir() -> anyhow::Result<PathBuf> {
-        let Some(home_dir) = home_dir() else {
-            return Err(anyhow!("could not find home directory!"));
-        };
-
-        let config_dir = home_dir.join(".config").join("tacky-borders");
+        let config_dir = env::var("TACKY_BORDERS_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|env_err| {
+                home_dir()
+                    .map(|dir| dir.join(".config").join("tacky-borders"))
+                    .ok_or(anyhow!("could not find home dir, and could not access TACKY_BORDERS_CONFIG_HOME env var: {env_err}"))
+            })?;
 
         if !config_dir.exists() {
             DirBuilder::new()

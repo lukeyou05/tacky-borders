@@ -152,7 +152,7 @@ pub fn get_window_process_name(hwnd: HWND) -> anyhow::Result<String> {
     }
 
     let hprocess = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
-        .context("could not open process of {hwnd}")?;
+        .context(format!("could not open process of {hwnd:?}"))?;
 
     let mut process_buf = [0u16; 256];
     let mut lpdwsize = process_buf.len() as u32;
@@ -165,7 +165,7 @@ pub fn get_window_process_name(hwnd: HWND) -> anyhow::Result<String> {
             &mut lpdwsize,
         )
     }
-    .context("could not query process image name for {hwnd}");
+    .context(format!("could not query process image name for {hwnd:?}"));
 
     unsafe { CloseHandle(hprocess) }.context("could not close {hprocess:?}")?;
 
@@ -268,7 +268,7 @@ pub fn are_rects_same_size(rect1: &RECT, rect2: &RECT) -> bool {
 
 pub fn is_window_cloaked(hwnd: HWND) -> bool {
     let mut is_cloaked = FALSE;
-    if let Err(e) = unsafe {
+    if let Err(err) = unsafe {
         DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED,
@@ -276,7 +276,7 @@ pub fn is_window_cloaked(hwnd: HWND) -> bool {
             size_of::<BOOL>() as u32,
         )
     } {
-        error!("could not check if window is cloaked: {e}");
+        error!("could not check if window is cloaked: {err}");
         return true;
     }
     is_cloaked.as_bool()
