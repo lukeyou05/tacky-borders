@@ -64,7 +64,7 @@ pub extern "system" fn process_win_event(
             handle_foreground_event(potential_active_hwnd, _hwnd);
 
             if !APP_STATE.is_polling_active_window() {
-                poll_active_window_with_limit(2);
+                poll_active_window_with_limit(2, true);
             }
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED => {
@@ -85,6 +85,14 @@ pub extern "system" fn process_win_event(
             }
         }
         EVENT_SYSTEM_MINIMIZEEND => {
+            // Restoring a window *should* generally bring it to the foreground, but restoring
+            // from the Windows 10 taskbar doesn't trigger the EVENT_SYSTEM_FOREGROUND event
+            // (thanks, Microsoft!). Instead of relying on that event, we'll explicitly handle the
+            // foreground window change here.
+            if !APP_STATE.is_polling_active_window() {
+                poll_active_window_with_limit(2, false);
+            }
+
             if let Some(border) = get_border_for_window(_hwnd) {
                 post_message_w(Some(border), WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MINIMIZEEND")
@@ -100,38 +108,43 @@ pub extern "system" fn process_win_event(
     }
 }
 
-fn poll_active_window_with_limit(max_polls: u32) {
+fn poll_active_window_with_limit(max_polls: u32, offset_first_poll: bool) {
     APP_STATE.set_polling_active_window(true);
 
+    const POLL_DELAY: u64 = 50;
     let _ = thread::spawn(move || {
-        for _ in 0..max_polls {
-            thread::sleep(time::Duration::from_millis(50));
+        if offset_first_poll {
+            thread::sleep(time::Duration::from_millis(POLL_DELAY));
+        }
 
+        for _ in 0..max_polls {
             let current_active_hwnd = HWND(*APP_STATE.active_window.lock().unwrap() as _);
             let new_active_hwnd = get_foreground_window();
 
             if new_active_hwnd != current_active_hwnd && !new_active_hwnd.is_invalid() {
                 handle_foreground_event(new_active_hwnd, current_active_hwnd);
             }
+
+            thread::sleep(time::Duration::from_millis(POLL_DELAY));
         }
 
         APP_STATE.set_polling_active_window(false);
     });
 }
 
-fn handle_foreground_event(potential_active_hwnd: HWND, event_hwnd: HWND) {
-    let new_active_window = match !potential_active_hwnd.is_invalid() {
-        true => potential_active_hwnd.0 as isize,
-        false => event_hwnd.0 as isize,
+fn handle_foreground_event(best_hwnd_guess: HWND, other_hwnd_guess: HWND) {
+    let new_active_hwnd = match !best_hwnd_guess.is_invalid() {
+        true => best_hwnd_guess,
+        false => other_hwnd_guess,
     };
-    *APP_STATE.active_window.lock().unwrap() = new_active_window;
+    *APP_STATE.active_window.lock().unwrap() = new_active_hwnd.0 as isize;
 
     // Send foreground messages to all the border windows
     for (key, val) in APP_STATE.borders.lock().unwrap().iter() {
         let border_window = HWND(*val as _);
         // Some apps can become foreground even if they're not visible, so we also have to check
         // the keys against the active_window HWND from earlier
-        if is_window_visible(border_window) || *key == new_active_window {
+        if is_window_visible(border_window) || *key == new_active_hwnd.0 as isize {
             post_message_w(Some(border_window), WM_APP_FOREGROUND, WPARAM(0), LPARAM(0))
                 .context("EVENT_OBJECT_FOCUS")
                 .log_if_err();
