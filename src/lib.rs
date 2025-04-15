@@ -19,7 +19,9 @@ use utils::{
     send_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
-use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HMODULE, HWND, LPARAM, TRUE};
+use windows::Win32::Foundation::{
+    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED, WAIT_FAILED,
+};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
 };
@@ -31,9 +33,12 @@ use windows::Win32::Graphics::Direct3D::{
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
 };
-use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIDevice, IDXGIFactory7,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
+use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_MAX, EVENT_MIN, EnumWindows, IDC_ARROW, LoadCursorW, MB_ICONERROR, MB_OK,
@@ -84,6 +89,7 @@ struct AppState {
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
+    display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
 }
 
 unsafe impl Send for AppState {}
@@ -146,6 +152,13 @@ impl AppState {
             RenderBackendConfig::Legacy => None,
         };
 
+        let mut display_adapters_watcher_opt = DisplayAdaptersWatcher::new()
+            .inspect_err(|err| error!("display_adapters_watcher_opt: {err}"))
+            .ok();
+        if let Some(ref mut display_adapters_watcher) = display_adapters_watcher_opt {
+            display_adapters_watcher.start().log_if_err();
+        }
+
         AppState {
             borders: Mutex::new(HashMap::new()),
             initial_windows: Mutex::new(Vec::new()),
@@ -156,6 +169,7 @@ impl AppState {
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
             komorebi_integration: Mutex::new(komorebi_integration),
+            display_adapters_watcher: Mutex::new(display_adapters_watcher_opt),
         }
     }
 
@@ -168,8 +182,86 @@ impl AppState {
     }
 }
 
+struct DisplayAdaptersWatcher {
+    dxgi_factory: IDXGIFactory7,
+    event_cookie: Option<u32>,
+}
+
+impl DisplayAdaptersWatcher {
+    fn new() -> anyhow::Result<Self> {
+        // This factory will only be used to register adapter change events. If the user is using
+        // the V2 render backend, we will also have an implicit factory created during DirectX
+        // device creation, but these two factories are separate.
+        let dxgi_factory: IDXGIFactory7 =
+            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
+                .context("could not create dxgi_factory to watch for display adapter changes; semi-serious issues may occur due to an inability to update DirectX devices accordingly")?;
+
+        Ok(Self {
+            dxgi_factory,
+            event_cookie: None,
+        })
+    }
+
+    fn start(&mut self) -> anyhow::Result<()> {
+        let handle = unsafe { CreateEventW(None, false, false, None) }?;
+        let cookie = unsafe { self.dxgi_factory.RegisterAdaptersChangedEvent(handle) }?;
+
+        self.event_cookie = Some(cookie);
+
+        // Convert the HANDLE to an isize so we can pass it into the thread below
+        let handle_isize = handle.0 as isize;
+
+        let _ = thread::spawn(move || {
+            loop {
+                // This function will block until an adapters changed event or an error has occurred.
+                let wait_event =
+                    unsafe { WaitForSingleObject(HANDLE(handle_isize as _), INFINITE) };
+
+                // If an error has occurred, log it and exit the thread.
+                if wait_event == WAIT_ABANDONED || wait_event == WAIT_FAILED {
+                    let last_error = get_last_error();
+                    error!(
+                        "could not check for display adapter changes: {last_error:?}; exiting thread"
+                    );
+
+                    return;
+                }
+
+                // If it was not an error, we will recreate our DirectX devices
+                info!("display adapters have changed; recreating render devices and borders");
+
+                let config = APP_STATE.config.read().unwrap();
+                let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+
+                if config.render_backend == RenderBackendConfig::V2 {
+                    let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
+                        .unwrap_or_else(|err| {
+                            error!("could not create directx devices: {err}");
+                            panic!("could not create directx devices: {err}");
+                        });
+
+                    *directx_devices_opt = Some(direct_x_devices);
+                }
+
+                reload_borders();
+            }
+        });
+
+        Ok(())
+    }
+
+    fn stop(&mut self) -> anyhow::Result<()> {
+        let cookie = self
+            .event_cookie
+            .context("could not get adapters changed event cookie; perhaps the event was never registered in the first place")?;
+        unsafe { self.dxgi_factory.UnregisterAdaptersChangedEvent(cookie) }
+            .context("UnregisterAdaptersChangedEvent()")?;
+
+        Ok(())
+    }
+}
+
 struct DirectXDevices {
-    d3d11_device: ID3D11Device,
     dxgi_device: IDXGIDevice,
     d2d_device: ID2D1Device,
 }
@@ -212,7 +304,6 @@ impl DirectXDevices {
         let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
 
         Ok(Self {
-            d3d11_device,
             dxgi_device,
             d2d_device,
         })

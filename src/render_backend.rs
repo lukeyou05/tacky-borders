@@ -177,11 +177,7 @@ impl V2RenderBackend {
             let dxgi_factory: IDXGIFactory2 = dxgi_adapter.GetParent().context("dxgi_factory")?;
 
             let swap_chain = dxgi_factory
-                .CreateSwapChainForComposition(
-                    &directx_devices.d3d11_device,
-                    &swap_chain_desc,
-                    None,
-                )
+                .CreateSwapChainForComposition(&directx_devices.dxgi_device, &swap_chain_desc, None)
                 .context("swap_chain")?;
 
             // Not only does IDCompositionDevice3 not implement CreateTargetForHwnd, but you can't
