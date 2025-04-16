@@ -34,7 +34,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIDevice, IDXGIFactory7,
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter, IDXGIDevice, IDXGIFactory7,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
@@ -302,8 +302,19 @@ impl DirectXDevices {
         debug!("directx feature_level: {feature_level:X?}");
 
         let d3d11_device = device_opt.context("could not get d3d11_device")?;
-        let dxgi_device = d3d11_device.cast().context("dxgi_device")?;
+        let dxgi_device: IDXGIDevice = d3d11_device.cast().context("dxgi_device")?;
         let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+
+        let dxgi_adapter: IDXGIAdapter =
+            unsafe { dxgi_device.GetAdapter() }.context("dxgi_adapter")?;
+        let adapter_desc = unsafe { dxgi_adapter.GetDesc() }.context("adapter_desc")?;
+        let name_len = adapter_desc
+            .Description
+            .iter()
+            .position(|c| *c == 0)
+            .unwrap_or(adapter_desc.Description.len());
+        let adapter_name = String::from_utf16_lossy(&adapter_desc.Description[..name_len]);
+        debug!("display adapter name: {adapter_name}");
 
         Ok(Self {
             dxgi_device,
