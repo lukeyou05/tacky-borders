@@ -230,17 +230,19 @@ impl DisplayAdaptersWatcher {
                 // If it was not an error, we will recreate our DirectX devices
                 info!("display adapters have changed; recreating render devices and borders");
 
-                let config = APP_STATE.config.read().unwrap();
-                let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+                {
+                    let config = APP_STATE.config.read().unwrap();
+                    let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
 
-                if config.render_backend == RenderBackendConfig::V2 {
-                    let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
-                        .unwrap_or_else(|err| {
-                            error!("could not create directx devices: {err}");
-                            panic!("could not create directx devices: {err}");
-                        });
+                    if config.render_backend == RenderBackendConfig::V2 {
+                        let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
+                            .unwrap_or_else(|err| {
+                                error!("could not create directx devices: {err}");
+                                panic!("could not create directx devices: {err}");
+                            });
 
-                    *directx_devices_opt = Some(direct_x_devices);
+                        *directx_devices_opt = Some(direct_x_devices);
+                    }
                 }
 
                 reload_borders();
