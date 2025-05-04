@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow};
 use serde::Deserialize;
 use std::mem::ManuallyDrop;
-use windows::Win32::Foundation::{FALSE, HWND};
+use windows::Win32::Foundation::{FALSE, HWND, LUID};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
 };
@@ -57,6 +57,7 @@ pub struct V2RenderBackend {
     pub target_bitmap: Option<ID2D1Bitmap1>,
     pub border_bitmap: Option<ID2D1Bitmap1>,
     pub mask_bitmap: Option<ID2D1Bitmap1>,
+    pub adapter_luid: LUID,
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +214,11 @@ impl V2RenderBackend {
                 create_extra_bitmaps,
             )?;
 
+            // The LUID identifies the GPU adapter this render backend was initialized with. It's
+            // used to help determine when the primary GPU adapter of the system has changed.
+            let adapter_desc = dxgi_adapter.GetDesc().context("adapter_desc")?;
+            let adapter_luid = adapter_desc.AdapterLuid;
+
             Ok(Self {
                 target_bitmap: target_bitmap_opt,
                 border_bitmap: border_bitmap_opt,
@@ -222,6 +228,7 @@ impl V2RenderBackend {
                 d_comp_device,
                 d_comp_target,
                 d_comp_visual,
+                adapter_luid,
             })
         }
     }

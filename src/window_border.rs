@@ -11,21 +11,26 @@ use windows::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_EXTENDED_FRAME_BOUNDS,
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute,
 };
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter,
+    IDXGIFactory6,
+};
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GW_HWNDPREV,
-    GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
-    LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
-    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_CREATE,
-    WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED,
-    WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    WS_POPUP,
+    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
+    DispatchMessageW, GW_HWNDPREV, GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow,
+    GetWindowLongPtrW, HWND_TOP, LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS,
+    SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
+    TranslateMessage, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY,
+    WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
 use crate::APP_STATE;
+use crate::DirectXDevices;
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
@@ -895,6 +900,106 @@ impl WindowBorder {
 
                     self.update_renderer_size(screen_width, screen_height);
                     self.render().log_if_err();
+                }
+            }
+            // This message is sent when a device is added or removed to the system. AFAIK, it
+            // doesn't directly have anything to do with GPU adapters, but we can still use it to
+            // help detect adapter changes in specific scenarios (e.g. when a monitor is
+            // connected/disconnected on an NVIDIA Optimus-supported laptop).
+            WM_DEVICECHANGE if wparam.0 as u32 == DBT_DEVNODES_CHANGED => {
+                // Manually checking for adapter changes is only possible with the V2 render
+                // backend, so we'll simply return if that's not what's being used.
+                let RenderBackend::V2(ref backend) = self.border_drawer.render_backend else {
+                    debug!(
+                        "could not check for GPU adapter changes: not running V2 render backend"
+                    );
+                    return LRESULT(0);
+                };
+
+                let dxgi_factory: IDXGIFactory6 =
+                    unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
+                        .context("could not create dxgi_factory to check for GPU adapter changes")
+                        .unwrap();
+
+                let new_dxgi_adapter: IDXGIAdapter = unsafe {
+                    dxgi_factory
+                        .EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)
+                        .unwrap()
+                };
+                let new_adapter_desc = unsafe { new_dxgi_adapter.GetDesc() }
+                    .context("new_adapter_desc")
+                    .unwrap();
+
+                {
+                    // APP_STATE's directx_devices only exists if using the V2 render backend
+                    let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+                    let Some(directx_devices) = directx_devices_opt.as_mut() else {
+                        debug!(
+                            "could not check for GPU adapter changes: not running V2 render backend"
+                        );
+                        return LRESULT(0);
+                    };
+
+                    let curr_dxgi_adapter: IDXGIAdapter = unsafe {
+                        directx_devices
+                            .dxgi_device
+                            .GetAdapter()
+                            .context("could not get dxgi adapter")
+                            .unwrap()
+                    };
+                    let curr_adapter_desc = unsafe { curr_dxgi_adapter.GetDesc() }
+                        .context("curr_adapter_desc")
+                        .unwrap();
+
+                    // Update our global DirectX devices if necessary
+                    if curr_adapter_desc.AdapterLuid != new_adapter_desc.AdapterLuid {
+                        let name_len = new_adapter_desc
+                            .Description
+                            .iter()
+                            .position(|c| *c == 0)
+                            .unwrap_or(new_adapter_desc.Description.len());
+                        let new_adapter_name =
+                            String::from_utf16_lossy(&new_adapter_desc.Description[..name_len]);
+                        println!("display adapter name: {new_adapter_name}");
+
+                        let new_directx_devices = DirectXDevices::new(&APP_STATE.render_factory)
+                            .unwrap_or_else(|err| {
+                                error!("could not create directx devices: {err}");
+                                panic!("could not create directx devices: {err}");
+                            });
+                        *directx_devices = new_directx_devices;
+                    }
+                }
+
+                {
+                    // Update this border's render backend if necessary
+                    if backend.adapter_luid != new_adapter_desc.AdapterLuid {
+                        debug!("updating border's render backend");
+
+                        // "Drop" our current render backend to avoid re-initialization issues
+                        self.border_drawer.render_backend = RenderBackend::None;
+
+                        let (screen_width, screen_height) =
+                            get_monitor_resolution(self.current_monitor)
+                                .context("could not get monitor resolution")
+                                .unwrap();
+                        let renderer_size = Self::compute_proper_renderer_size(
+                            screen_width,
+                            screen_height,
+                            self.border_drawer.border_width,
+                            self.window_padding,
+                        );
+                        self.border_drawer
+                            .init_renderer(
+                                renderer_size.width,
+                                renderer_size.height,
+                                self.border_window,
+                                &self.window_rect,
+                                APP_STATE.config.read().unwrap().render_backend,
+                            )
+                            .context("could not initialize border drawer in init()")
+                            .unwrap();
+                    }
                 }
             }
             // Ignore these window position messages

@@ -155,9 +155,9 @@ impl AppState {
         let mut display_adapters_watcher_opt = DisplayAdaptersWatcher::new()
             .inspect_err(|err| error!("display_adapters_watcher_opt: {err}"))
             .ok();
-        if let Some(ref mut display_adapters_watcher) = display_adapters_watcher_opt {
-            display_adapters_watcher.start().log_if_err();
-        }
+        // if let Some(ref mut display_adapters_watcher) = display_adapters_watcher_opt {
+        //     display_adapters_watcher.start().log_if_err();
+        // }
 
         AppState {
             borders: Mutex::new(HashMap::new()),
