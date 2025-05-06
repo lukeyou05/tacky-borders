@@ -3,6 +3,8 @@ use std::thread;
 use std::time;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
+use windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_MOVESIZEEND;
+use windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_MOVESIZESTART;
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
@@ -11,6 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::APP_STATE;
+use crate::utils::WM_APP_MOVESIZEEND;
+use crate::utils::WM_APP_MOVESIZESTART;
 use crate::utils::{
     LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
     WM_APP_REORDER, destroy_border_for_window, get_border_for_window, get_foreground_window,
@@ -96,6 +100,20 @@ pub extern "system" fn process_win_event(
             if let Some(border) = get_border_for_window(_hwnd) {
                 post_message_w(Some(border), WM_APP_MINIMIZEEND, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MINIMIZEEND")
+                    .log_if_err();
+            }
+        }
+        EVENT_SYSTEM_MOVESIZESTART => {
+            if let Some(border) = get_border_for_window(_hwnd) {
+                post_message_w(Some(border), WM_APP_MOVESIZESTART, WPARAM(0), LPARAM(0))
+                    .context("EVENT_SYSTEM_MOVESIZESTART")
+                    .log_if_err();
+            }
+        }
+        EVENT_SYSTEM_MOVESIZEEND => {
+            if let Some(border) = get_border_for_window(_hwnd) {
+                post_message_w(Some(border), WM_APP_MOVESIZEEND, WPARAM(0), LPARAM(0))
+                    .context("EVENT_SYSTEM_MOVESIZEEND")
                     .log_if_err();
             }
         }

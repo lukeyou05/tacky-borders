@@ -31,6 +31,8 @@ use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
+use crate::utils::WM_APP_MOVESIZEEND;
+use crate::utils::WM_APP_MOVESIZESTART;
 use crate::utils::{
     LogIfErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
     WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
@@ -52,6 +54,7 @@ pub struct WindowBorder {
     initialize_delay: u64,
     unminimize_delay: u64,
     is_paused: bool,
+    is_moving: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -657,8 +660,18 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
             }
+            WM_APP_MOVESIZESTART => {
+                self.is_moving = true;
+            }
+            WM_APP_MOVESIZEEND => {
+                self.is_moving = false;
+            }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
+                if self.is_moving {
+                    return LRESULT(0);
+                }
+
                 // When the tracking window reorders its contents, it may change the z-order. So,
                 // we first check whether the border is still above the tracking window, and if
                 // not, we must update its position and place it back on top

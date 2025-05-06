@@ -44,6 +44,8 @@ pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
+pub const WM_APP_MOVESIZESTART: u32 = WM_APP + 9;
+pub const WM_APP_MOVESIZEEND: u32 = WM_APP + 10;
 
 // Custom HRESULT error code indicating an uninitialized COM object within this application.
 // T_E_UNINIT typically represents an Option::None where an Option::Some(_) was expected. This is
