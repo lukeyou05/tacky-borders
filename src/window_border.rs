@@ -353,8 +353,12 @@ impl WindowBorder {
 
     fn update_position(&mut self, other_flags: Option<SET_WINDOW_POS_FLAGS>) -> anyhow::Result<()> {
         unsafe {
-            // Get the hwnd above the tracking hwnd so we can place the border window in between
-            let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
+            let hwndinsertafter = if self.is_moving {
+                Ok(self.tracking_window)
+            } else {
+                // Get the hwnd above the tracking hwnd so we can place the border window in between
+                GetWindow(self.tracking_window, GW_HWNDPREV)
+            };
 
             let mut swp_flags = SWP_NOSENDCHANGING
                 | SWP_NOACTIVATE
@@ -363,13 +367,13 @@ impl WindowBorder {
 
             // If hwnd_above_tracking is the window border itself, we have what we want and there's
             // no need to change the z-order (plus it results in an error if we try it).
-            if hwnd_above_tracking == Ok(self.border_window) {
+            if hwndinsertafter == Ok(self.border_window) {
                 swp_flags |= SWP_NOZORDER;
             }
 
             if let Err(e) = SetWindowPos(
                 self.border_window,
-                Some(hwnd_above_tracking.unwrap_or(HWND_TOP)),
+                Some(hwndinsertafter.unwrap_or(HWND_TOP)),
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
@@ -665,6 +669,7 @@ impl WindowBorder {
             }
             WM_APP_MOVESIZEEND => {
                 self.is_moving = false;
+                self.update_position(None).log_if_err();
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
