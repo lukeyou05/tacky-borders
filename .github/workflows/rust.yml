@@ -7,25 +7,42 @@ on:
   pull_request:
     branches: ["main"]
 
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: "Log level"
+        required: false
+        default: "warning"
+        type: choice
+        options:
+          - info
+          - warning
+          - debug
+      tags:
+        description: "Test scenario tags"
+        required: false
+        type: boolean
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Build
         run: cargo build --release
-
-      - name: Run tests
-        run: cargo test --verbose
-
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4.4.3
         with:
           name: tacky-borders-${{ github.sha }}
           path: target/release/*.exe
           retention-days: 30
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: cargo test --verbose
