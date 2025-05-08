@@ -14,13 +14,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::thread;
 use utils::{
-    LogIfErr, create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
-    has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
-    send_message_w,
+    LogIfErr, WM_APP_RECREATE_RENDERER, create_border_for_window, get_foreground_window,
+    get_last_error, get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level,
+    is_window_visible, post_message_w, send_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
     ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED, WAIT_FAILED,
+    WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
@@ -34,7 +35,8 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter, IDXGIDevice, IDXGIFactory7,
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter,
+    IDXGIDevice, IDXGIFactory6, IDXGIFactory7,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
@@ -139,6 +141,8 @@ impl AppState {
             })
         };
 
+        let mut display_adapters_watcher_opt: Option<DisplayAdaptersWatcher> = None;
+
         let directx_devices_opt = match config.render_backend {
             RenderBackendConfig::V2 => {
                 // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
@@ -147,17 +151,19 @@ impl AppState {
                     panic!("could not create directx devices: {err}");
                 });
 
+                // We only need to manually watch for diplay adapters when using the V2 render
+                // backend. The Legacy backend does so automatically.
+                display_adapters_watcher_opt = DisplayAdaptersWatcher::new()
+                    .inspect_err(|err| error!("display_adapters_watcher_opt: {err}"))
+                    .ok();
+                if let Some(ref mut display_adapters_watcher) = display_adapters_watcher_opt {
+                    display_adapters_watcher.start().log_if_err();
+                }
+
                 Some(directx_devices)
             }
             RenderBackendConfig::Legacy => None,
         };
-
-        let mut display_adapters_watcher_opt = DisplayAdaptersWatcher::new()
-            .inspect_err(|err| error!("display_adapters_watcher_opt: {err}"))
-            .ok();
-        // if let Some(ref mut display_adapters_watcher) = display_adapters_watcher_opt {
-        //     display_adapters_watcher.start().log_if_err();
-        // }
 
         AppState {
             borders: Mutex::new(HashMap::new()),
@@ -212,6 +218,8 @@ impl DisplayAdaptersWatcher {
         let handle_isize = handle.0 as isize;
 
         let _ = thread::spawn(move || {
+            debug!("starting display adapters watcher");
+
             loop {
                 // This function will block until an adapters changed event or an error has occurred.
                 let wait_event =
@@ -227,25 +235,28 @@ impl DisplayAdaptersWatcher {
                     return;
                 }
 
-                // If it was not an error, we will recreate our DirectX devices
-                info!("display adapters have changed; recreating render devices and borders");
+                // Manual recreation of devices and renderers only needs to happen if we are using
+                // the V2 render backend (the Legacy backend does so automatically)
+                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
+                    if directx_devices.needs_recreation().unwrap() {
+                        info!(
+                            "display adapters have changed; recreating render devices and borders"
+                        );
+                        *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
+                    }
 
-                {
-                    let config = APP_STATE.config.read().unwrap();
-                    let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
-
-                    if config.render_backend == RenderBackendConfig::V2 {
-                        let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
-                            .unwrap_or_else(|err| {
-                                error!("could not create directx devices: {err}");
-                                panic!("could not create directx devices: {err}");
-                            });
-
-                        *directx_devices_opt = Some(direct_x_devices);
+                    for hwnd_isize in APP_STATE.borders.lock().unwrap().values() {
+                        let border_hwnd = HWND(*hwnd_isize as _);
+                        post_message_w(
+                            Some(border_hwnd),
+                            WM_APP_RECREATE_RENDERER,
+                            WPARAM::default(),
+                            LPARAM::default(),
+                        )
+                        .context("WM_APP_RECREATE_RENDERER")
+                        .log_if_err();
                     }
                 }
-
-                reload_borders();
             }
         });
 
@@ -258,6 +269,8 @@ impl DisplayAdaptersWatcher {
             .context("could not get adapters changed event cookie; perhaps the event was never registered in the first place")?;
         unsafe { self.dxgi_factory.UnregisterAdaptersChangedEvent(cookie) }
             .context("UnregisterAdaptersChangedEvent()")?;
+
+        self.event_cookie = None;
 
         Ok(())
     }
@@ -320,6 +333,27 @@ impl DirectXDevices {
             dxgi_device,
             d2d_device,
         })
+    }
+
+    pub fn needs_recreation(&self) -> anyhow::Result<bool> {
+        let dxgi_factory: IDXGIFactory6 =
+            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
+                .context("could not create dxgi_factory to check for GPU adapter changes")?;
+
+        let new_dxgi_adapter: IDXGIAdapter =
+            unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
+        let new_adapter_desc =
+            unsafe { new_dxgi_adapter.GetDesc() }.context("could not get new_adapter_desc")?;
+
+        let curr_dxgi_adapter: IDXGIAdapter = unsafe {
+            self.dxgi_device
+                .GetAdapter()
+                .context("could not get curr_dxgi_adapter")?
+        };
+        let curr_adapter_desc =
+            unsafe { curr_dxgi_adapter.GetDesc() }.context("could not get curr_adapter_desc")?;
+
+        Ok(curr_adapter_desc.AdapterLuid != new_adapter_desc.AdapterLuid)
     }
 }
 
