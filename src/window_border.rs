@@ -618,7 +618,7 @@ impl WindowBorder {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
             WM_APP_LOCATIONCHANGE => {
-                if self.is_paused {
+                if self.is_paused || self.is_moving {
                     return LRESULT(0);
                 }
 
@@ -666,10 +666,12 @@ impl WindowBorder {
             }
             WM_APP_MOVESIZESTART => {
                 self.is_moving = true;
+                self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
             }
             WM_APP_MOVESIZEEND => {
                 self.is_moving = false;
-                self.update_position(None).log_if_err();
+                self.update_window_rect().log_if_err();
+                self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
