@@ -105,14 +105,14 @@ pub extern "system" fn process_win_event(
         }
         EVENT_SYSTEM_MOVESIZESTART => {
             if let Some(border) = get_border_for_window(_hwnd) {
-                post_message_w(Some(border), WM_APP_MOVESIZESTART, WPARAM(0), LPARAM(0))
+                send_notify_message_w(border, WM_APP_MOVESIZESTART, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MOVESIZESTART")
                     .log_if_err();
             }
         }
         EVENT_SYSTEM_MOVESIZEEND => {
             if let Some(border) = get_border_for_window(_hwnd) {
-                post_message_w(Some(border), WM_APP_MOVESIZEEND, WPARAM(0), LPARAM(0))
+                send_notify_message_w(border, WM_APP_MOVESIZEEND, WPARAM(0), LPARAM(0))
                     .context("EVENT_SYSTEM_MOVESIZEEND")
                     .log_if_err();
             }
