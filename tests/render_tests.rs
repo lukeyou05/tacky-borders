@@ -73,7 +73,7 @@ fn test_border_drawer_update() -> anyhow::Result<()> {
         Animations::default(),
         Effects::default(),
     );
-    border_drawer.init_renderer(1920, 1080, hwnd, &RECT::default(), RenderBackendConfig::V2)?;
+    border_drawer.init(1920, 1080, hwnd, &RECT::default(), RenderBackendConfig::V2)?;
 
     assert!(
         border_drawer

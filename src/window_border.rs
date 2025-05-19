@@ -11,10 +11,9 @@ use windows::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_EXTENDED_FRAME_BOUNDS,
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute,
 };
-use windows::Win32::Graphics::Dxgi::DXGI_ERROR_DEVICE_REMOVED;
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter,
-    IDXGIFactory6,
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_ERROR_DEVICE_REMOVED,
+    DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter, IDXGIFactory6,
 };
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
@@ -31,20 +30,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 use crate::APP_STATE;
-use crate::DirectXDevices;
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::PrependErr;
-use crate::utils::WM_APP_RECREATE_RENDERER;
 use crate::utils::{
-    LogIfErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
-    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
-    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_monitor_resolution,
-    get_window_rule, get_window_title, has_native_border, is_rect_visible, is_window_minimized,
-    is_window_visible, loword, monitor_from_window, post_message_w,
+    LogIfErr, PrependErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
+    WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
+    WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size,
+    get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
+    has_native_border, is_rect_visible, is_window_minimized, is_window_visible, loword,
+    monitor_from_window, post_message_w,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -166,7 +163,7 @@ impl WindowBorder {
                 )
                 .context("could not initialize border drawer in init()")?;
 
-            self.update_color(Some(self.initialize_delay)).log_if_err();
+            self.update_color(Some(self.initialize_delay));
             self.update_window_rect().log_if_err();
 
             if has_native_border(self.tracking_window) {
@@ -392,7 +389,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
+    fn update_color(&mut self, check_delay: Option<u64>) {
         self.window_state.update(
             self.tracking_window.0 as isize,
             *APP_STATE.active_window.lock().unwrap(),
@@ -413,8 +410,6 @@ impl WindowBorder {
             }
             true => {} // We will rely on the animations callback to update color
         }
-
-        Ok(())
     }
 
     fn update_brush_opacities(&mut self) {
@@ -499,16 +494,15 @@ impl WindowBorder {
                 Err(err)?
             }
 
-            // TODO: replace unwrap
             if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                if directx_devices.needs_recreation().unwrap() {
-                    *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
-                }
+                if let Err(err) = directx_devices.recreate_if_needed() {
+                    self.cleanup_and_queue_exit();
+                    return Err(anyhow!("could not recreate devices if needed: {err}"));
+                };
             }
-            if self.needs_drawer_recreation().unwrap() {
-                self.recreate_drawer().unwrap();
-                self.update_color(None).log_if_err();
-                self.render().log_if_err();
+            if let Err(err) = self.refresh_drawer_state_if_needed() {
+                self.cleanup_and_queue_exit();
+                return Err(anyhow!("could not refresh drawer state if needed: {err}"));
             }
         }
 
@@ -565,14 +559,13 @@ impl WindowBorder {
     }
 
     fn recreate_drawer(&mut self) -> anyhow::Result<()> {
-        debug!("updating border's render backend");
+        debug!("recreating border's render backend");
 
         // "Drop" our current render backend to avoid issues with recreating existing resources
         self.border_drawer.render_backend = RenderBackend::None;
 
         let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-            .context("could not get monitor resolution")
-            .unwrap();
+            .context("could not get monitor resolution")?;
         let renderer_size = Self::compute_proper_renderer_size(
             screen_width,
             screen_height,
@@ -587,7 +580,21 @@ impl WindowBorder {
                 &self.window_rect,
                 APP_STATE.config.read().unwrap().render_backend,
             )
-            .context("could not initialize border drawer in recreate_renderer()")?;
+            .context("could not initialize border drawer in recreate_drawer()")?;
+
+        Ok(())
+    }
+
+    fn refresh_drawer_state_if_needed(&mut self) -> anyhow::Result<()> {
+        if self
+            .needs_drawer_recreation()
+            .context("could not check if border drawer needs to be recreated")?
+        {
+            self.recreate_drawer()
+                .context("could not recreate border drawer")?;
+            self.update_color(None);
+            self.render()?;
+        }
 
         Ok(())
     }
@@ -629,16 +636,15 @@ impl WindowBorder {
 
                 info!("successfully recreated render target; resuming thread");
             } else if err.code() == DXGI_ERROR_DEVICE_REMOVED {
-                // TODO: replace unwrap
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if directx_devices.needs_recreation().unwrap() {
-                        *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
-                    }
+                    if let Err(err) = directx_devices.recreate_if_needed() {
+                        self.cleanup_and_queue_exit();
+                        return Err(anyhow!("could not recreate devices if needed: {err}"));
+                    };
                 }
-                if self.needs_drawer_recreation().unwrap() {
-                    self.recreate_drawer().unwrap();
-                    self.update_color(None).log_if_err();
-                    self.render().log_if_err();
+                if let Err(err) = self.refresh_drawer_state_if_needed() {
+                    self.cleanup_and_queue_exit();
+                    return Err(anyhow!("could not refresh drawer state if needed: {err}"));
                 }
             } else if err.code() == T_E_UNINIT {
                 // Functions like render() may be called via callback functions before init()
@@ -756,7 +762,7 @@ impl WindowBorder {
             }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
-                self.update_color(None).log_if_err();
+                self.update_color(None);
                 self.update_position(None).log_if_err();
                 self.render().log_if_err();
             }
@@ -773,7 +779,7 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                self.update_color(None).log_if_err();
+                self.update_color(None);
 
                 if has_native_border(self.tracking_window) {
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
@@ -814,7 +820,7 @@ impl WindowBorder {
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
                 if has_native_border(self.tracking_window) {
-                    self.update_color(Some(self.unminimize_delay)).log_if_err();
+                    self.update_color(Some(self.unminimize_delay));
                     self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
@@ -991,22 +997,21 @@ impl WindowBorder {
             // connected/disconnected on an NVIDIA Optimus-supported laptop).
             WM_DEVICECHANGE if wparam.0 as u32 == DBT_DEVNODES_CHANGED => {
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if directx_devices.needs_recreation().unwrap() {
-                        *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
-                    }
+                    if let Err(err) = directx_devices.recreate_if_needed() {
+                        error!("could not recreate devices if needed: {err}");
+                        self.cleanup_and_queue_exit();
+                    };
                 }
-                if self.needs_drawer_recreation().unwrap() {
-                    self.recreate_drawer().unwrap();
-                    self.update_color(None).log_if_err();
-                    self.render().log_if_err();
+                if let Err(err) = self.refresh_drawer_state_if_needed() {
+                    error!("could not refresh drawer state if needed: {err}");
+                    self.cleanup_and_queue_exit();
                 }
             }
             // This message is sent by the DisplayAdaptersWatcher
-            WM_APP_RECREATE_RENDERER => {
-                if self.needs_drawer_recreation().unwrap() {
-                    self.recreate_drawer().unwrap();
-                    self.update_color(None).log_if_err();
-                    self.render().log_if_err();
+            WM_APP_RECREATE_DRAWER => {
+                if let Err(err) = self.refresh_drawer_state_if_needed() {
+                    error!("could not refresh drawer state if needed: {err}");
+                    self.cleanup_and_queue_exit();
                 }
             }
             // Ignore these window position messages

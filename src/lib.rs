@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::thread;
 use utils::{
-    LogIfErr, WM_APP_RECREATE_RENDERER, create_border_for_window, get_foreground_window,
+    LogIfErr, WM_APP_RECREATE_DRAWER, create_border_for_window, get_foreground_window,
     get_last_error, get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level,
     is_window_visible, post_message_w, send_message_w,
 };
@@ -238,18 +238,16 @@ impl DisplayAdaptersWatcher {
                 // Manual recreation of devices and renderers only needs to happen if we are using
                 // the V2 render backend (the Legacy backend does so automatically)
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if directx_devices.needs_recreation().unwrap() {
-                        info!(
-                            "display adapters have changed; recreating render devices and borders"
-                        );
-                        *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
-                    }
+                    if let Err(err) = directx_devices.recreate_if_needed() {
+                        error!("could not recreate devices if needed: {err}");
+                        return;
+                    };
 
                     for hwnd_isize in APP_STATE.borders.lock().unwrap().values() {
                         let border_hwnd = HWND(*hwnd_isize as _);
                         post_message_w(
                             Some(border_hwnd),
-                            WM_APP_RECREATE_RENDERER,
+                            WM_APP_RECREATE_DRAWER,
                             WPARAM::default(),
                             LPARAM::default(),
                         )
@@ -354,6 +352,15 @@ impl DirectXDevices {
             unsafe { curr_dxgi_adapter.GetDesc() }.context("could not get curr_adapter_desc")?;
 
         Ok(curr_adapter_desc.AdapterLuid != new_adapter_desc.AdapterLuid)
+    }
+
+    pub fn recreate_if_needed(&mut self) -> anyhow::Result<()> {
+        if self.needs_recreation()? {
+            info!("recreating render devices");
+            *self = DirectXDevices::new(&APP_STATE.render_factory)?;
+        }
+
+        Ok(())
     }
 }
 
