@@ -56,7 +56,6 @@ pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 
 pub trait LogIfErr {
     fn log_if_err(&self);
 }
-
 impl<T> LogIfErr for Result<(), T>
 where
     T: std::fmt::Display,
@@ -71,10 +70,29 @@ where
 pub trait ToWindowsResult<T> {
     fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T>;
 }
-
 impl<T> ToWindowsResult<T> for anyhow::Result<T> {
     fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T> {
         self.map_err(|err| windows::core::Error::new(hresult, err.to_string()))
+    }
+}
+
+// Basically anyhow's Context, but named differently and doesn't convert types
+pub trait PrependErr {
+    fn prepend_err<C>(self, context: C) -> Self
+    where
+        C: std::fmt::Display + Send + Sync + 'static;
+}
+impl<T> PrependErr for windows::core::Result<T> {
+    fn prepend_err<C>(self, context: C) -> windows::core::Result<T>
+    where
+        C: std::fmt::Display + Send + Sync + 'static,
+    {
+        self.map_err(|err| {
+            let code = err.code();
+            let message = format!("{}: {}", context, err.message());
+
+            windows::core::Error::new(code, message)
+        })
     }
 }
 

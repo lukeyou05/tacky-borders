@@ -37,6 +37,7 @@ use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
+use crate::utils::PrependErr;
 use crate::utils::WM_APP_RECREATE_RENDERER;
 use crate::utils::{
     LogIfErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
@@ -156,7 +157,7 @@ impl WindowBorder {
                 self.window_padding,
             );
             self.border_drawer
-                .init_renderer(
+                .init(
                     renderer_size.width,
                     renderer_size.height,
                     self.border_window,
@@ -481,17 +482,37 @@ impl WindowBorder {
         Ok(correct_renderer_size != actual_renderer_size)
     }
 
-    fn resize_renderer(&mut self, screen_width: u32, screen_height: u32) {
+    fn resize_renderer(&mut self, screen_width: u32, screen_height: u32) -> anyhow::Result<()> {
         let renderer_size = Self::compute_proper_renderer_size(
             screen_width,
             screen_height,
             self.border_drawer.border_width,
             self.window_padding,
         );
-        self.border_drawer
+        if let Err(err) = self
+            .border_drawer
             .update_renderer_size(renderer_size.width, renderer_size.height)
-            .context("could not update renderer")
-            .log_if_err();
+            .prepend_err("could not update renderer")
+        {
+            if err.code() != DXGI_ERROR_DEVICE_REMOVED {
+                self.cleanup_and_queue_exit();
+                Err(err)?
+            }
+
+            // TODO: replace unwrap
+            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
+                if directx_devices.needs_recreation().unwrap() {
+                    *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
+                }
+            }
+            if self.needs_drawer_recreation().unwrap() {
+                self.recreate_drawer().unwrap();
+                self.update_color(None).log_if_err();
+                self.render().log_if_err();
+            }
+        }
+
+        Ok(())
     }
 
     fn update_appearance_and_renderer_if_necessary(
@@ -517,14 +538,14 @@ impl WindowBorder {
             .needs_renderer_resize(screen_width, screen_height)
             .context("could not check if renderer needs update")?
         {
-            self.resize_renderer(screen_width, screen_height);
+            self.resize_renderer(screen_width, screen_height)?;
             is_updated = true;
         }
 
         Ok(is_updated)
     }
 
-    fn needs_renderer_recreation(&self) -> anyhow::Result<bool> {
+    fn needs_drawer_recreation(&self) -> anyhow::Result<bool> {
         let RenderBackend::V2(ref backend) = self.border_drawer.render_backend else {
             // If we're not using the V2 render backend (i.e. we're using the Legacy one), it will
             // automatically update itself so there's no need to reinitialize it manually
@@ -543,7 +564,7 @@ impl WindowBorder {
         Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
     }
 
-    fn recreate_renderer(&mut self) -> anyhow::Result<()> {
+    fn recreate_drawer(&mut self) -> anyhow::Result<()> {
         debug!("updating border's render backend");
 
         // "Drop" our current render backend to avoid issues with recreating existing resources
@@ -559,7 +580,7 @@ impl WindowBorder {
             self.window_padding,
         );
         self.border_drawer
-            .init_renderer(
+            .init(
                 renderer_size.width,
                 renderer_size.height,
                 self.border_window,
@@ -593,7 +614,7 @@ impl WindowBorder {
                     }
                 };
 
-                if let Err(err_2) = self.border_drawer.init_renderer(
+                if let Err(err_2) = self.border_drawer.init(
                     pixel_size.width,
                     pixel_size.height,
                     self.border_window,
@@ -614,8 +635,10 @@ impl WindowBorder {
                         *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
                     }
                 }
-                if self.needs_renderer_recreation().unwrap() {
-                    self.recreate_renderer().unwrap();
+                if self.needs_drawer_recreation().unwrap() {
+                    self.recreate_drawer().unwrap();
+                    self.update_color(None).log_if_err();
+                    self.render().log_if_err();
                 }
             } else if err.code() == T_E_UNINIT {
                 // Functions like render() may be called via callback functions before init()
@@ -957,7 +980,8 @@ impl WindowBorder {
                             }
                         };
 
-                    self.resize_renderer(screen_width, screen_height);
+                    self.resize_renderer(screen_width, screen_height)
+                        .log_if_err();
                     self.render().log_if_err();
                 }
             }
@@ -971,14 +995,18 @@ impl WindowBorder {
                         *directx_devices = DirectXDevices::new(&APP_STATE.render_factory).unwrap();
                     }
                 }
-                if self.needs_renderer_recreation().unwrap() {
-                    self.recreate_renderer().unwrap();
+                if self.needs_drawer_recreation().unwrap() {
+                    self.recreate_drawer().unwrap();
+                    self.update_color(None).log_if_err();
+                    self.render().log_if_err();
                 }
             }
             // This message is sent by the DisplayAdaptersWatcher
             WM_APP_RECREATE_RENDERER => {
-                if self.needs_renderer_recreation().unwrap() {
-                    self.recreate_renderer().unwrap();
+                if self.needs_drawer_recreation().unwrap() {
+                    self.recreate_drawer().unwrap();
+                    self.update_color(None).log_if_err();
+                    self.render().log_if_err();
                 }
             }
             // Ignore these window position messages

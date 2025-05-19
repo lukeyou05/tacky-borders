@@ -15,7 +15,7 @@ use crate::animations::{AnimType, Animations};
 use crate::colors::ColorBrush;
 use crate::effects::Effects;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::{T_E_UNINIT, ToWindowsResult};
+use crate::utils::{PrependErr, T_E_UNINIT, ToWindowsResult};
 use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone)]
@@ -56,7 +56,7 @@ impl BorderDrawer {
         self.effects = effects;
     }
 
-    pub fn init_renderer(
+    pub fn init(
         &mut self,
         width: u32,
         height: u32,
@@ -100,15 +100,16 @@ impl BorderDrawer {
         Ok(())
     }
 
-    pub fn update_renderer_size(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+    pub fn update_renderer_size(&mut self, width: u32, height: u32) -> windows::core::Result<()> {
         self.render_backend
             .update(width, height, self.effects.is_enabled())
-            .context("could not update render resources")?;
+            .prepend_err("could not update render resources")?;
 
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")?;
+                .context("could not initialize command list")
+                .to_windows_result(T_E_UNINIT)?;
         }
 
         Ok(())

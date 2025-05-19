@@ -28,6 +28,7 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::core::Interface;
 
 use crate::APP_STATE;
+use crate::utils::{PrependErr, T_E_UNINIT};
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum RenderBackendConfig {
@@ -93,7 +94,7 @@ impl RenderBackend {
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<()> {
+    ) -> windows::core::Result<()> {
         match self {
             RenderBackend::V2(backend) => {
                 backend.update(width, height, create_extra_bitmaps)?;
@@ -101,7 +102,12 @@ impl RenderBackend {
             // TODO: We already update/resize the buffers of the Legacy renderer within
             // BorderDrawer::render(), but I might want to move it here instead?
             RenderBackend::Legacy(_) => return Ok(()),
-            RenderBackend::None => return Err(anyhow!("render backend is None")),
+            RenderBackend::None => {
+                return Err(windows::core::Error::new(
+                    T_E_UNINIT,
+                    "render backend is None",
+                ));
+            }
         }
 
         Ok(())
@@ -239,7 +245,7 @@ impl V2RenderBackend {
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<(
+    ) -> windows::core::Result<(
         Option<ID2D1Bitmap1>,
         Option<ID2D1Bitmap1>,
         Option<ID2D1Bitmap1>,
@@ -256,12 +262,12 @@ impl V2RenderBackend {
         };
 
         let dxgi_back_buffer: IDXGISurface =
-            unsafe { swap_chain.GetBuffer(0) }.context("dxgi_back_buffer")?;
+            unsafe { swap_chain.GetBuffer(0) }.prepend_err("dxgi_back_buffer")?;
 
         let target_bitmap = unsafe {
             d2d_context.CreateBitmapFromDxgiSurface(&dxgi_back_buffer, Some(&bitmap_properties))
         }
-        .context("d2d_target_bitmap")?;
+        .prepend_err("d2d_target_bitmap")?;
 
         unsafe { d2d_context.SetTarget(&target_bitmap) };
 
@@ -291,7 +297,7 @@ impl V2RenderBackend {
                         &bitmap_properties,
                     )
                 }
-                .context("border_bitmap")?,
+                .prepend_err("border_bitmap")?,
             );
 
             // Aaaand we need yet another bitmap for the mask
@@ -314,7 +320,7 @@ impl V2RenderBackend {
                         &bitmap_properties,
                     )
                 }
-                .context("mask_bitmap")?,
+                .prepend_err("mask_bitmap")?,
             );
         }
 
@@ -328,7 +334,7 @@ impl V2RenderBackend {
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<()> {
+    ) -> windows::core::Result<()> {
         // Release buffer references
         self.target_bitmap = None;
         self.border_bitmap = None;
@@ -345,7 +351,7 @@ impl V2RenderBackend {
                 DXGI_SWAP_CHAIN_FLAG::default(),
             )
         }
-        .context("swap_chain.ResizeBuffers()")?;
+        .prepend_err("swap_chain.ResizeBuffers()")?;
 
         (self.target_bitmap, self.border_bitmap, self.mask_bitmap) = Self::create_bitmaps(
             &self.d2d_context,
