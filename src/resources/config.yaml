@@ -26,6 +26,11 @@ global:
   #   - Or specify any numeric value for a custom radius
   border_radius: Auto
 
+  # border_z_order: Z-order of the border relative to its window. Supported values:
+  #   - AboveWindow: Place the border above its window
+  #   - BelowWindow: Place the border below its window
+  border_z_order: AboveWindow
+
   # initialize_delay: Time (in ms) before the border appears after opening a new window
   # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
   #
