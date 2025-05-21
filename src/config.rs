@@ -64,6 +64,8 @@ pub struct Global {
     #[serde(default)]
     pub border_radius: RadiusConfig,
     #[serde(default)]
+    pub border_z_order: ZOrderMode,
+    #[serde(default)]
     pub active_color: ColorBrushConfig,
     #[serde(default)]
     pub inactive_color: ColorBrushConfig,
@@ -108,16 +110,17 @@ pub struct WindowRule {
     pub border_width: Option<f32>,
     pub border_offset: Option<i32>,
     pub border_radius: Option<RadiusConfig>,
+    pub border_z_order: Option<ZOrderMode>,
     pub active_color: Option<ColorBrushConfig>,
     pub inactive_color: Option<ColorBrushConfig>,
     pub komorebi_colors: Option<KomorebiColorsConfig>,
-    pub enabled: Option<EnableMode>,
     pub animations: Option<AnimationsConfig>,
     pub effects: Option<EffectsConfig>,
     #[serde(alias = "init_delay")]
     pub initialize_delay: Option<u64>,
     #[serde(alias = "restore_delay")]
     pub unminimize_delay: Option<u64>,
+    pub enabled: Option<EnableMode>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -178,6 +181,13 @@ pub enum EnableMode {
     Auto,
     #[serde(untagged)]
     Bool(bool),
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
+pub enum ZOrderMode {
+    #[default]
+    AboveWindow,
+    BelowWindow,
 }
 
 impl Config {

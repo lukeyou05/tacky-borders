@@ -33,6 +33,7 @@ use crate::APP_STATE;
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::config::WindowRule;
+use crate::config::ZOrderMode;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
@@ -54,6 +55,7 @@ pub struct WindowBorder {
     current_monitor: HMONITOR,
     current_dpi: u32,
     border_drawer: BorderDrawer,
+    border_z_order: ZOrderMode,
     initialize_delay: u64,
     unminimize_delay: u64,
     is_paused: bool,
@@ -306,6 +308,8 @@ impl WindowBorder {
             RenderBackendConfig::Legacy => border_offset,
         };
 
+        self.border_z_order = window_rule.border_z_order.unwrap_or(global.border_z_order);
+
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
         self.initialize_delay = match APP_STATE
@@ -355,23 +359,30 @@ impl WindowBorder {
 
     fn update_position(&mut self, other_flags: Option<SET_WINDOW_POS_FLAGS>) -> anyhow::Result<()> {
         unsafe {
-            // Get the hwnd above the tracking hwnd so we can place the border window in between
-            let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
-
             let mut swp_flags = SWP_NOSENDCHANGING
                 | SWP_NOACTIVATE
                 | SWP_NOREDRAW
                 | other_flags.unwrap_or_default();
 
-            // If hwnd_above_tracking is the window border itself, we have what we want and there's
-            // no need to change the z-order (plus it results in an error if we try it).
-            if hwnd_above_tracking == Ok(self.border_window) {
-                swp_flags |= SWP_NOZORDER;
-            }
+            let hwndinsertafter = match self.border_z_order {
+                ZOrderMode::AboveWindow => {
+                    // Get the hwnd above the tracking hwnd so we can place the border window in between
+                    let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
+
+                    // If hwnd_above_tracking is the window border itself, we have what we want and there's
+                    // no need to change the z-order (plus it results in an error if we try it).
+                    if hwnd_above_tracking == Ok(self.border_window) {
+                        swp_flags |= SWP_NOZORDER;
+                    }
+
+                    hwnd_above_tracking.unwrap_or(HWND_TOP)
+                }
+                ZOrderMode::BelowWindow => self.tracking_window,
+            };
 
             if let Err(e) = SetWindowPos(
                 self.border_window,
-                Some(hwnd_above_tracking.unwrap_or(HWND_TOP)),
+                Some(hwndinsertafter),
                 self.window_rect.left,
                 self.window_rect.top,
                 self.window_rect.right - self.window_rect.left,
@@ -751,15 +762,19 @@ impl WindowBorder {
                 }
             }
             // EVENT_OBJECT_REORDER
-            WM_APP_REORDER => {
-                // When the tracking window reorders its contents, it may change the z-order. So,
-                // we first check whether the border is still above the tracking window, and if
-                // not, we must update its position and place it back on top
-                if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) } != Ok(self.border_window)
-                {
-                    self.update_position(None).log_if_err();
+            WM_APP_REORDER => match self.border_z_order {
+                ZOrderMode::AboveWindow => {
+                    // When the tracking window reorders its contents, it may change the z-order. So,
+                    // we first check whether the border is still above the tracking window, and if
+                    // not, we must update its position and place it back on top
+                    if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
+                        != Ok(self.border_window)
+                    {
+                        self.update_position(None).log_if_err();
+                    }
                 }
-            }
+                ZOrderMode::BelowWindow => {} // do nothing
+            },
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
                 self.update_color(None);
