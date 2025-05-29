@@ -25,9 +25,9 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, PostMessageW, RealGetWindowClassW,
-    SendMessageW, SendNotifyMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_NCDESTROY,
-    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+    RealGetWindowClassW, SendMessageW, SendNotifyMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
 use windows::core::{BOOL, HRESULT, PWSTR};
 
@@ -288,6 +288,10 @@ pub fn get_foreground_window() -> HWND {
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
     unsafe { IsIconic(hwnd).as_bool() }
+}
+
+pub fn is_window(hwnd: Option<HWND>) -> bool {
+    unsafe { IsWindow(hwnd).as_bool() }
 }
 
 pub fn post_message_w(

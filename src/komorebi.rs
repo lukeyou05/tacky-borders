@@ -16,10 +16,11 @@ use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
 use crate::config::{Config, serde_default_bool};
 use crate::iocp::{CompletionPort, UnixDomainSocket, UnixListener, UnixStream};
-use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, post_message_w};
+use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, is_window, post_message_w};
 
-const BUFFER_POOL_REFRESH_INTERVAL: time::Duration = time::Duration::from_secs(600);
+const BUFFER_POOL_PRUNE_INTERVAL: time::Duration = time::Duration::from_secs(600);
 const BUFFER_SIZE: usize = 32768;
+const FOCUS_STATE_PRUNE_INTERVAL: time::Duration = time::Duration::from_secs(600);
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -104,14 +105,22 @@ impl KomorebiIntegration {
                 port.associate_handle(stream.socket.to_handle(), stream.token())?;
                 streams_queue.push_back((stream.token(), stream));
 
-                let mut now = time::Instant::now();
+                let mut last_buffer_pool_prune = time::Instant::now();
+                let mut last_focus_state_prune = time::Instant::now();
 
                 loop {
-                    // Clear the buffer pool after the refresh interval has elapsed
-                    if now.elapsed() > BUFFER_POOL_REFRESH_INTERVAL {
-                        debug!("cleaning up buffer pool for komorebic socket");
-                        buffer_pool.clear();
-                        now = time::Instant::now();
+                    if last_buffer_pool_prune.elapsed() > BUFFER_POOL_PRUNE_INTERVAL {
+                        debug!("pruning buffer pool for komorebi integration");
+                        buffer_pool.truncate(1);
+                        last_buffer_pool_prune = time::Instant::now();
+                    }
+                    if last_focus_state_prune.elapsed() > FOCUS_STATE_PRUNE_INTERVAL {
+                        debug!("pruning focus state for komorebi integration");
+                        focus_state
+                            .lock()
+                            .unwrap()
+                            .retain(|&hwnd_isize, _| is_window(Some(HWND(hwnd_isize as _))));
+                        last_focus_state_prune = time::Instant::now();
                     }
 
                     // This will block until an I/O operation has completed (accept or read)
@@ -249,16 +258,16 @@ impl KomorebiIntegration {
                     } else {
                         WindowKind::Monocle
                     };
+
                     {
-                        let mut focus_state = focus_state_mutex.lock().unwrap();
-                        focus_state.insert(
-                            // NOTE: if this is a monocole, I assume there's only 1 window in "windows"
+                        // If this is a monocole, I assume there's only 1 window in "windows"
+                        let tracking_hwnd =
                             monocle.get("windows").get("elements").as_array().unwrap()[0]
                                 .get("hwnd")
                                 .as_i64()
-                                .unwrap() as isize,
-                            new_focus_state,
-                        );
+                                .unwrap() as isize;
+                        let mut focus_state = focus_state_mutex.lock().unwrap();
+                        let _ = focus_state.insert(tracking_hwnd, new_focus_state);
                     }
                 }
 
@@ -295,15 +304,13 @@ impl KomorebiIntegration {
 
                     // Update the window kind for all containers on this workspace
                     {
+                        let tracking_hwnd = c.get("windows").get("elements").as_array().unwrap()
+                            [c.get("windows").get("focused").as_u64().unwrap() as usize]
+                            .get("hwnd")
+                            .as_i64()
+                            .unwrap() as isize;
                         let mut focus_state = focus_state_mutex.lock().unwrap();
-                        let _ = focus_state.insert(
-                            c.get("windows").get("elements").as_array().unwrap()
-                                [c.get("windows").get("focused").as_u64().unwrap() as usize]
-                                .get("hwnd")
-                                .as_i64()
-                                .unwrap() as isize,
-                            new_focus_state,
-                        );
+                        let _ = focus_state.insert(tracking_hwnd, new_focus_state);
                     }
                 }
                 {
@@ -322,11 +329,9 @@ impl KomorebiIntegration {
                         }
 
                         {
+                            let tracking_hwnd = window.get("hwnd").as_i64().unwrap() as isize;
                             let mut focus_state = focus_state_mutex.lock().unwrap();
-                            let _ = focus_state.insert(
-                                window.get("hwnd").as_i64().unwrap() as isize,
-                                new_focus_state,
-                            );
+                            let _ = focus_state.insert(tracking_hwnd, new_focus_state);
                         }
                     }
                 }
