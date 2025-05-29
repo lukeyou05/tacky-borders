@@ -191,6 +191,33 @@ impl WindowBorder {
                 .log_if_err();
             }
 
+            {
+                let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                if komorebi_integration.is_running() {
+                    let self_focus_state = komorebi_integration
+                        .focus_state
+                        .lock()
+                        .unwrap()
+                        .get(&(self.tracking_window.0 as isize))
+                        .copied();
+
+                    // Handle the edge case where the focus state is already komorebi-specific upon border creation
+                    if !matches!(
+                        self_focus_state,
+                        None | Some(WindowKind::Single) | Some(WindowKind::Unfocused)
+                    ) {
+                        post_message_w(
+                            Some(self.border_window),
+                            WM_APP_KOMOREBI,
+                            WPARAM(0),
+                            LPARAM(0),
+                        )
+                        .context("could not post WM_APP_KOMOREBI message in init()")
+                        .log_if_err();
+                    }
+                }
+            }
+
             let mut message = MSG::default();
             while GetMessageW(&mut message, None, 0, 0).into() {
                 let _ = TranslateMessage(&message);
@@ -778,18 +805,17 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
-                let focus_state = komorebi_integration.focus_state.lock().unwrap();
+                let window_kind = {
+                    let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                    let focus_state = komorebi_integration.focus_state.lock().unwrap();
 
-                let window_kind = *focus_state
-                    .get(&(self.tracking_window.0 as isize))
-                    .unwrap_or_else(|| {
-                        error!("could not get window_kind for komorebi integration");
-                        &WindowKind::Single
-                    });
-
-                drop(focus_state);
-                drop(komorebi_integration);
+                    *focus_state
+                        .get(&(self.tracking_window.0 as isize))
+                        .unwrap_or_else(|| {
+                            error!("could not get window_kind for komorebi integration");
+                            &WindowKind::Single
+                        })
+                };
 
                 // Ignore Unfocused window kind
                 if window_kind == WindowKind::Unfocused {
@@ -847,16 +873,15 @@ impl WindowBorder {
                         return LRESULT(0);
                     }
                 };
-
                 let brush_properties = D2D1_BRUSH_PROPERTIES {
                     opacity: old_opacity,
                     transform: old_transform,
                 };
-
                 self.border_drawer
                     .active_color
                     .init_brush(renderer, &self.window_rect, &brush_properties)
                     .log_if_err();
+                self.render().log_if_err();
             }
             WM_PAINT => {
                 let _ = unsafe { ValidateRect(Some(window), None) };
