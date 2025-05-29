@@ -307,7 +307,12 @@ impl KomorebiIntegration {
                     }
                 }
                 {
-                    for window in ws.get("floating_windows").as_array().unwrap() {
+                    for window in ws
+                        .get("floating_windows")
+                        .get("elements")
+                        .as_array()
+                        .unwrap()
+                    {
                         let mut new_focus_state = WindowKind::Unfocused;
 
                         if foreground_window.0 as isize
