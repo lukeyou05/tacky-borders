@@ -524,7 +524,7 @@ impl WindowBorder {
         );
         if let Err(err) = self
             .border_drawer
-            .update_renderer_size(renderer_size.width, renderer_size.height)
+            .resize_renderer(renderer_size.width, renderer_size.height)
             .prepend_err("could not update renderer")
         {
             if err.code() != DXGI_ERROR_DEVICE_REMOVED {
