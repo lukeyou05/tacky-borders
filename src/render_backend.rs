@@ -22,7 +22,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::core::Interface;
 
 use crate::APP_STATE;
-use crate::utils::{PrependErr, T_E_UNINIT};
+use crate::utils::{LogIfErr, PrependErr, T_E_UNINIT};
 
 pub const TARGET_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1 {
     bitmapOptions: D2D1_BITMAP_OPTIONS(
@@ -69,7 +69,10 @@ pub struct V2RenderBackend {
     pub d_comp_device: IDCompositionDevice3,
     pub d_comp_target: IDCompositionTarget,
     pub d_comp_visual: IDCompositionVisual2,
-    pub d_comp_surface: IDCompositionSurface,
+    // I might be doing something wrong, but it seems like 'd_comp_surface' MUST be dropped before
+    // 'd_comp_target' or else we will have lingering resources. Thus, I'll wrap it in ManuallyDrop
+    // to let me do so (could also use Option, but that has worse ergonomics)
+    pub d_comp_surface: ManuallyDrop<IDCompositionSurface>,
     pub surface_size: D2D_SIZE_U,
     pub border_bitmap: Option<ID2D1Bitmap1>,
     pub mask_bitmap: Option<ID2D1Bitmap1>,
@@ -222,7 +225,7 @@ impl V2RenderBackend {
                 d_comp_device,
                 d_comp_target,
                 d_comp_visual,
-                d_comp_surface,
+                d_comp_surface: ManuallyDrop::new(d_comp_surface),
                 surface_size: D2D_SIZE_U { width, height },
                 border_bitmap: border_bitmap_opt,
                 mask_bitmap: mask_bitmap_opt,
@@ -252,6 +255,24 @@ impl V2RenderBackend {
         Ok((border_bitmap, mask_bitmap))
     }
 
+    pub fn release_references(&mut self) -> windows::core::Result<()> {
+        unsafe {
+            self.d2d_context.SetTarget(None);
+
+            self.d_comp_visual
+                .SetContent(None)
+                .prepend_err("d_comp_visual.SetContent()")?;
+            self.d_comp_target
+                .SetRoot(None)
+                .prepend_err("d_comp_target.SetRoot()")?;
+            self.d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
+        }
+
+        Ok(())
+    }
+
     // NOTE: after updating resources, we also need to update anything that relies on references to
     // the resources (e.g. border effects)
     pub fn resize(
@@ -260,13 +281,13 @@ impl V2RenderBackend {
         height: u32,
         create_extra_bitmaps: bool,
     ) -> windows::core::Result<()> {
-        // Release buffer references
-        unsafe { self.d2d_context.SetTarget(None) };
+        self.release_references()
+            .prepend_err("could not release renderer references")?;
         self.border_bitmap = None;
         self.mask_bitmap = None;
 
         unsafe {
-            self.d_comp_surface = self
+            *self.d_comp_surface = self
                 .d_comp_device
                 .CreateSurface(
                     width,
@@ -276,7 +297,10 @@ impl V2RenderBackend {
                 )
                 .prepend_err("d_comp_surface")?;
             self.d_comp_visual
-                .SetContent(&self.d_comp_surface)
+                .SetContent(&*self.d_comp_surface)
+                .prepend_err("d_comp_visual.SetContent()")?;
+            self.d_comp_target
+                .SetRoot(&self.d_comp_visual)
                 .prepend_err("d_comp_visual.SetContent()")?;
             self.d_comp_device
                 .Commit()
@@ -293,6 +317,18 @@ impl V2RenderBackend {
         };
 
         Ok(())
+    }
+}
+
+impl Drop for V2RenderBackend {
+    fn drop(&mut self) {
+        self.release_references()
+            .context("could not drop V2RenderBackend: could not release renderer references")
+            .log_if_err();
+
+        // Like mentioned in a comment near the struct declaration, 'd_comp_surface' MUST be
+        // dropped before other struct fields, so we will do here.
+        unsafe { ManuallyDrop::drop(&mut self.d_comp_surface) }
     }
 }
 
