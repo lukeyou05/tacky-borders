@@ -17,6 +17,10 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
+use windows::Win32::UI::WindowsAndMessaging::PBT_APMRESUMEAUTOMATIC;
+use windows::Win32::UI::WindowsAndMessaging::PBT_APMRESUMESUSPEND;
+use windows::Win32::UI::WindowsAndMessaging::PBT_APMSUSPEND;
+use windows::Win32::UI::WindowsAndMessaging::WM_POWERBROADCAST;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
     DispatchMessageW, GW_HWNDPREV, GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow,
@@ -465,7 +469,7 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
-    fn update_appearance(&mut self, new_dpi: u32) {
+    fn rescale_border(&mut self, new_dpi: u32) {
         let window_rule = get_window_rule(self.tracking_window);
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
@@ -547,7 +551,7 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn update_appearance_and_renderer_if_necessary(
+    fn rescale_border_and_resize_renderer_if_needed(
         &mut self,
         new_monitor: HMONITOR,
     ) -> anyhow::Result<bool> {
@@ -560,7 +564,7 @@ impl WindowBorder {
             debug!("dpi has changed! new dpi: {new_dpi}");
             is_updated = true;
 
-            self.update_appearance(new_dpi);
+            self.rescale_border(new_dpi);
         }
 
         let (screen_width, screen_height) =
@@ -568,7 +572,7 @@ impl WindowBorder {
 
         if self
             .needs_renderer_resize(screen_width, screen_height)
-            .context("could not check if renderer needs update")?
+            .context("could not check if renderer needs resizing")?
         {
             self.resize_renderer(screen_width, screen_height)?;
             is_updated = true;
@@ -775,7 +779,7 @@ impl WindowBorder {
                     debug!("monitor has changed! new monitor: {new_monitor:?}");
 
                     needs_render |=
-                        match self.update_appearance_and_renderer_if_necessary(new_monitor) {
+                        match self.rescale_border_and_resize_renderer_if_needed(new_monitor) {
                             Ok(is_updated) => is_updated,
                             Err(err) => {
                                 error!("could not update appearance and renderer: {err}");
@@ -988,7 +992,7 @@ impl WindowBorder {
                 // but it may not be relevant to our border window in a multi-monitor setup, so
                 // we'll run our own tests to determine whether we actually need to update anything.
                 let needs_render =
-                    match self.update_appearance_and_renderer_if_necessary(self.current_monitor) {
+                    match self.rescale_border_and_resize_renderer_if_needed(self.current_monitor) {
                         Ok(is_updated) => is_updated,
                         Err(err) => {
                             error!("could not update appearance and renderer: {err}");
@@ -1011,7 +1015,7 @@ impl WindowBorder {
                     self.current_dpi = new_dpi;
                     debug!("dpi has changed! new dpi: {new_dpi}");
 
-                    self.update_appearance(new_dpi);
+                    self.rescale_border(new_dpi);
 
                     let (screen_width, screen_height) =
                         match get_monitor_resolution(self.current_monitor) {
@@ -1050,6 +1054,49 @@ impl WindowBorder {
                     self.cleanup_and_queue_exit();
                 }
             }
+            // This message should let us know when the system enters/leaves sleep/hibernation
+            WM_POWERBROADCAST => match wparam.0 as u32 {
+                PBT_APMSUSPEND => {
+                    debug!("system is suspending; uninitializing border drawer");
+                    self.border_drawer.destroy_anims_timer();
+                    self.border_drawer.uninit();
+                }
+                PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC
+                    if matches!(self.border_drawer.render_backend, RenderBackend::None) =>
+                {
+                    debug!("system is resuming; reinitializing border drawer");
+                    self.border_drawer
+                        .set_anims_timer_if_enabled(self.border_window);
+                    let (screen_width, screen_height) =
+                        match get_monitor_resolution(self.current_monitor) {
+                            Ok(resolution) => resolution,
+                            Err(err) => {
+                                error!(
+                                    "could not get monitor resolution in WM_POWERBROADCAST: {err}"
+                                );
+                                self.cleanup_and_queue_exit();
+                                return LRESULT(0);
+                            }
+                        };
+                    let renderer_size = Self::compute_proper_renderer_size(
+                        screen_width,
+                        screen_height,
+                        self.border_drawer.border_width,
+                        self.window_padding,
+                    );
+                    if let Err(err) = self.border_drawer.init(
+                        renderer_size.width,
+                        renderer_size.height,
+                        self.border_window,
+                        &self.window_rect,
+                        APP_STATE.config.read().unwrap().render_backend,
+                    ) {
+                        error!("could not init border drawer in WM_POWERBROADCAST: {err}");
+                        self.cleanup_and_queue_exit();
+                    };
+                }
+                _ => {}
+            },
             // Ignore these window position messages
             WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}
             _ => {

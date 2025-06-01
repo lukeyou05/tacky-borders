@@ -136,7 +136,6 @@ impl RenderBackend {
             RenderBackend::V2(backend) => Ok(backend.surface_size),
             RenderBackend::Legacy(backend) => {
                 let pixel_size = unsafe { backend.render_target.GetPixelSize() };
-
                 Ok(pixel_size)
             }
             RenderBackend::None => Err(anyhow!("render backend is None")),

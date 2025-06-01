@@ -70,12 +70,6 @@ impl BorderDrawer {
             .to_render_backend(width, height, border_window, self.effects.is_enabled())
             .context("could not initialize render backend in init()")?;
 
-        if self.render_backend.supports_effects() {
-            self.effects
-                .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")?;
-        }
-
         let renderer: &ID2D1RenderTarget = match self.render_backend {
             RenderBackend::V2(ref backend) => &backend.d2d_context,
             RenderBackend::Legacy(ref backend) => &backend.render_target,
@@ -87,6 +81,16 @@ impl BorderDrawer {
             opacity: 0.0,
             transform: Matrix3x2::identity(),
         };
+        self.active_color
+            .init_brush(renderer, window_rect, &brush_properties)?;
+        self.inactive_color
+            .init_brush(renderer, window_rect, &brush_properties)?;
+
+        if self.render_backend.supports_effects() {
+            self.effects
+                .init_command_lists_if_enabled(&self.render_backend)
+                .context("could not initialize command list")?;
+        }
 
         self.render_rect = D2D1_ROUNDED_RECT {
             rect: Default::default(),
@@ -94,12 +98,15 @@ impl BorderDrawer {
             radiusY: self.border_radius,
         };
 
-        self.active_color
-            .init_brush(renderer, window_rect, &brush_properties)?;
-        self.inactive_color
-            .init_brush(renderer, window_rect, &brush_properties)?;
-
         Ok(())
+    }
+
+    pub fn uninit(&mut self) {
+        self.render_backend = RenderBackend::None;
+        let _ = self.active_color.take_brush();
+        let _ = self.inactive_color.take_brush();
+        let _ = self.effects.take_active_command_list();
+        let _ = self.effects.take_inactive_command_list();
     }
 
     pub fn resize_renderer(&mut self, width: u32, height: u32) -> windows::core::Result<()> {
@@ -110,7 +117,7 @@ impl BorderDrawer {
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")
+                .context("could not initialize command lists")
                 .to_windows_result(T_E_UNINIT)?;
         }
 
