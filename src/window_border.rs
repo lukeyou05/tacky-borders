@@ -181,8 +181,7 @@ impl WindowBorder {
             }
 
             self.border_drawer
-                .animations
-                .set_timer_if_enabled(self.border_window, &mut self.border_drawer.last_anim_time);
+                .set_anims_timer_if_enabled(self.border_window);
 
             // Handle the edge case where the tracking window is already minimized
             if is_window_minimized(self.tracking_window) {
@@ -424,6 +423,7 @@ impl WindowBorder {
                 return Err(e);
             }
         }
+
         Ok(())
     }
 
@@ -700,7 +700,7 @@ impl WindowBorder {
 
     fn cleanup_and_queue_exit(&mut self) {
         self.is_paused = true;
-        self.border_drawer.animations.destroy_timer();
+        self.border_drawer.destroy_anims_timer();
         unsafe { PostQuitMessage(0) };
     }
 
@@ -828,16 +828,14 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.border_drawer.animations.set_timer_if_enabled(
-                    self.border_window,
-                    &mut self.border_drawer.last_anim_time,
-                );
+                self.border_drawer
+                    .set_anims_timer_if_enabled(self.border_window);
                 self.is_paused = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
-                self.border_drawer.animations.destroy_timer();
+                self.border_drawer.destroy_anims_timer();
                 self.is_paused = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
@@ -853,7 +851,7 @@ impl WindowBorder {
                     .set_opacity(0.0)
                     .log_if_err();
 
-                self.border_drawer.animations.destroy_timer();
+                self.border_drawer.destroy_anims_timer();
                 self.is_paused = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
@@ -868,10 +866,8 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.border_drawer.animations.set_timer_if_enabled(
-                    self.border_window,
-                    &mut self.border_drawer.last_anim_time,
-                );
+                self.border_drawer
+                    .set_anims_timer_if_enabled(self.border_window);
                 self.is_paused = false;
             }
             WM_APP_ANIMATE => {
