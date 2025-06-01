@@ -33,7 +33,7 @@ jobs:
           git checkout ${{ github.event.inputs.commit_sha }}
           cargo build --release
       - name: Get commit SHA of current build
-        run: echo "COMMIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+        run: echo "COMMIT_SHA=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4.4.3
         with:
