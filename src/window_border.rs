@@ -411,7 +411,7 @@ impl WindowBorder {
         Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
     }
 
-    fn refresh_drawer_state_if_needed(&mut self) -> anyhow::Result<()> {
+    fn recreate_drawer_if_needed(&mut self) -> anyhow::Result<()> {
         if self
             .needs_drawer_recreation()
             .context("could not check if border drawer needs to be recreated")?
@@ -548,20 +548,20 @@ impl WindowBorder {
                 .prepend_err("could not recreate render target")?;
             info!("successfully recreated render target; resuming thread");
         } else if err.code() == DXGI_ERROR_DEVICE_REMOVED {
-            let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
-            let Some(directx_devices) = directx_devices_opt.as_mut() else {
-                return Err(err);
+            // I think the above error code will only be sent if we manually handle our DirectX
+            // devices (i.e. not using the Legacy backend), so directx_devices should be Some
+            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
+                if let Err(err) = directx_devices.recreate_if_needed() {
+                    return Err(windows::core::Error::new(
+                        T_E_ERROR,
+                        format!("could not recreate directx devices if needed: {err}"),
+                    ));
+                };
             };
-            if let Err(err) = directx_devices.recreate_if_needed() {
+            if let Err(err) = self.recreate_drawer_if_needed() {
                 return Err(windows::core::Error::new(
                     T_E_ERROR,
-                    format!("could not recreate devices if needed: {err}"),
-                ));
-            };
-            if let Err(err) = self.refresh_drawer_state_if_needed() {
-                return Err(windows::core::Error::new(
-                    T_E_ERROR,
-                    format!("could not refresh drawer state if needed: {err}"),
+                    format!("could not recreate border drawer if needed: {err}"),
                 ));
             }
         } else if err.code() == T_E_UNINIT {
@@ -1024,27 +1024,23 @@ impl WindowBorder {
             // help detect adapter changes in specific scenarios (e.g. when a monitor is
             // connected/disconnected on an NVIDIA Optimus-supported laptop).
             WM_DEVICECHANGE if wparam.0 as u32 == DBT_DEVNODES_CHANGED => {
-                let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
-                let Some(directx_devices) = directx_devices_opt.as_mut() else {
-                    error!("could not respond to WM_DEVICECHANGE: render backend is Legacy");
-                    self.cleanup_and_queue_exit();
-                    return LRESULT(0);
+                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
+                    if let Err(err) = directx_devices.recreate_if_needed() {
+                        error!("could not recreate directx devices if needed: {err}");
+                        self.cleanup_and_queue_exit();
+                        return LRESULT(0);
+                    };
                 };
-                if let Err(err) = directx_devices.recreate_if_needed() {
-                    error!("could not refresh drawer state if needed: {err}");
-                    self.cleanup_and_queue_exit();
-                    return LRESULT(0);
-                };
-                if let Err(err) = self.refresh_drawer_state_if_needed() {
-                    error!("could not refresh drawer state if needed: {err}");
+                if let Err(err) = self.recreate_drawer_if_needed() {
+                    error!("could not recreate border drawer if needed: {err}");
                     self.cleanup_and_queue_exit();
                     return LRESULT(0);
                 }
             }
             // This message is sent by the DisplayAdaptersWatcher
             WM_APP_RECREATE_DRAWER => {
-                if let Err(err) = self.refresh_drawer_state_if_needed() {
-                    error!("could not refresh drawer state if needed: {err}");
+                if let Err(err) = self.recreate_drawer_if_needed() {
+                    error!("could not recreate border drawer if needed: {err}");
                     self.cleanup_and_queue_exit();
                 }
             }

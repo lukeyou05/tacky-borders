@@ -239,7 +239,7 @@ impl DisplayAdaptersWatcher {
                 // the V2 render backend (the Legacy backend does so automatically)
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
                     if let Err(err) = directx_devices.recreate_if_needed() {
-                        error!("could not recreate devices if needed: {err}");
+                        error!("could not recreate directx devices if needed: {err}");
                         return;
                     };
 
