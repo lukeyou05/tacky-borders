@@ -66,6 +66,10 @@ impl BorderDrawer {
         window_rect: &RECT,
         render_backend_config: RenderBackendConfig,
     ) -> windows::core::Result<()> {
+        // Drop our current render backend to avoid issues with recreating existing resources when
+        // calling init() multiple times in a row
+        self.render_backend = RenderBackend::None;
+
         self.render_backend = render_backend_config
             .to_render_backend(width, height, border_window, self.effects.is_enabled())
             .prepend_err("could not initialize render backend in init()")?;

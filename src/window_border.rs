@@ -40,6 +40,7 @@ use crate::config::WindowRule;
 use crate::config::ZOrderMode;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
+use crate::utils::T_E_ERROR;
 use crate::utils::{
     LogIfErr, PrependErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
     WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
@@ -151,22 +152,8 @@ impl WindowBorder {
                 .context("could not set LWA_ALPHA")?;
 
             let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .context("could not get monitor resolution")?;
-
-            let renderer_size = Self::compute_proper_renderer_size(
-                screen_width,
-                screen_height,
-                self.border_drawer.border_width,
-                self.window_padding,
-            );
-            self.border_drawer
-                .init(
-                    renderer_size.width,
-                    renderer_size.height,
-                    self.border_window,
-                    &self.window_rect,
-                    APP_STATE.config.read().unwrap().render_backend,
-                )
+                .prepend_err("could not get monitor resolution")?;
+            self.init_drawer(screen_width, screen_height)
                 .context("could not initialize border drawer in init()")?;
 
             self.update_color(Some(self.initialize_delay));
@@ -360,6 +347,86 @@ impl WindowBorder {
         Ok(())
     }
 
+    fn compute_proper_renderer_size(
+        screen_width: u32,
+        screen_height: u32,
+        border_width: i32,
+        window_padding: i32,
+    ) -> D2D_SIZE_U {
+        D2D_SIZE_U {
+            width: (screen_width as i32 + ((border_width + window_padding) * 2)) as u32,
+            height: (screen_height as i32 + ((border_width + window_padding) * 2)) as u32,
+        }
+    }
+
+    fn raw_init_drawer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> windows::core::Result<()> {
+        let renderer_size = Self::compute_proper_renderer_size(
+            screen_width,
+            screen_height,
+            self.border_drawer.border_width,
+            self.window_padding,
+        );
+        self.border_drawer
+            .init(
+                renderer_size.width,
+                renderer_size.height,
+                self.border_window,
+                &self.window_rect,
+                APP_STATE.config.read().unwrap().render_backend,
+            )
+            .prepend_err("could not initialize border drawer")?;
+
+        Ok(())
+    }
+
+    fn init_drawer(&mut self, screen_width: u32, screen_height: u32) -> windows::core::Result<()> {
+        self.raw_init_drawer(screen_width, screen_height)
+            .or_else(|err| {
+                self.handle_directx_errors(err)?;
+                self.raw_init_drawer(screen_width, screen_height)
+            })
+            .inspect_err(|_| self.cleanup_and_queue_exit())
+    }
+
+    fn needs_drawer_recreation(&self) -> anyhow::Result<bool> {
+        let RenderBackend::V2(ref backend) = self.border_drawer.render_backend else {
+            // If we're not using the V2 render backend (i.e. we're using the Legacy one), it will
+            // automatically update itself so there's no need to reinitialize it manually
+            return Ok(false);
+        };
+
+        let dxgi_factory: IDXGIFactory6 =
+            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
+                .context("could not create dxgi_factory to check for GPU adapter changes")?;
+
+        let new_dxgi_adapter: IDXGIAdapter =
+            unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
+        let new_adapter_desc =
+            unsafe { new_dxgi_adapter.GetDesc() }.context("could not get new_adapter_desc")?;
+
+        Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
+    }
+
+    fn refresh_drawer_state_if_needed(&mut self) -> anyhow::Result<()> {
+        if self
+            .needs_drawer_recreation()
+            .context("could not check if border drawer needs to be recreated")?
+        {
+            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
+                .prepend_err("could not get monitor resolution")?;
+            self.init_drawer(screen_width, screen_height)
+                .context("could not recreate border drawer")?;
+            self.update_color(None);
+            self.render().context("could not render")?;
+        }
+
+        Ok(())
+    }
+
     fn update_window_rect(&mut self) -> anyhow::Result<()> {
         if let Err(e) = unsafe {
             DwmGetWindowAttribute(
@@ -469,6 +536,63 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
+    fn handle_directx_errors(&mut self, err: windows::core::Error) -> windows::core::Result<()> {
+        if err.code() == D2DERR_RECREATE_TARGET {
+            // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
+            // This error can be caused by things like waking up from sleep, updating GPU
+            // drivers, changing screen resolution, etc.
+            warn!("render target has been lost; attempting to recreate");
+            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
+                .prepend_err("could not get monitor resolution")?;
+            self.init_drawer(screen_width, screen_height)
+                .prepend_err("could not recreate render target")?;
+            info!("successfully recreated render target; resuming thread");
+        } else if err.code() == DXGI_ERROR_DEVICE_REMOVED {
+            let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+            let Some(directx_devices) = directx_devices_opt.as_mut() else {
+                return Err(err);
+            };
+            if let Err(err) = directx_devices.recreate_if_needed() {
+                return Err(windows::core::Error::new(
+                    T_E_ERROR,
+                    format!("could not recreate devices if needed: {err}"),
+                ));
+            };
+            if let Err(err) = self.refresh_drawer_state_if_needed() {
+                return Err(windows::core::Error::new(
+                    T_E_ERROR,
+                    format!("could not refresh drawer state if needed: {err}"),
+                ));
+            }
+        } else if err.code() == T_E_UNINIT {
+            // Functions like render() may be called via callback functions before init()
+            // completes, leading to errors due to uninitialized objects. This is likely only
+            // temporary, so I'll just use debug! instead of logging it as a full error.
+            debug!("an object is currently unitialized: {err}");
+        } else {
+            return Err(windows::core::Error::new(
+                T_E_ERROR,
+                format!("self.render() failed; exiting thread: {err}"),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn raw_render(&mut self) -> windows::core::Result<()> {
+        self.border_drawer
+            .render(&self.window_rect, self.window_padding, self.window_state)
+    }
+
+    pub fn render(&mut self) -> windows::core::Result<()> {
+        self.raw_render()
+            .or_else(|err| {
+                self.handle_directx_errors(err)?;
+                self.raw_render()
+            })
+            .inspect_err(|_| self.cleanup_and_queue_exit())
+    }
+
     fn rescale_border(&mut self, new_dpi: u32) {
         let window_rule = get_window_rule(self.tracking_window);
         let config = APP_STATE.config.read().unwrap();
@@ -491,18 +615,6 @@ impl WindowBorder {
         );
     }
 
-    fn compute_proper_renderer_size(
-        screen_width: u32,
-        screen_height: u32,
-        border_width: i32,
-        window_padding: i32,
-    ) -> D2D_SIZE_U {
-        D2D_SIZE_U {
-            width: (screen_width as i32 + ((border_width + window_padding) * 2)) as u32,
-            height: (screen_height as i32 + ((border_width + window_padding) * 2)) as u32,
-        }
-    }
-
     fn needs_renderer_resize(&self, screen_width: u32, screen_height: u32) -> anyhow::Result<bool> {
         let correct_renderer_size = Self::compute_proper_renderer_size(
             screen_width,
@@ -519,36 +631,33 @@ impl WindowBorder {
         Ok(correct_renderer_size != actual_renderer_size)
     }
 
-    fn resize_renderer(&mut self, screen_width: u32, screen_height: u32) -> anyhow::Result<()> {
+    fn raw_resize_renderer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> windows::core::Result<()> {
         let renderer_size = Self::compute_proper_renderer_size(
             screen_width,
             screen_height,
             self.border_drawer.border_width,
             self.window_padding,
         );
-        if let Err(err) = self
-            .border_drawer
+        self.border_drawer
             .resize_renderer(renderer_size.width, renderer_size.height)
             .prepend_err("could not update renderer")
-        {
-            if err.code() != DXGI_ERROR_DEVICE_REMOVED {
-                self.cleanup_and_queue_exit();
-                Err(err)?
-            }
+    }
 
-            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                if let Err(err) = directx_devices.recreate_if_needed() {
-                    self.cleanup_and_queue_exit();
-                    return Err(anyhow!("could not recreate devices if needed: {err}"));
-                };
-            }
-            if let Err(err) = self.refresh_drawer_state_if_needed() {
-                self.cleanup_and_queue_exit();
-                return Err(anyhow!("could not refresh drawer state if needed: {err}"));
-            }
-        }
-
-        Ok(())
+    fn resize_renderer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> windows::core::Result<()> {
+        self.raw_resize_renderer(screen_width, screen_height)
+            .or_else(|err| {
+                self.handle_directx_errors(err)?;
+                self.raw_resize_renderer(screen_width, screen_height)
+            })
+            .inspect_err(|_| self.cleanup_and_queue_exit())
     }
 
     fn rescale_border_and_resize_renderer_if_needed(
@@ -579,127 +688,6 @@ impl WindowBorder {
         }
 
         Ok(is_updated)
-    }
-
-    fn needs_drawer_recreation(&self) -> anyhow::Result<bool> {
-        let RenderBackend::V2(ref backend) = self.border_drawer.render_backend else {
-            // If we're not using the V2 render backend (i.e. we're using the Legacy one), it will
-            // automatically update itself so there's no need to reinitialize it manually
-            return Ok(false);
-        };
-
-        let dxgi_factory: IDXGIFactory6 =
-            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                .context("could not create dxgi_factory to check for GPU adapter changes")?;
-
-        let new_dxgi_adapter: IDXGIAdapter =
-            unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
-        let new_adapter_desc =
-            unsafe { new_dxgi_adapter.GetDesc() }.context("could not get new_adapter_desc")?;
-
-        Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
-    }
-
-    fn recreate_drawer(&mut self) -> anyhow::Result<()> {
-        debug!("recreating border's render backend");
-
-        // "Drop" our current render backend to avoid issues with recreating existing resources
-        self.border_drawer.render_backend = RenderBackend::None;
-
-        let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-            .context("could not get monitor resolution")?;
-        let renderer_size = Self::compute_proper_renderer_size(
-            screen_width,
-            screen_height,
-            self.border_drawer.border_width,
-            self.window_padding,
-        );
-        self.border_drawer
-            .init(
-                renderer_size.width,
-                renderer_size.height,
-                self.border_window,
-                &self.window_rect,
-                APP_STATE.config.read().unwrap().render_backend,
-            )
-            .context("could not initialize border drawer in recreate_drawer()")?;
-
-        Ok(())
-    }
-
-    fn refresh_drawer_state_if_needed(&mut self) -> anyhow::Result<()> {
-        if self
-            .needs_drawer_recreation()
-            .context("could not check if border drawer needs to be recreated")?
-        {
-            self.recreate_drawer()
-                .context("could not recreate border drawer")?;
-            self.update_color(None);
-            self.render()?;
-        }
-
-        Ok(())
-    }
-
-    fn render(&mut self) -> anyhow::Result<()> {
-        if let Err(err) =
-            self.border_drawer
-                .render(&self.window_rect, self.window_padding, self.window_state)
-        {
-            if err.code() == D2DERR_RECREATE_TARGET {
-                // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
-                // This error can be caused by things like waking up from sleep, updating GPU
-                // drivers, changing screen resolution, etc.
-                warn!("render target has been lost; attempting to recreate");
-
-                let pixel_size = self.border_drawer.render_backend.get_pixel_size()?;
-                let render_backend_config = match self.border_drawer.render_backend {
-                    RenderBackend::V2(_) => RenderBackendConfig::V2,
-                    RenderBackend::Legacy(_) => RenderBackendConfig::Legacy,
-                    RenderBackend::None => {
-                        // This branch should be unreachable (theoretically)
-                        self.cleanup_and_queue_exit();
-                        return Err(anyhow!("render_backend is None"));
-                    }
-                };
-
-                if let Err(err_2) = self.border_drawer.init(
-                    pixel_size.width,
-                    pixel_size.height,
-                    self.border_window,
-                    &self.window_rect,
-                    render_backend_config,
-                ) {
-                    self.cleanup_and_queue_exit();
-                    return Err(anyhow!(
-                        "could not recreate render target; exiting thread: {err_2}"
-                    ));
-                };
-
-                info!("successfully recreated render target; resuming thread");
-            } else if err.code() == DXGI_ERROR_DEVICE_REMOVED {
-                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if let Err(err) = directx_devices.recreate_if_needed() {
-                        self.cleanup_and_queue_exit();
-                        return Err(anyhow!("could not recreate devices if needed: {err}"));
-                    };
-                }
-                if let Err(err) = self.refresh_drawer_state_if_needed() {
-                    self.cleanup_and_queue_exit();
-                    return Err(anyhow!("could not refresh drawer state if needed: {err}"));
-                }
-            } else if err.code() == T_E_UNINIT {
-                // Functions like render() may be called via callback functions before init()
-                // completes, leading to errors due to uninitialized objects. This is likely only
-                // temporary, so I'll just use debug! instead of logging it as a full error.
-                debug!("an object is currently unitialized: {err}");
-            } else {
-                self.cleanup_and_queue_exit();
-                return Err(anyhow!("self.render() failed; exiting thread: {err}"));
-            }
-        };
-
-        Ok(())
     }
 
     fn cleanup_and_queue_exit(&mut self) {
@@ -1036,15 +1024,21 @@ impl WindowBorder {
             // help detect adapter changes in specific scenarios (e.g. when a monitor is
             // connected/disconnected on an NVIDIA Optimus-supported laptop).
             WM_DEVICECHANGE if wparam.0 as u32 == DBT_DEVNODES_CHANGED => {
-                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if let Err(err) = directx_devices.recreate_if_needed() {
-                        error!("could not recreate devices if needed: {err}");
-                        self.cleanup_and_queue_exit();
-                    };
-                }
+                let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+                let Some(directx_devices) = directx_devices_opt.as_mut() else {
+                    error!("could not respond to WM_DEVICECHANGE: render backend is Legacy");
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                };
+                if let Err(err) = directx_devices.recreate_if_needed() {
+                    error!("could not refresh drawer state if needed: {err}");
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                };
                 if let Err(err) = self.refresh_drawer_state_if_needed() {
                     error!("could not refresh drawer state if needed: {err}");
                     self.cleanup_and_queue_exit();
+                    return LRESULT(0);
                 }
             }
             // This message is sent by the DisplayAdaptersWatcher
@@ -1078,21 +1072,10 @@ impl WindowBorder {
                                 return LRESULT(0);
                             }
                         };
-                    let renderer_size = Self::compute_proper_renderer_size(
-                        screen_width,
-                        screen_height,
-                        self.border_drawer.border_width,
-                        self.window_padding,
-                    );
-                    if let Err(err) = self.border_drawer.init(
-                        renderer_size.width,
-                        renderer_size.height,
-                        self.border_window,
-                        &self.window_rect,
-                        APP_STATE.config.read().unwrap().render_backend,
-                    ) {
-                        error!("could not init border drawer in WM_POWERBROADCAST: {err}");
+                    if let Err(err) = self.init_drawer(screen_width, screen_height) {
+                        error!("could not initialize border drawer in WM_POWERBROADCAST: {err}");
                         self.cleanup_and_queue_exit();
+                        return LRESULT(0);
                     };
                 }
                 _ => {}
