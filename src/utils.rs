@@ -46,12 +46,12 @@ pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 pub const WM_APP_RECREATE_DRAWER: u32 = WM_APP + 9;
 
-// Custom HRESULT error code indicating an uninitialized COM object within this application.
-// T_E_UNINIT typically represents an Option::None where an Option::Some(_) was expected. This is
-// used instead of something like E_POINTER to prevent overlap with Windows COM interface errors.
-// The code 0x2222 is completely arbitrary, but is within Microsoft's recommended range for custom
-// FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
+// T_E_UNINIT indicates an uninitialized COM object, and T_E_ERROR indicates a general error.
+// These are used to help differentiate between this application's errors and Windows' COM
+// interface errors. The codes used are arbitrary, but are within Microsoft's recommended range for
+// custom FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
 pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2222));
+pub const T_E_ERROR: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2223));
 
 pub trait LogIfErr {
     fn log_if_err(&self);
@@ -444,25 +444,28 @@ pub fn loword(val: usize) -> u16 {
     (val & 0xFFFF) as u16
 }
 
-pub fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFO> {
+pub fn get_monitor_info(hmonitor: HMONITOR) -> windows::core::Result<MONITORINFO> {
     let mut mi = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
 
     if !unsafe { GetMonitorInfoW(hmonitor, &mut mi) }.as_bool() {
-        return Err(anyhow!(
-            "could not get monitor info for {:?}: {:?}",
-            hmonitor,
-            get_last_error()
+        return Err(windows::core::Error::new(
+            T_E_ERROR,
+            format!(
+                "could not get monitor info for {:?}: {:?}",
+                hmonitor,
+                get_last_error()
+            ),
         ));
     };
 
     Ok(mi)
 }
 
-pub fn get_monitor_resolution(hmonitor: HMONITOR) -> anyhow::Result<(u32, u32)> {
-    let m_info = get_monitor_info(hmonitor).context("could not get m_info")?;
+pub fn get_monitor_resolution(hmonitor: HMONITOR) -> windows::core::Result<(u32, u32)> {
+    let m_info = get_monitor_info(hmonitor).prepend_err("could not get m_info")?;
     let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
     let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
 

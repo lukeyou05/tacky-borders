@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use std::time;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -65,15 +65,20 @@ impl BorderDrawer {
         border_window: HWND,
         window_rect: &RECT,
         render_backend_config: RenderBackendConfig,
-    ) -> anyhow::Result<()> {
+    ) -> windows::core::Result<()> {
         self.render_backend = render_backend_config
             .to_render_backend(width, height, border_window, self.effects.is_enabled())
-            .context("could not initialize render backend in init()")?;
+            .prepend_err("could not initialize render backend in init()")?;
 
         let renderer: &ID2D1RenderTarget = match self.render_backend {
             RenderBackend::V2(ref backend) => &backend.d2d_context,
             RenderBackend::Legacy(ref backend) => &backend.render_target,
-            RenderBackend::None => return Err(anyhow!("render backend is None")),
+            RenderBackend::None => {
+                return Err(windows::core::Error::new(
+                    T_E_UNINIT,
+                    "render backend is None",
+                ));
+            }
         };
 
         // We will adjust opacity later. For now, we set it to 0.
@@ -89,7 +94,7 @@ impl BorderDrawer {
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")?;
+                .prepend_err("could not initialize command list")?;
         }
 
         self.render_rect = D2D1_ROUNDED_RECT {

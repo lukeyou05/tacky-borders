@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use serde::Deserialize;
 use std::mem::ManuallyDrop;
 use windows::Win32::Foundation::{HWND, LUID};
@@ -22,7 +22,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::core::Interface;
 
 use crate::APP_STATE;
-use crate::utils::{LogIfErr, PrependErr, T_E_UNINIT};
+use crate::utils::{LogIfErr, PrependErr, T_E_UNINIT, ToWindowsResult};
 
 pub const TARGET_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1 {
     bitmapOptions: D2D1_BITMAP_OPTIONS(
@@ -91,7 +91,7 @@ impl RenderBackendConfig {
         height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<RenderBackend> {
+    ) -> windows::core::Result<RenderBackend> {
         match self {
             RenderBackendConfig::V2 => Ok(RenderBackend::V2(V2RenderBackend::new(
                 width,
@@ -131,14 +131,17 @@ impl RenderBackend {
         Ok(())
     }
 
-    pub fn get_pixel_size(&self) -> anyhow::Result<D2D_SIZE_U> {
+    pub fn get_pixel_size(&self) -> windows::core::Result<D2D_SIZE_U> {
         match self {
             RenderBackend::V2(backend) => Ok(backend.surface_size),
             RenderBackend::Legacy(backend) => {
                 let pixel_size = unsafe { backend.render_target.GetPixelSize() };
                 Ok(pixel_size)
             }
-            RenderBackend::None => Err(anyhow!("render backend is None")),
+            RenderBackend::None => Err(windows::core::Error::new(
+                T_E_UNINIT,
+                "render backend is None",
+            )),
         }
     }
 
@@ -153,18 +156,19 @@ impl V2RenderBackend {
         height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<Self> {
+    ) -> windows::core::Result<Self> {
         let directx_devices_opt = APP_STATE.directx_devices.read().unwrap();
         let directx_devices = directx_devices_opt
             .as_ref()
-            .context("could not get direct_devices")?;
+            .context("could not get direct_devices")
+            .to_windows_result(T_E_UNINIT)?;
 
         let d2d_context = unsafe {
             directx_devices
                 .d2d_device
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)
         }
-        .context("d2d_context")?;
+        .prepend_err("d2d_context")?;
 
         unsafe {
             d2d_context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -172,7 +176,7 @@ impl V2RenderBackend {
             let dxgi_adapter = directx_devices
                 .dxgi_device
                 .GetAdapter()
-                .context("dxgi_adapter")?;
+                .prepend_err("dxgi_adapter")?;
 
             // Not only does IDCompositionDevice3 not implement CreateTargetForHwnd, but you can't
             // even create one using DCompositionCreateDevice3 without casting (but you can with
@@ -180,16 +184,16 @@ impl V2RenderBackend {
             // first, which does implement CreateTargetForHwnd, then cast() it.
             let d_comp_desktop_device: IDCompositionDesktopDevice =
                 DCompositionCreateDevice3(&directx_devices.dxgi_device)
-                    .context("d_comp_desktop_device")?;
+                    .prepend_err("d_comp_desktop_device")?;
             let d_comp_target = d_comp_desktop_device
                 .CreateTargetForHwnd(border_window, true)
-                .context("d_comp_target")?;
+                .prepend_err("d_comp_target")?;
 
             let d_comp_device: IDCompositionDevice3 = d_comp_desktop_device
                 .cast()
-                .context("d_comp_desktop_device.cast()")?;
+                .prepend_err("d_comp_desktop_device.cast()")?;
 
-            let d_comp_visual = d_comp_device.CreateVisual().context("d_comp_visual")?;
+            let d_comp_visual = d_comp_device.CreateVisual().prepend_err("d_comp_visual")?;
             let d_comp_surface = d_comp_device
                 .CreateSurface(
                     width,
@@ -197,14 +201,16 @@ impl V2RenderBackend {
                     DXGI_FORMAT_B8G8R8A8_UNORM,
                     DXGI_ALPHA_MODE_PREMULTIPLIED,
                 )
-                .context("d_comp_surface")?;
+                .prepend_err("d_comp_surface")?;
             d_comp_visual
                 .SetContent(&d_comp_surface)
-                .context("d_comp_visual.SetContent()")?;
+                .prepend_err("d_comp_visual.SetContent()")?;
             d_comp_target
                 .SetRoot(&d_comp_visual)
-                .context("d_comp_target.SetRoot()")?;
-            d_comp_device.Commit().context("d_comp_device.Commit()")?;
+                .prepend_err("d_comp_target.SetRoot()")?;
+            d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
 
             let (border_bitmap_opt, mask_bitmap_opt) = if create_extra_bitmaps {
                 let (border_bitmap, mask_bitmap) =
@@ -216,7 +222,7 @@ impl V2RenderBackend {
 
             // The LUID identifies the GPU adapter this render backend was initialized with. It's
             // used to help determine when the primary GPU adapter of the system has changed.
-            let adapter_desc = dxgi_adapter.GetDesc().context("adapter_desc")?;
+            let adapter_desc = dxgi_adapter.GetDesc().prepend_err("adapter_desc")?;
             let adapter_luid = adapter_desc.AdapterLuid;
 
             Ok(Self {
@@ -332,7 +338,7 @@ impl Drop for V2RenderBackend {
 }
 
 impl LegacyRenderBackend {
-    fn new(border_window: HWND) -> anyhow::Result<Self> {
+    fn new(border_window: HWND) -> windows::core::Result<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -350,10 +356,10 @@ impl LegacyRenderBackend {
         };
 
         unsafe {
-            let render_target = APP_STATE.render_factory.CreateHwndRenderTarget(
-                &render_target_properties,
-                &hwnd_render_target_properties,
-            )?;
+            let render_target = APP_STATE
+                .render_factory
+                .CreateHwndRenderTarget(&render_target_properties, &hwnd_render_target_properties)
+                .prepend_err("render_target")?;
 
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
