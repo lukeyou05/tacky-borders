@@ -11,7 +11,7 @@ use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, T
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, RwLock};
+use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use utils::{
     LogIfErr, create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
@@ -72,9 +72,9 @@ static IS_WINDOWS_11: LazyLock<bool> = LazyLock::new(|| {
 
     version_info.dwBuildNumber >= 22000
 });
-static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
+pub static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
 
-struct AppState {
+pub struct AppState {
     borders: Mutex<HashMap<isize, isize>>,
     initial_windows: Mutex<Vec<isize>>,
     active_window: Mutex<isize>,
@@ -166,16 +166,29 @@ impl AppState {
     fn set_polling_active_window(&self, val: bool) {
         self.is_polling_active_window.store(val, Ordering::SeqCst);
     }
+
+    // The following getter/setters are meant for use in testing
+    pub fn get_config_mut(&self) -> RwLockWriteGuard<Config> {
+        self.config.write().unwrap()
+    }
+
+    pub fn get_render_factory(&self) -> &ID2D1Factory1 {
+        &self.render_factory
+    }
+
+    pub fn get_directx_devices_mut(&self) -> RwLockWriteGuard<Option<DirectXDevices>> {
+        self.directx_devices.write().unwrap()
+    }
 }
 
-struct DirectXDevices {
+pub struct DirectXDevices {
     d3d11_device: ID3D11Device,
     dxgi_device: IDXGIDevice,
     d2d_device: ID2D1Device,
 }
 
 impl DirectXDevices {
-    fn new(factory: &ID2D1Factory1) -> anyhow::Result<Self> {
+    pub fn new(factory: &ID2D1Factory1) -> anyhow::Result<Self> {
         let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
         let feature_levels = [
