@@ -185,6 +185,10 @@ window_rules:
     enabled: False
 
   - match: Process
+    name: "tacky-borders"
+    enabled: False
+
+  - match: Process
     name: "zebar"
     enabled: False
 
