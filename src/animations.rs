@@ -145,12 +145,17 @@ impl Animations {
 
         // Don't question it; trust the process
         // Ok, it's mainly done this way to handle edge cases when the border has just been created
-        let opacity_diff = f32::min(
+        let active_opacity_diff = f32::min(
             f32::abs(y_coord - prev_active_opacity),
             f32::abs(y_coord - (1.0 - prev_inactive_opacity)),
         ) * direction;
-        let new_active_opacity = prev_active_opacity + opacity_diff;
-        let new_inactive_opacity = prev_inactive_opacity - opacity_diff;
+
+        // Clamp opacities from the negative direction. We use MAX_NEGATIVE instead of 0.0 so we
+        // don't enter the if statement at the start of animate_fade() (jank ik)
+        const MAX_NEGATIVE: f32 = -f32::MIN_POSITIVE;
+        let new_active_opacity = f32::max(prev_active_opacity + active_opacity_diff, MAX_NEGATIVE);
+        let new_inactive_opacity =
+            f32::max(prev_inactive_opacity - active_opacity_diff, MAX_NEGATIVE);
 
         active_color.set_opacity(new_active_opacity)?;
         inactive_color.set_opacity(new_inactive_opacity)?;

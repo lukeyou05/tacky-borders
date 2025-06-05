@@ -49,8 +49,8 @@ pub const EXTRA_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1 
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum RenderBackendConfig {
-    #[default]
     V2,
+    #[default]
     Legacy,
 }
 
