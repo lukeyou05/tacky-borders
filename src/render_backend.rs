@@ -31,8 +31,8 @@ use crate::APP_STATE;
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum RenderBackendConfig {
-    #[default]
     V2,
+    #[default]
     Legacy,
 }
 

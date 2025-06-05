@@ -6,7 +6,7 @@ watch_config_changes: True
 #   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
 #
 # NOTE: Performance between the two may vary system-to-system. Choose whichever works best.
-rendering_backend: V2
+rendering_backend: Legacy
 
 # Global configuration options
 global:
