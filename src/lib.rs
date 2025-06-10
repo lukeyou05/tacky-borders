@@ -239,16 +239,25 @@ pub fn create_logger() -> anyhow::Result<()> {
         return Err(anyhow!("could not convert log_path to str"));
     };
 
+    let logger_config = sp_log::ConfigBuilder::new()
+        .set_location_level(LevelFilter::Error)
+        .set_time_offset_to_local()
+        .unwrap_or_else(|builder| {
+            error!("could not set logger's time offset to local");
+            builder // the Err type is just another &mut ConfigBuilder 
+        })
+        .build();
+
     CombinedLogger::init(vec![
         TermLogger::new(
             LevelFilter::Debug,
-            sp_log::Config::default(),
+            logger_config.clone(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
         ),
         FileLogger::new(
             LevelFilter::Info,
-            sp_log::Config::default(),
+            logger_config,
             path_str,
             // 1 MB
             Some(1024 * 1024),
