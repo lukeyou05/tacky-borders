@@ -116,6 +116,12 @@ impl AppState {
                     komorebi_integration.start().log_if_err();
                 }
 
+                if config.enable_logging {
+                    if let Err(err) = create_logger() {
+                        eprintln!("[ERROR] could not create logger: {err}");
+                    };
+                }
+
                 config
             }
             Err(err) => {
