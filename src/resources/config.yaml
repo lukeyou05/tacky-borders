@@ -1,6 +1,10 @@
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
 
+# enable_logging: Log messages (info, warnings, and errors) to a file.
+# NOTE: Changes require an application restart to take effect.
+enable_logging: True
+
 # rendering_backend: Type of renderer. Supported values:
 #   - V2: A more complex, feature-rich renderer. Available in v1.2.0 and above.
 #   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.

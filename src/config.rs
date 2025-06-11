@@ -34,6 +34,8 @@ const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 pub struct Config {
     #[serde(default)]
     pub watch_config_changes: bool,
+    #[serde(default = "serde_default_bool::<true>")]
+    pub enable_logging: bool,
     #[serde(default)]
     #[serde(alias = "rendering_backend")]
     pub render_backend: RenderBackendConfig,

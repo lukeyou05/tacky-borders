@@ -8,11 +8,11 @@ extern crate log;
 extern crate sp_log;
 
 use anyhow::Context;
+use std::sync::LazyLock;
 use tacky_borders::sys_tray_icon::create_tray_icon;
 use tacky_borders::utils::{LogIfErr, imm_disable_ime, set_process_dpi_awareness_context};
 use tacky_borders::{
-    create_borders_for_existing_windows, create_logger, register_border_window_class,
-    set_event_hook,
+    APP_STATE, create_borders_for_existing_windows, register_border_window_class, set_event_hook,
 };
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -20,9 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
-    if let Err(err) = create_logger() {
-        eprintln!("[ERROR] {err}");
-    };
+    // Force initialization of our app state
+    let _ = LazyLock::force(&APP_STATE);
 
     info!("starting tacky-borders");
 
