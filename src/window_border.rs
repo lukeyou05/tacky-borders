@@ -61,6 +61,7 @@ pub struct WindowBorder {
     current_dpi: u32,
     border_drawer: BorderDrawer,
     border_z_order: ZOrderMode,
+    follow_native_border: bool,
     initialize_delay: u64,
     unminimize_delay: u64,
     is_paused: bool,
@@ -159,7 +160,7 @@ impl WindowBorder {
             self.update_color(Some(self.initialize_delay));
             self.update_window_rect().log_if_err();
 
-            if has_native_border(self.tracking_window) {
+            if self.should_show_border() {
                 self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                 self.render().log_if_err();
 
@@ -326,6 +327,9 @@ impl WindowBorder {
         };
 
         self.border_z_order = window_rule.border_z_order.unwrap_or(global.border_z_order);
+        self.follow_native_border = window_rule
+            .follow_native_border
+            .unwrap_or(global.follow_native_border);
 
         // If the tracking window is part of the initial windows list (meaning it was already open when
         // tacky-borders was launched), then there should be no initialize delay.
@@ -425,6 +429,10 @@ impl WindowBorder {
         }
 
         Ok(())
+    }
+
+    fn should_show_border(&self) -> bool {
+        !self.follow_native_border || has_native_border(self.tracking_window)
     }
 
     fn update_window_rect(&mut self) -> anyhow::Result<()> {
@@ -738,8 +746,7 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                // Hide tacky-borders' custom border if no native border is present
-                if !has_native_border(self.tracking_window) {
+                if !self.should_show_border() {
                     self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
                     return LRESULT(0);
                 }
@@ -815,7 +822,7 @@ impl WindowBorder {
 
                 self.update_color(None);
 
-                if has_native_border(self.tracking_window) {
+                if self.should_show_border() {
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
                 }
@@ -851,7 +858,7 @@ impl WindowBorder {
                 // Keep the border hidden while the tracking window is in its unminimize animation
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
-                if has_native_border(self.tracking_window) {
+                if self.should_show_border() {
                     self.update_color(Some(self.unminimize_delay));
                     self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
