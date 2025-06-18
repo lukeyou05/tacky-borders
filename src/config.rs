@@ -64,6 +64,8 @@ pub struct Global {
     pub border_radius: RadiusConfig,
     #[serde(default)]
     pub border_z_order: ZOrderMode,
+    #[serde(default = "serde_default_bool::<true>")]
+    pub follow_native_border: bool,
     #[serde(default)]
     pub active_color: ColorBrushConfig,
     #[serde(default)]
@@ -110,6 +112,7 @@ pub struct WindowRule {
     pub border_offset: Option<i32>,
     pub border_radius: Option<RadiusConfig>,
     pub border_z_order: Option<ZOrderMode>,
+    pub follow_native_border: Option<bool>,
     pub active_color: Option<ColorBrushConfig>,
     pub inactive_color: Option<ColorBrushConfig>,
     pub komorebi_colors: Option<KomorebiColorsConfig>,

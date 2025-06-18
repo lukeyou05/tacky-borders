@@ -35,6 +35,16 @@ global:
   #   - BelowWindow: Place the border below its window
   border_z_order: AboveWindow
 
+  # follow_native_border: Follow the system's behavior for border visibility.
+  #
+  # Microsoft Windows draws native borders on windows depending on their state (e.g., fullscreen
+  # windows typically don't have one) or window type. When enabled, this config option makes
+  # tacky-borders follow that visibility behavior.
+  #
+  # NOTE: Regardless of this setting, tacky-borders still uses additional logic to determine
+  # whether a border should be initialized. Use window_rules to force the initialization of one.
+  follow_native_border: True
+
   # initialize_delay: Time (in ms) before the border appears after opening a new window
   # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
   #
@@ -214,6 +224,8 @@ window_rules:
   #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
   #   enabled: True                  # Border enabled: True, False, or Auto (default: Auto)
   #
-  # Notes:
+  # NOTE:
   #   - Any option in the global config can also be defined in window_rules.
   #   - If not defined in a rule, settings will fall back to global config values.
+  #   - Setting 'border enabled' to True forces its initialization, but not necessarily its visibility.
+  #     If the border still isn't visible, try setting 'follow_native_border' to False.
