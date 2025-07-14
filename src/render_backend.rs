@@ -11,6 +11,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
     D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, ID2D1Bitmap1, ID2D1DeviceContext, ID2D1HwndRenderTarget,
+    ID2D1Multithread,
 };
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice3, IDCompositionDesktopDevice, IDCompositionDevice3,
@@ -173,6 +174,13 @@ impl V2RenderBackend {
         unsafe {
             d2d_context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
+            // Acquire a lock to prevent resource access conflict
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
+
             let dxgi_adapter = directx_devices
                 .dxgi_device
                 .GetAdapter()
@@ -211,6 +219,8 @@ impl V2RenderBackend {
             d_comp_device
                 .Commit()
                 .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
 
             let (border_bitmap_opt, mask_bitmap_opt) = if create_extra_bitmaps {
                 let (border_bitmap, mask_bitmap) =
@@ -264,6 +274,13 @@ impl V2RenderBackend {
         unsafe {
             self.d2d_context.SetTarget(None);
 
+            // Acquire a lock to prevent resource access conflict
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
+
             self.d_comp_visual
                 .SetContent(None)
                 .prepend_err("d_comp_visual.SetContent()")?;
@@ -273,6 +290,8 @@ impl V2RenderBackend {
             self.d_comp_device
                 .Commit()
                 .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
         }
 
         Ok(())
@@ -292,6 +311,13 @@ impl V2RenderBackend {
         self.mask_bitmap = None;
 
         unsafe {
+            // Acquire a lock to prevent resource access conflict
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
+
             *self.d_comp_surface = self
                 .d_comp_device
                 .CreateSurface(
@@ -310,6 +336,8 @@ impl V2RenderBackend {
             self.d_comp_device
                 .Commit()
                 .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
         }
         self.surface_size = D2D_SIZE_U { width, height };
 
@@ -332,7 +360,7 @@ impl Drop for V2RenderBackend {
             .log_if_err();
 
         // Like mentioned in a comment near the struct declaration, 'd_comp_surface' MUST be
-        // dropped before other struct fields, so we will do here.
+        // dropped before other struct fields, so we will do it here.
         unsafe { ManuallyDrop::drop(&mut self.d_comp_surface) }
     }
 }
