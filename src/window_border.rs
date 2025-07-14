@@ -558,14 +558,14 @@ impl WindowBorder {
         } else if err.code() == DXGI_ERROR_DEVICE_REMOVED {
             // I think the above error code will only be sent if we manually handle our DirectX
             // devices (i.e. not using the Legacy backend), so directx_devices should be Some
-            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                if let Err(err) = directx_devices.recreate_if_needed() {
-                    return Err(windows::core::Error::new(
-                        T_E_ERROR,
-                        format!("could not recreate directx devices if needed: {err}"),
-                    ));
-                };
-            };
+            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
+                && let Err(err) = directx_devices.recreate_if_needed()
+            {
+                return Err(windows::core::Error::new(
+                    T_E_ERROR,
+                    format!("could not recreate directx devices if needed: {err}"),
+                ));
+            }
             if let Err(err) = self.recreate_drawer_if_needed() {
                 return Err(windows::core::Error::new(
                     T_E_ERROR,
@@ -1031,13 +1031,13 @@ impl WindowBorder {
             // help detect adapter changes in specific scenarios (e.g. when a monitor is
             // connected/disconnected on an NVIDIA Optimus-supported laptop).
             WM_DEVICECHANGE if wparam.0 as u32 == DBT_DEVNODES_CHANGED => {
-                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if let Err(err) = directx_devices.recreate_if_needed() {
-                        error!("could not recreate directx devices if needed: {err}");
-                        self.cleanup_and_queue_exit();
-                        return LRESULT(0);
-                    };
-                };
+                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
+                    && let Err(err) = directx_devices.recreate_if_needed()
+                {
+                    error!("could not recreate directx devices if needed: {err}");
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
                 if let Err(err) = self.recreate_drawer_if_needed() {
                     error!("could not recreate border drawer if needed: {err}");
                     self.cleanup_and_queue_exit();
