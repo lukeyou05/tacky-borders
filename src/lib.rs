@@ -214,12 +214,9 @@ struct DisplayAdaptersWatcher {
 
 impl DisplayAdaptersWatcher {
     fn new() -> anyhow::Result<Self> {
-        // This factory will only be used to register adapter change events. If the user is using
-        // the V2 render backend, we will also have an implicit factory created during DirectX
-        // device creation, but these two factories are separate.
         let dxgi_factory: IDXGIFactory7 =
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                .context("could not create dxgi_factory to watch for display adapter changes; semi-serious issues may occur due to an inability to update DirectX devices accordingly")?;
+                .context("could not create dxgi_factory to watch for display adapter changes; issues may occur due to an inability to update DirectX devices accordingly")?;
 
         Ok(Self {
             dxgi_factory,
