@@ -72,7 +72,7 @@ pub struct V2RenderBackend {
     pub d_comp_visual: IDCompositionVisual2,
     // I might be doing something wrong, but it seems like 'd_comp_surface' MUST be dropped before
     // 'd_comp_target' or else we will have lingering resources. Thus, I'll wrap it in ManuallyDrop
-    // to let me do so (could also use Option, but that has worse ergonomics)
+    // to let me do so in the Drop impl (could also use Option, but that has worse ergonomics)
     pub d_comp_surface: ManuallyDrop<IDCompositionSurface>,
     pub surface_size: D2D_SIZE_U,
     pub border_bitmap: Option<ID2D1Bitmap1>,

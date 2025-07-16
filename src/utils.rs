@@ -46,8 +46,8 @@ pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 pub const WM_APP_RECREATE_DRAWER: u32 = WM_APP + 9;
 
-// T_E_UNINIT indicates an uninitialized COM object, and T_E_ERROR indicates a general error.
-// These are used to help differentiate between this application's errors and Windows' COM
+// T_E_UNINIT indicates an uninitialized object, and T_E_ERROR indicates a general error. These
+// custom HRESULTS are used to help distinguish between this application's errors and Windows' COM
 // interface errors. The codes used are arbitrary, but are within Microsoft's recommended range for
 // custom FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
 pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2222));

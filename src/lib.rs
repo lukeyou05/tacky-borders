@@ -250,7 +250,6 @@ impl DisplayAdaptersWatcher {
 
                     return;
                 }
-
                 // Manual recreation of devices and renderers only needs to happen if we are using
                 // the V2 render backend (the Legacy backend does so automatically)
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
