@@ -396,36 +396,49 @@ impl WindowBorder {
             .inspect_err(|_| self.cleanup_and_queue_exit())
     }
 
-    fn needs_drawer_recreation(&self) -> anyhow::Result<bool> {
-        let RenderBackend::V2(ref backend) = self.border_drawer.render_backend else {
-            // If we're not using the V2 render backend (i.e. we're using the Legacy one), it will
-            // automatically update itself so there's no need to reinitialize it manually
-            return Ok(false);
-        };
+    fn needs_drawer_recreation(&self) -> windows::core::Result<bool> {
+        match self.border_drawer.render_backend {
+            // With the V2 backend, we use the stored adapter LUID to check whether our backend is
+            // still using the primary display adapter.
+            RenderBackend::V2(ref backend) => {
+                let dxgi_factory: IDXGIFactory6 =
+                    unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
+                        .prepend_err(
+                            "could not create dxgi_factory to check for GPU adapter changes",
+                        )?;
 
-        let dxgi_factory: IDXGIFactory6 =
-            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                .context("could not create dxgi_factory to check for GPU adapter changes")?;
+                let new_dxgi_adapter: IDXGIAdapter = unsafe {
+                    dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)?
+                };
+                let new_adapter_desc = unsafe { new_dxgi_adapter.GetDesc() }
+                    .prepend_err("could not get new_adapter_desc")?;
 
-        let new_dxgi_adapter: IDXGIAdapter =
-            unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
-        let new_adapter_desc =
-            unsafe { new_dxgi_adapter.GetDesc() }.context("could not get new_adapter_desc")?;
-
-        Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
+                Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
+            }
+            // With the Legacy backend, we check whether the underlying display adapter is still
+            // valid. This does not guarantee that it is the primary adapter.
+            RenderBackend::Legacy(ref backend) => unsafe {
+                backend.render_target.BeginDraw();
+                Ok(backend.render_target.EndDraw(None, None).is_err())
+            },
+            RenderBackend::None => Err(windows::core::Error::new(
+                T_E_UNINIT,
+                "render_backend is None",
+            )),
+        }
     }
 
-    fn recreate_drawer_if_needed(&mut self) -> anyhow::Result<()> {
+    fn recreate_drawer_if_needed(&mut self) -> windows::core::Result<()> {
         if self
             .needs_drawer_recreation()
-            .context("could not check if border drawer needs to be recreated")?
+            .prepend_err("could not check if border drawer needs to be recreated")?
         {
             let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
                 .prepend_err("could not get monitor resolution")?;
             self.init_drawer(screen_width, screen_height)
-                .context("could not recreate border drawer")?;
+                .prepend_err("could not recreate border drawer")?;
             self.update_color(None);
-            self.render().context("could not render")?;
+            self.render().prepend_err("could not render")?;
         }
 
         Ok(())
@@ -544,34 +557,18 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
+    // TODO: deal with the note below
+    // NOTE: be careful not to call any functions here that internally call handle_directx_errors
+    // (to prevent infinite loops)
     fn handle_directx_errors(&mut self, err: windows::core::Error) -> windows::core::Result<()> {
-        if err.code() == D2DERR_RECREATE_TARGET {
-            // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
-            // This error can be caused by things like waking up from sleep, updating GPU
-            // drivers, changing screen resolution, etc.
-            warn!("render target has been lost; attempting to recreate");
-            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .prepend_err("could not get monitor resolution")?;
-            self.init_drawer(screen_width, screen_height)
-                .prepend_err("could not recreate render target")?;
-            info!("successfully recreated render target; resuming thread");
-        } else if err.code() == DXGI_ERROR_DEVICE_REMOVED {
-            // I think the above error code will only be sent if we manually handle our DirectX
-            // devices (i.e. not using the Legacy backend), so directx_devices should be Some
-            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
-                && let Err(err) = directx_devices.recreate_if_needed()
-            {
-                return Err(windows::core::Error::new(
-                    T_E_ERROR,
-                    format!("could not recreate directx devices if needed: {err}"),
-                ));
+        if err.code() == D2DERR_RECREATE_TARGET || err.code() == DXGI_ERROR_DEVICE_REMOVED {
+            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
+                directx_devices
+                    .recreate_if_needed()
+                    .prepend_err("could not recreate directx devices if needed")?;
             }
-            if let Err(err) = self.recreate_drawer_if_needed() {
-                return Err(windows::core::Error::new(
-                    T_E_ERROR,
-                    format!("could not recreate border drawer if needed: {err}"),
-                ));
-            }
+            self.recreate_drawer_if_needed()
+                .prepend_err("could not recreate border drawer if needed")?;
         } else if err.code() == T_E_UNINIT {
             // Functions like render() may be called via callback functions before init()
             // completes, leading to errors due to uninitialized objects. This is likely only

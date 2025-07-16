@@ -4,10 +4,7 @@ use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::render_backend::RenderBackendConfig;
 use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
-use crate::{
-    APP_STATE, DirectXDevices, DisplayAdaptersWatcher, IS_WINDOWS_11, display_error_box,
-    reload_borders,
-};
+use crate::{APP_STATE, DirectXDevices, IS_WINDOWS_11, display_error_box, reload_borders};
 use anyhow::{Context, anyhow};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -281,33 +278,6 @@ impl Config {
                         && komorebi_integration.is_running()
                     {
                         komorebi_integration.stop().log_if_err();
-                    }
-                }
-
-                {
-                    let mut display_adapters_watcher_opt =
-                        APP_STATE.display_adapters_watcher.lock().unwrap();
-
-                    if config.render_backend == RenderBackendConfig::V2
-                        && display_adapters_watcher_opt.is_none()
-                    {
-                        *display_adapters_watcher_opt = DisplayAdaptersWatcher::new()
-                            .inspect_err(|err| error!("display_adapters_watcher_opt: {err}"))
-                            .ok();
-                        if let Some(display_adapters_watcher) =
-                            display_adapters_watcher_opt.as_mut()
-                        {
-                            display_adapters_watcher.start().log_if_err();
-                        }
-                    } else if config.render_backend == RenderBackendConfig::Legacy
-                        && display_adapters_watcher_opt.is_some()
-                    {
-                        if let Some(display_adapters_watcher) =
-                            display_adapters_watcher_opt.as_mut()
-                        {
-                            display_adapters_watcher.stop().log_if_err();
-                        }
-                        *display_adapters_watcher_opt = None;
                     }
                 }
 

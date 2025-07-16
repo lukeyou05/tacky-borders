@@ -14,9 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use utils::{
-    LogIfErr, WM_APP_RECREATE_DRAWER, create_border_for_window, get_foreground_window,
-    get_last_error, get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level,
-    is_window_visible, post_message_w, send_message_w,
+    LogIfErr, PrependErr, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
+    create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
+    has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
+    send_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
@@ -147,7 +148,16 @@ impl AppState {
             })
         };
 
-        let mut display_adapters_watcher_opt: Option<DisplayAdaptersWatcher> = None;
+        let display_adapters_watcher_opt = match DisplayAdaptersWatcher::new() {
+            Ok(mut watcher) => {
+                watcher.start().log_if_err();
+                Some(watcher)
+            }
+            Err(err) => {
+                error!("could not create display_adapters_watcher: {err}");
+                None
+            }
+        };
 
         let directx_devices_opt = match config.render_backend {
             RenderBackendConfig::V2 => {
@@ -156,15 +166,6 @@ impl AppState {
                     error!("could not create directx devices: {err}");
                     panic!("could not create directx devices: {err}");
                 });
-
-                // We only need to manually watch for diplay adapters when using the V2 render
-                // backend. The Legacy backend does so automatically.
-                display_adapters_watcher_opt = DisplayAdaptersWatcher::new()
-                    .inspect_err(|err| error!("display_adapters_watcher_opt: {err}"))
-                    .ok();
-                if let Some(ref mut display_adapters_watcher) = display_adapters_watcher_opt {
-                    display_adapters_watcher.start().log_if_err();
-                }
 
                 Some(directx_devices)
             }
@@ -250,25 +251,24 @@ impl DisplayAdaptersWatcher {
 
                     return;
                 }
-                // Manual recreation of devices and renderers only needs to happen if we are using
-                // the V2 render backend (the Legacy backend does so automatically)
-                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
-                    if let Err(err) = directx_devices.recreate_if_needed() {
-                        error!("could not recreate directx devices if needed: {err}");
-                        return;
-                    };
 
-                    for hwnd_isize in APP_STATE.borders.lock().unwrap().values() {
-                        let border_hwnd = HWND(*hwnd_isize as _);
-                        post_message_w(
-                            Some(border_hwnd),
-                            WM_APP_RECREATE_DRAWER,
-                            WPARAM::default(),
-                            LPARAM::default(),
-                        )
-                        .context("WM_APP_RECREATE_RENDERER")
-                        .log_if_err();
-                    }
+                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
+                    && let Err(err) = directx_devices.recreate_if_needed()
+                {
+                    error!("could not recreate directx devices if needed: {err}");
+                    return;
+                }
+
+                for hwnd_isize in APP_STATE.borders.lock().unwrap().values() {
+                    let border_hwnd = HWND(*hwnd_isize as _);
+                    post_message_w(
+                        Some(border_hwnd),
+                        WM_APP_RECREATE_DRAWER,
+                        WPARAM::default(),
+                        LPARAM::default(),
+                    )
+                    .context("WM_APP_RECREATE_RENDERER")
+                    .log_if_err();
                 }
             }
         });
@@ -295,7 +295,7 @@ pub struct DirectXDevices {
 }
 
 impl DirectXDevices {
-    pub fn new(factory: &ID2D1Factory1) -> anyhow::Result<Self> {
+    pub fn new(factory: &ID2D1Factory1) -> windows::core::Result<Self> {
         let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
         let feature_levels = [
@@ -327,13 +327,15 @@ impl DirectXDevices {
 
         debug!("directx feature_level: {feature_level:X?}");
 
-        let d3d11_device = device_opt.context("could not get d3d11_device")?;
-        let dxgi_device: IDXGIDevice = d3d11_device.cast().context("dxgi_device")?;
-        let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.context("d2d_device")?;
+        let d3d11_device = device_opt
+            .context("could not get d3d11_device")
+            .to_windows_result(T_E_UNINIT)?;
+        let dxgi_device: IDXGIDevice = d3d11_device.cast().prepend_err("dxgi_device")?;
+        let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.prepend_err("d2d_device")?;
 
         let dxgi_adapter: IDXGIAdapter =
-            unsafe { dxgi_device.GetAdapter() }.context("dxgi_adapter")?;
-        let adapter_desc = unsafe { dxgi_adapter.GetDesc() }.context("adapter_desc")?;
+            unsafe { dxgi_device.GetAdapter() }.prepend_err("dxgi_adapter")?;
+        let adapter_desc = unsafe { dxgi_adapter.GetDesc() }.prepend_err("adapter_desc")?;
         let name_len = adapter_desc
             .Description
             .iter()
@@ -348,28 +350,28 @@ impl DirectXDevices {
         })
     }
 
-    pub fn needs_recreation(&self) -> anyhow::Result<bool> {
+    pub fn needs_recreation(&self) -> windows::core::Result<bool> {
         let dxgi_factory: IDXGIFactory6 =
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                .context("could not create dxgi_factory to check for GPU adapter changes")?;
+                .prepend_err("could not create dxgi_factory to check for GPU adapter changes")?;
 
         let new_dxgi_adapter: IDXGIAdapter =
             unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
         let new_adapter_desc =
-            unsafe { new_dxgi_adapter.GetDesc() }.context("could not get new_adapter_desc")?;
+            unsafe { new_dxgi_adapter.GetDesc() }.prepend_err("could not get new_adapter_desc")?;
 
         let curr_dxgi_adapter: IDXGIAdapter = unsafe {
             self.dxgi_device
                 .GetAdapter()
-                .context("could not get curr_dxgi_adapter")?
+                .prepend_err("could not get curr_dxgi_adapter")?
         };
-        let curr_adapter_desc =
-            unsafe { curr_dxgi_adapter.GetDesc() }.context("could not get curr_adapter_desc")?;
+        let curr_adapter_desc = unsafe { curr_dxgi_adapter.GetDesc() }
+            .prepend_err("could not get curr_adapter_desc")?;
 
         Ok(curr_adapter_desc.AdapterLuid != new_adapter_desc.AdapterLuid)
     }
 
-    pub fn recreate_if_needed(&mut self) -> anyhow::Result<()> {
+    pub fn recreate_if_needed(&mut self) -> windows::core::Result<()> {
         if self.needs_recreation()? {
             info!("recreating render devices");
             *self = DirectXDevices::new(&APP_STATE.render_factory)?;
