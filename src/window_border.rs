@@ -17,19 +17,16 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
-use windows::Win32::UI::WindowsAndMessaging::PBT_APMRESUMEAUTOMATIC;
-use windows::Win32::UI::WindowsAndMessaging::PBT_APMRESUMESUSPEND;
-use windows::Win32::UI::WindowsAndMessaging::PBT_APMSUSPEND;
-use windows::Win32::UI::WindowsAndMessaging::WM_POWERBROADCAST;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
     DispatchMessageW, GW_HWNDPREV, GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow,
-    GetWindowLongPtrW, HWND_TOP, LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS,
-    SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING,
-    SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-    TranslateMessage, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY,
-    WM_PAINT, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    GetWindowLongPtrW, HWND_TOP, LWA_ALPHA, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
+    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_CREATE,
+    WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_POWERBROADCAST,
+    WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -40,32 +37,14 @@ use crate::config::WindowRule;
 use crate::config::ZOrderMode;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::T_E_ERROR;
 use crate::utils::{
-    LogIfErr, PrependErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
-    WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
-    WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size,
-    get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
-    has_native_border, is_rect_visible, is_window_minimized, is_window_visible, loword,
-    monitor_from_window, post_message_w,
+    LogIfErr, PrependErr, ReentryBlocker, ReentryBlockerExt, T_E_ERROR, T_E_UNINIT,
+    ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
+    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER,
+    WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor,
+    get_monitor_resolution, get_window_rule, get_window_title, has_native_border, is_rect_visible,
+    is_window_minimized, is_window_visible, loword, monitor_from_window, post_message_w,
 };
-
-#[derive(Debug, Default, Clone)]
-pub struct WindowBorder {
-    border_window: HWND,
-    tracking_window: HWND,
-    window_state: WindowState,
-    window_rect: RECT,
-    window_padding: i32,
-    current_monitor: HMONITOR,
-    current_dpi: u32,
-    border_drawer: BorderDrawer,
-    border_z_order: ZOrderMode,
-    follow_native_border: bool,
-    initialize_delay: u64,
-    unminimize_delay: u64,
-    is_paused: bool,
-}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum WindowState {
@@ -82,6 +61,23 @@ impl WindowState {
             *self = WindowState::Inactive;
         }
     }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct WindowBorder {
+    border_window: HWND,
+    tracking_window: HWND,
+    window_state: WindowState,
+    window_rect: RECT,
+    window_padding: i32,
+    current_monitor: HMONITOR,
+    current_dpi: u32,
+    border_drawer: BorderDrawer,
+    border_z_order: ZOrderMode,
+    follow_native_border: bool,
+    initialize_delay: u64,
+    unminimize_delay: u64,
+    is_paused: bool,
 }
 
 impl WindowBorder {
@@ -557,11 +553,17 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
-    // TODO: deal with the note below
-    // NOTE: be careful not to call any functions here that internally call handle_directx_errors
-    // (to prevent infinite loops)
     fn handle_directx_errors(&mut self, err: windows::core::Error) -> windows::core::Result<()> {
+        thread_local! {
+            static REENTRY_BLOCKER: ReentryBlocker = ReentryBlocker::new();
+        }
+
         if err.code() == D2DERR_RECREATE_TARGET || err.code() == DXGI_ERROR_DEVICE_REMOVED {
+            let _guard = REENTRY_BLOCKER
+                .enter()
+                .context("handle_directx_errors")
+                .to_windows_result(T_E_ERROR)?;
+
             if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
                 directx_devices
                     .recreate_if_needed()

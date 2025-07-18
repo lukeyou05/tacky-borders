@@ -1,5 +1,6 @@
 use anyhow::{Context, anyhow};
 use regex::Regex;
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -67,6 +68,7 @@ where
     }
 }
 
+// TODO: include the original error's source()
 pub trait ToWindowsResult<T> {
     fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T>;
 }
@@ -93,6 +95,49 @@ impl<T> PrependErr for windows::core::Result<T> {
 
             windows::core::Error::new(code, message)
         })
+    }
+}
+
+pub struct ReentryBlockerGuard {
+    local_key: &'static std::thread::LocalKey<ReentryBlocker>,
+}
+
+impl Drop for ReentryBlockerGuard {
+    fn drop(&mut self) {
+        self.local_key.with(|blocker| blocker.is_entered.set(false));
+    }
+}
+
+pub struct ReentryBlocker {
+    is_entered: Cell<bool>,
+}
+
+impl ReentryBlocker {
+    pub fn new() -> Self {
+        Self {
+            is_entered: Cell::new(false),
+        }
+    }
+}
+
+impl Default for ReentryBlocker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub trait ReentryBlockerExt {
+    fn enter(&'static self) -> anyhow::Result<ReentryBlockerGuard>;
+}
+
+impl ReentryBlockerExt for std::thread::LocalKey<ReentryBlocker> {
+    fn enter(&'static self) -> anyhow::Result<ReentryBlockerGuard> {
+        if self.with(|blocker| blocker.is_entered.get()) {
+            return Err(anyhow!("detected re-entrancy"));
+        }
+        self.with(|blocker| blocker.is_entered.set(true));
+
+        Ok(ReentryBlockerGuard { local_key: self })
     }
 }
 
