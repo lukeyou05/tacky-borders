@@ -1,21 +1,23 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use std::time;
-use windows::Win32::Foundation::{DXGI_STATUS_OCCLUDED, HWND, RECT, S_OK};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT, ID2D1Brush,
-    ID2D1RenderTarget,
+    ID2D1Multithread, ID2D1RenderTarget,
 };
-use windows::Win32::Graphics::Dxgi::DXGI_PRESENT;
+use windows::Win32::Graphics::Dxgi::IDXGISurface;
+use windows::core::Interface;
 use windows_numerics::Matrix3x2;
 
+use crate::APP_STATE;
 use crate::animations::{AnimType, Animations};
 use crate::colors::ColorBrush;
 use crate::effects::Effects;
-use crate::render_backend::{RenderBackend, RenderBackendConfig};
-use crate::utils::{T_E_UNINIT, ToWindowsResult};
+use crate::render_backend::{RenderBackend, RenderBackendConfig, TARGET_BITMAP_PROPS};
+use crate::utils::{PrependErr, T_E_UNINIT, ToWindowsResult};
 use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone)]
@@ -56,28 +58,31 @@ impl BorderDrawer {
         self.effects = effects;
     }
 
-    pub fn init_renderer(
+    pub fn init(
         &mut self,
         width: u32,
         height: u32,
         border_window: HWND,
         window_rect: &RECT,
         render_backend_config: RenderBackendConfig,
-    ) -> anyhow::Result<()> {
+    ) -> windows::core::Result<()> {
+        // Drop our current render backend to avoid issues with recreating existing resources when
+        // calling init() multiple times in a row
+        self.render_backend = RenderBackend::None;
+
         self.render_backend = render_backend_config
             .to_render_backend(width, height, border_window, self.effects.is_enabled())
-            .context("could not initialize render backend in init()")?;
-
-        if self.render_backend.supports_effects() {
-            self.effects
-                .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")?;
-        }
+            .prepend_err("could not initialize render backend in init()")?;
 
         let renderer: &ID2D1RenderTarget = match self.render_backend {
             RenderBackend::V2(ref backend) => &backend.d2d_context,
             RenderBackend::Legacy(ref backend) => &backend.render_target,
-            RenderBackend::None => return Err(anyhow!("render backend is None")),
+            RenderBackend::None => {
+                return Err(windows::core::Error::new(
+                    T_E_UNINIT,
+                    "render backend is None",
+                ));
+            }
         };
 
         // We will adjust opacity later. For now, we set it to 0.
@@ -85,6 +90,16 @@ impl BorderDrawer {
             opacity: 0.0,
             transform: Matrix3x2::identity(),
         };
+        self.active_color
+            .init_brush(renderer, window_rect, &brush_properties)?;
+        self.inactive_color
+            .init_brush(renderer, window_rect, &brush_properties)?;
+
+        if self.render_backend.supports_effects() {
+            self.effects
+                .init_command_lists_if_enabled(&self.render_backend)
+                .prepend_err("could not initialize command list")?;
+        }
 
         self.render_rect = D2D1_ROUNDED_RECT {
             rect: Default::default(),
@@ -92,23 +107,27 @@ impl BorderDrawer {
             radiusY: self.border_radius,
         };
 
-        self.active_color
-            .init_brush(renderer, window_rect, &brush_properties)?;
-        self.inactive_color
-            .init_brush(renderer, window_rect, &brush_properties)?;
-
         Ok(())
     }
 
-    pub fn update_renderer_size(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+    pub fn uninit(&mut self) {
+        self.render_backend = RenderBackend::None;
+        let _ = self.active_color.take_brush();
+        let _ = self.inactive_color.take_brush();
+        let _ = self.effects.take_active_command_list();
+        let _ = self.effects.take_inactive_command_list();
+    }
+
+    pub fn resize_renderer(&mut self, width: u32, height: u32) -> windows::core::Result<()> {
         self.render_backend
-            .update(width, height, self.effects.is_enabled())
-            .context("could not update render resources")?;
+            .resize(width, height, self.effects.is_enabled())
+            .prepend_err("could not update render resources")?;
 
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
-                .context("could not initialize command list")?;
+                .context("could not initialize command lists")
+                .to_windows_result(T_E_UNINIT)?;
         }
 
         Ok(())
@@ -239,6 +258,28 @@ impl BorderDrawer {
                 WindowState::Inactive => (&self.active_color, &self.inactive_color),
             };
 
+            // We're about to use DirectComposition which means we will be using the underlying
+            // Direct3D objects without Direct2D's knowledge. To avoid resource access conflict, we
+            // must explicitly acquire a lock. Read the following article for more info:
+            // https://learn.microsoft.com/en-us/windows/win32/direct2d/multi-threaded-direct2d-apps
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
+
+            // Set d2d_context's target back to the target_bitmap so we can draw to the display
+            let mut point = POINT::default();
+            let dxgi_surface: IDXGISurface = backend
+                .d_comp_surface
+                .BeginDraw(None, &mut point)
+                .prepend_err("dxgi_surface")?;
+            let target_bitmap = d2d_context
+                .CreateBitmapFromDxgiSurface(&dxgi_surface, Some(&TARGET_BITMAP_PROPS))
+                .prepend_err("target_bitmap")?;
+            d2d_context.SetTarget(&target_bitmap);
+
+            // Draw to the target_bitmap
             d2d_context.BeginDraw();
             d2d_context.Clear(None);
 
@@ -265,15 +306,17 @@ impl BorderDrawer {
 
             d2d_context.EndDraw(None, None)?;
 
-            // Present the swap chain buffer
-            let hresult = backend.swap_chain.Present(1, DXGI_PRESENT::default());
-            // TODO: handle occluded error
-            if hresult != S_OK && hresult != DXGI_STATUS_OCCLUDED {
-                return Err(windows::core::Error::new(
-                    hresult,
-                    "could not present swap_chain",
-                ));
-            }
+            d2d_context.SetTarget(None);
+            backend
+                .d_comp_surface
+                .EndDraw()
+                .prepend_err("d_comp_surface.EndDraw()")?;
+            backend
+                .d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
         }
 
         Ok(())
@@ -292,6 +335,8 @@ impl BorderDrawer {
         };
         let d2d_context = &backend.d2d_context;
 
+        let border_width = self.border_width as f32;
+
         unsafe {
             // Determine which color should be drawn on top (for color fade animation)
             let (bottom_color, top_color) = match window_state {
@@ -300,7 +345,6 @@ impl BorderDrawer {
             };
 
             // Create a rect that covers up to the outer edge of the border
-            let border_width = self.border_width as f32;
             let render_rect_adjusted = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
                     left: self.render_rect.rect.left - (border_width / 2.0),
@@ -353,7 +397,9 @@ impl BorderDrawer {
             }
 
             d2d_context.EndDraw(None, None)?;
+        }
 
+        unsafe {
             // Set the d2d_context target to the mask_bitmap to create an alpha mask
             let mask_bitmap = backend
                 .mask_bitmap
@@ -393,14 +439,29 @@ impl BorderDrawer {
             self.fill_rectangle(&render_rect_adjusted, d2d_context, &opaque_brush);
 
             d2d_context.EndDraw(None, None)?;
+        }
+
+        unsafe {
+            // We're about to use DirectComposition which means we will be using the underlying
+            // Direct3D objects without Direct2D's knowledge. To avoid resource access conflict, we
+            // must explicitly acquire a lock. Read the following article for more info:
+            // https://learn.microsoft.com/en-us/windows/win32/direct2d/multi-threaded-direct2d-apps
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
 
             // Set d2d_context's target back to the target_bitmap so we can draw to the display
-            let target_bitmap = backend
-                .target_bitmap
-                .as_ref()
-                .context("could not get target_bitmap")
-                .to_windows_result(T_E_UNINIT)?;
-            d2d_context.SetTarget(target_bitmap);
+            let mut point = POINT::default();
+            let dxgi_surface: IDXGISurface = backend
+                .d_comp_surface
+                .BeginDraw(None, &mut point)
+                .prepend_err("dxgi_surface")?;
+            let target_bitmap = d2d_context
+                .CreateBitmapFromDxgiSurface(&dxgi_surface, Some(&TARGET_BITMAP_PROPS))
+                .prepend_err("target_bitmap")?;
+            d2d_context.SetTarget(&target_bitmap);
 
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
             let command_list = self
@@ -422,15 +483,17 @@ impl BorderDrawer {
 
             d2d_context.EndDraw(None, None)?;
 
-            // Present the swap chain buffer
-            let hresult = backend.swap_chain.Present(1, DXGI_PRESENT::default());
-            // TODO: handle occluded error
-            if hresult != S_OK && hresult != DXGI_STATUS_OCCLUDED {
-                return Err(windows::core::Error::new(
-                    hresult,
-                    "could not present swap_chain",
-                ));
-            }
+            d2d_context.SetTarget(None);
+            backend
+                .d_comp_surface
+                .EndDraw()
+                .prepend_err("d_comp_surface.EndDraw()")?;
+            backend
+                .d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
         }
 
         Ok(())
@@ -469,6 +532,15 @@ impl BorderDrawer {
                 _ => renderer.FillRoundedRectangle(render_rect, brush),
             }
         }
+    }
+
+    pub fn set_anims_timer_if_enabled(&mut self, border_window: HWND) {
+        self.animations
+            .set_timer_if_enabled(border_window, &mut self.last_anim_time);
+    }
+
+    pub fn destroy_anims_timer(&mut self) {
+        self.animations.destroy_timer();
     }
 
     pub fn animate(

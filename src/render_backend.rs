@@ -1,33 +1,52 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use serde::Deserialize;
 use std::mem::ManuallyDrop;
-use windows::Win32::Foundation::{FALSE, HWND};
+use windows::Win32::Foundation::{HWND, LUID};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET,
-    D2D1_BITMAP_PROPERTIES1, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_HWND_RENDER_TARGET_PROPERTIES,
-    D2D1_PRESENT_OPTIONS_IMMEDIATELY, D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS,
-    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, ID2D1Bitmap1,
-    ID2D1DeviceContext, ID2D1HwndRenderTarget,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_OPTIONS, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+    D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_IMMEDIATELY,
+    D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, ID2D1Bitmap1, ID2D1DeviceContext, ID2D1HwndRenderTarget,
+    ID2D1Multithread,
 };
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice3, IDCompositionDesktopDevice, IDCompositionDevice3,
-    IDCompositionTarget, IDCompositionVisual2,
+    IDCompositionSurface, IDCompositionTarget, IDCompositionVisual2,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
-    DXGI_SAMPLE_DESC,
-};
-use windows::Win32::Graphics::Dxgi::{
-    DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
-    DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory2, IDXGISurface,
-    IDXGISwapChain1,
 };
 use windows::core::Interface;
 
 use crate::APP_STATE;
+use crate::utils::{LogIfErr, PrependErr, T_E_UNINIT, ToWindowsResult};
+
+pub const TARGET_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1 {
+    bitmapOptions: D2D1_BITMAP_OPTIONS(
+        D2D1_BITMAP_OPTIONS_TARGET.0 | D2D1_BITMAP_OPTIONS_CANNOT_DRAW.0,
+    ),
+    pixelFormat: D2D1_PIXEL_FORMAT {
+        format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+    },
+    dpiX: 96.0,
+    dpiY: 96.0,
+    colorContext: ManuallyDrop::new(None),
+};
+pub const EXTRA_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1 {
+    bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
+    pixelFormat: D2D1_PIXEL_FORMAT {
+        format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+    },
+    dpiX: 96.0,
+    dpiY: 96.0,
+    colorContext: ManuallyDrop::new(None),
+};
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 pub enum RenderBackendConfig {
@@ -48,15 +67,17 @@ pub enum RenderBackend {
 #[allow(dead_code)]
 pub struct V2RenderBackend {
     pub d2d_context: ID2D1DeviceContext,
-    pub swap_chain: IDXGISwapChain1,
     pub d_comp_device: IDCompositionDevice3,
     pub d_comp_target: IDCompositionTarget,
     pub d_comp_visual: IDCompositionVisual2,
-    // target_bitmap will always be created, but the reason I keep it as an Option is because I
-    // need to temporarily drop it in update(), and setting it to None is an easy way to do that
-    pub target_bitmap: Option<ID2D1Bitmap1>,
+    // I might be doing something wrong, but it seems like 'd_comp_surface' MUST be dropped before
+    // 'd_comp_target' or else we will have lingering resources. Thus, I'll wrap it in ManuallyDrop
+    // to let me do so in the Drop impl (could also use Option, but that has worse ergonomics)
+    pub d_comp_surface: ManuallyDrop<IDCompositionSurface>,
+    pub surface_size: D2D_SIZE_U,
     pub border_bitmap: Option<ID2D1Bitmap1>,
     pub mask_bitmap: Option<ID2D1Bitmap1>,
+    pub adapter_luid: LUID,
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +92,7 @@ impl RenderBackendConfig {
         height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<RenderBackend> {
+    ) -> windows::core::Result<RenderBackend> {
         match self {
             RenderBackendConfig::V2 => Ok(RenderBackend::V2(V2RenderBackend::new(
                 width,
@@ -87,42 +108,41 @@ impl RenderBackendConfig {
 }
 
 impl RenderBackend {
-    pub fn update(
+    pub fn resize(
         &mut self,
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<()> {
+    ) -> windows::core::Result<()> {
         match self {
             RenderBackend::V2(backend) => {
-                backend.update(width, height, create_extra_bitmaps)?;
+                backend.resize(width, height, create_extra_bitmaps)?;
             }
             // TODO: We already update/resize the buffers of the Legacy renderer within
             // BorderDrawer::render(), but I might want to move it here instead?
             RenderBackend::Legacy(_) => return Ok(()),
-            RenderBackend::None => return Err(anyhow!("render backend is None")),
+            RenderBackend::None => {
+                return Err(windows::core::Error::new(
+                    T_E_UNINIT,
+                    "render backend is None",
+                ));
+            }
         }
 
         Ok(())
     }
 
-    pub fn get_pixel_size(&self) -> anyhow::Result<D2D_SIZE_U> {
+    pub fn get_pixel_size(&self) -> windows::core::Result<D2D_SIZE_U> {
         match self {
-            RenderBackend::V2(backend) => {
-                let swap_chain = &backend.swap_chain;
-                let swap_chain_desc = unsafe { swap_chain.GetDesc1() }?;
-
-                Ok(D2D_SIZE_U {
-                    width: swap_chain_desc.Width,
-                    height: swap_chain_desc.Height,
-                })
-            }
+            RenderBackend::V2(backend) => Ok(backend.surface_size),
             RenderBackend::Legacy(backend) => {
                 let pixel_size = unsafe { backend.render_target.GetPixelSize() };
-
                 Ok(pixel_size)
             }
-            RenderBackend::None => Err(anyhow!("render backend is None")),
+            RenderBackend::None => Err(windows::core::Error::new(
+                T_E_UNINIT,
+                "render backend is None",
+            )),
         }
     }
 
@@ -137,52 +157,34 @@ impl V2RenderBackend {
         height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<Self> {
+    ) -> windows::core::Result<Self> {
         let directx_devices_opt = APP_STATE.directx_devices.read().unwrap();
         let directx_devices = directx_devices_opt
             .as_ref()
-            .context("could not get direct_devices")?;
+            .context("could not get direct_devices")
+            .to_windows_result(T_E_UNINIT)?;
 
         let d2d_context = unsafe {
             directx_devices
                 .d2d_device
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)
         }
-        .context("d2d_context")?;
-
-        unsafe { d2d_context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE) };
-
-        let swap_chain_desc = DXGI_SWAP_CHAIN_DESC1 {
-            Width: width,
-            Height: height,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            Stereo: FALSE,
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            BufferCount: 2,
-            Scaling: DXGI_SCALING_STRETCH,
-            SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
-            AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
-            Flags: 0,
-        };
+        .prepend_err("d2d_context")?;
 
         unsafe {
+            d2d_context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+            // Acquire a lock to prevent resource access conflict
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
+
             let dxgi_adapter = directx_devices
                 .dxgi_device
                 .GetAdapter()
-                .context("dxgi_adapter")?;
-            let dxgi_factory: IDXGIFactory2 = dxgi_adapter.GetParent().context("dxgi_factory")?;
-
-            let swap_chain = dxgi_factory
-                .CreateSwapChainForComposition(
-                    &directx_devices.d3d11_device,
-                    &swap_chain_desc,
-                    None,
-                )
-                .context("swap_chain")?;
+                .prepend_err("dxgi_adapter")?;
 
             // Not only does IDCompositionDevice3 not implement CreateTargetForHwnd, but you can't
             // even create one using DCompositionCreateDevice3 without casting (but you can with
@@ -190,174 +192,181 @@ impl V2RenderBackend {
             // first, which does implement CreateTargetForHwnd, then cast() it.
             let d_comp_desktop_device: IDCompositionDesktopDevice =
                 DCompositionCreateDevice3(&directx_devices.dxgi_device)
-                    .context("d_comp_desktop_device")?;
+                    .prepend_err("d_comp_desktop_device")?;
             let d_comp_target = d_comp_desktop_device
                 .CreateTargetForHwnd(border_window, true)
-                .context("d_comp_target")?;
+                .prepend_err("d_comp_target")?;
 
             let d_comp_device: IDCompositionDevice3 = d_comp_desktop_device
                 .cast()
-                .context("d_comp_desktop_device.cast()")?;
+                .prepend_err("d_comp_desktop_device.cast()")?;
 
-            let d_comp_visual = d_comp_device.CreateVisual().context("d_comp_visual")?;
-
+            let d_comp_visual = d_comp_device.CreateVisual().prepend_err("d_comp_visual")?;
+            let d_comp_surface = d_comp_device
+                .CreateSurface(
+                    width,
+                    height,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    DXGI_ALPHA_MODE_PREMULTIPLIED,
+                )
+                .prepend_err("d_comp_surface")?;
             d_comp_visual
-                .SetContent(&swap_chain)
-                .context("d_comp_visual.SetContent()")?;
+                .SetContent(&d_comp_surface)
+                .prepend_err("d_comp_visual.SetContent()")?;
             d_comp_target
                 .SetRoot(&d_comp_visual)
-                .context("d_comp_target.SetRoot()")?;
-            d_comp_device.Commit().context("d_comp_device.Commit()")?;
+                .prepend_err("d_comp_target.SetRoot()")?;
+            d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
 
-            let (target_bitmap_opt, border_bitmap_opt, mask_bitmap_opt) = Self::create_bitmaps(
-                &d2d_context,
-                &swap_chain,
-                width,
-                height,
-                create_extra_bitmaps,
-            )?;
+            d2d_multithread.Leave();
+
+            let (border_bitmap_opt, mask_bitmap_opt) = if create_extra_bitmaps {
+                let (border_bitmap, mask_bitmap) =
+                    Self::create_extra_bitmaps(&d2d_context, width, height)?;
+                (Some(border_bitmap), Some(mask_bitmap))
+            } else {
+                (None, None)
+            };
+
+            // The LUID identifies the GPU adapter this render backend was initialized with. It's
+            // used to help determine when the primary GPU adapter of the system has changed.
+            let adapter_desc = dxgi_adapter.GetDesc().prepend_err("adapter_desc")?;
+            let adapter_luid = adapter_desc.AdapterLuid;
 
             Ok(Self {
-                target_bitmap: target_bitmap_opt,
-                border_bitmap: border_bitmap_opt,
-                mask_bitmap: mask_bitmap_opt,
                 d2d_context,
-                swap_chain,
                 d_comp_device,
                 d_comp_target,
                 d_comp_visual,
+                d_comp_surface: ManuallyDrop::new(d_comp_surface),
+                surface_size: D2D_SIZE_U { width, height },
+                border_bitmap: border_bitmap_opt,
+                mask_bitmap: mask_bitmap_opt,
+                adapter_luid,
             })
         }
     }
 
-    fn create_bitmaps(
+    fn create_extra_bitmaps(
         d2d_context: &ID2D1DeviceContext,
-        swap_chain: &IDXGISwapChain1,
         width: u32,
         height: u32,
-        create_extra_bitmaps: bool,
-    ) -> anyhow::Result<(
-        Option<ID2D1Bitmap1>,
-        Option<ID2D1Bitmap1>,
-        Option<ID2D1Bitmap1>,
-    )> {
-        let bitmap_properties = D2D1_BITMAP_PROPERTIES1 {
-            bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            colorContext: ManuallyDrop::new(None),
-        };
-
-        let dxgi_back_buffer: IDXGISurface =
-            unsafe { swap_chain.GetBuffer(0) }.context("dxgi_back_buffer")?;
-
-        let target_bitmap = unsafe {
-            d2d_context.CreateBitmapFromDxgiSurface(&dxgi_back_buffer, Some(&bitmap_properties))
+    ) -> windows::core::Result<(ID2D1Bitmap1, ID2D1Bitmap1)> {
+        // We need border_bitmap because you cannot directly apply effects on target_bitmap
+        // due to its D2D1_BITMAP_OPTIONS, so we'll apply effects on border_bitmap instead
+        let border_bitmap = unsafe {
+            d2d_context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &EXTRA_BITMAP_PROPS)
         }
-        .context("d2d_target_bitmap")?;
+        .prepend_err("border_bitmap")?;
 
-        unsafe { d2d_context.SetTarget(&target_bitmap) };
+        // Aaaand we need yet another bitmap to serve as a mask for the border_bitmap
+        let mask_bitmap = unsafe {
+            d2d_context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &EXTRA_BITMAP_PROPS)
+        }
+        .prepend_err("mask_bitmap")?;
 
-        let mut border_bitmap_opt = None;
-        let mut mask_bitmap_opt = None;
+        Ok((border_bitmap, mask_bitmap))
+    }
 
-        // If border effects are enabled, we need to create two more bitmaps
-        if create_extra_bitmaps {
-            // We need border_bitmap because you cannot directly apply effects on target_bitmap
-            // due to its D2D1_BITMAP_OPTIONS, so we'll apply effects on border_bitmap instead
-            let bitmap_properties = D2D1_BITMAP_PROPERTIES1 {
-                bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                },
-                dpiX: 96.0,
-                dpiY: 96.0,
-                colorContext: ManuallyDrop::new(None),
-            };
-            border_bitmap_opt = Some(
-                unsafe {
-                    d2d_context.CreateBitmap(
-                        D2D_SIZE_U { width, height },
-                        None,
-                        0,
-                        &bitmap_properties,
-                    )
-                }
-                .context("border_bitmap")?,
-            );
+    pub fn release_references(&mut self) -> windows::core::Result<()> {
+        unsafe {
+            self.d2d_context.SetTarget(None);
 
-            // Aaaand we need yet another bitmap for the mask
-            let bitmap_properties = D2D1_BITMAP_PROPERTIES1 {
-                bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                },
-                dpiX: 96.0,
-                dpiY: 96.0,
-                colorContext: ManuallyDrop::new(None),
-            };
-            mask_bitmap_opt = Some(
-                unsafe {
-                    d2d_context.CreateBitmap(
-                        D2D_SIZE_U { width, height },
-                        None,
-                        0,
-                        &bitmap_properties,
-                    )
-                }
-                .context("mask_bitmap")?,
-            );
+            // Acquire a lock to prevent resource access conflict
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
+
+            self.d_comp_visual
+                .SetContent(None)
+                .prepend_err("d_comp_visual.SetContent()")?;
+            self.d_comp_target
+                .SetRoot(None)
+                .prepend_err("d_comp_target.SetRoot()")?;
+            self.d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
         }
 
-        Ok((Some(target_bitmap), border_bitmap_opt, mask_bitmap_opt))
+        Ok(())
     }
 
     // NOTE: after updating resources, we also need to update anything that relies on references to
     // the resources (e.g. border effects)
-    pub fn update(
+    pub fn resize(
         &mut self,
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> anyhow::Result<()> {
-        // Release buffer references
-        self.target_bitmap = None;
+    ) -> windows::core::Result<()> {
+        self.release_references()
+            .prepend_err("could not release renderer references")?;
         self.border_bitmap = None;
         self.mask_bitmap = None;
 
-        unsafe { self.d2d_context.SetTarget(None) };
-
         unsafe {
-            self.swap_chain.ResizeBuffers(
-                2,
-                width,
-                height,
-                DXGI_FORMAT_B8G8R8A8_UNORM,
-                DXGI_SWAP_CHAIN_FLAG::default(),
-            )
-        }
-        .context("swap_chain.ResizeBuffers()")?;
+            // Acquire a lock to prevent resource access conflict
+            let d2d_multithread: ID2D1Multithread = APP_STATE
+                .render_factory
+                .cast()
+                .prepend_err("d2d_multithread")?;
+            d2d_multithread.Enter();
 
-        (self.target_bitmap, self.border_bitmap, self.mask_bitmap) = Self::create_bitmaps(
-            &self.d2d_context,
-            &self.swap_chain,
-            width,
-            height,
-            create_extra_bitmaps,
-        )?;
+            *self.d_comp_surface = self
+                .d_comp_device
+                .CreateSurface(
+                    width,
+                    height,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    DXGI_ALPHA_MODE_PREMULTIPLIED,
+                )
+                .prepend_err("d_comp_surface")?;
+            self.d_comp_visual
+                .SetContent(&*self.d_comp_surface)
+                .prepend_err("d_comp_visual.SetContent()")?;
+            self.d_comp_target
+                .SetRoot(&self.d_comp_visual)
+                .prepend_err("d_comp_visual.SetContent()")?;
+            self.d_comp_device
+                .Commit()
+                .prepend_err("d_comp_device.Commit()")?;
+
+            d2d_multithread.Leave();
+        }
+        self.surface_size = D2D_SIZE_U { width, height };
+
+        (self.border_bitmap, self.mask_bitmap) = if create_extra_bitmaps {
+            let (border_bitmap, mask_bitmap) =
+                Self::create_extra_bitmaps(&self.d2d_context, width, height)?;
+            (Some(border_bitmap), Some(mask_bitmap))
+        } else {
+            (None, None)
+        };
 
         Ok(())
     }
 }
 
+impl Drop for V2RenderBackend {
+    fn drop(&mut self) {
+        self.release_references()
+            .context("could not drop V2RenderBackend: could not release renderer references")
+            .log_if_err();
+
+        // Like mentioned in a comment near the struct declaration, 'd_comp_surface' MUST be
+        // dropped before other struct fields, so we will do it here.
+        unsafe { ManuallyDrop::drop(&mut self.d_comp_surface) }
+    }
+}
+
 impl LegacyRenderBackend {
-    fn new(border_window: HWND) -> anyhow::Result<Self> {
+    fn new(border_window: HWND) -> windows::core::Result<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -375,10 +384,10 @@ impl LegacyRenderBackend {
         };
 
         unsafe {
-            let render_target = APP_STATE.render_factory.CreateHwndRenderTarget(
-                &render_target_properties,
-                &hwnd_render_target_properties,
-            )?;
+            let render_target = APP_STATE
+                .render_factory
+                .CreateHwndRenderTarget(&render_target_properties, &hwnd_render_target_properties)
+                .prepend_err("render_target")?;
 
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 

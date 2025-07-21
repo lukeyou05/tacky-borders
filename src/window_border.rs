@@ -11,17 +11,22 @@ use windows::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_EXTENDED_FRAME_BOUNDS,
     DwmEnableBlurBehindWindow, DwmGetWindowAttribute,
 };
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_ERROR_DEVICE_REMOVED,
+    DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter, IDXGIFactory6,
+};
 use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GW_HWNDPREV,
-    GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
-    LWA_ALPHA, MSG, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
+    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
+    DispatchMessageW, GW_HWNDPREV, GWLP_USERDATA, GetMessageW, GetSystemMetrics, GetWindow,
+    GetWindowLongPtrW, HWND_TOP, LWA_ALPHA, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
     SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
     SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_CREATE,
-    WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGED,
-    WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    WS_POPUP,
+    WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_POWERBROADCAST,
+    WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -33,29 +38,14 @@ use crate::config::ZOrderMode;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
-    LogIfErr, T_E_UNINIT, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
-    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_REORDER,
-    WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor, get_monitor_resolution,
-    get_window_rule, get_window_title, has_native_border, is_rect_visible, is_window_minimized,
-    is_window_visible, loword, monitor_from_window, post_message_w,
+    LogIfErr, PrependErr, ReentrancyBlocker, ReentrancyBlockerExt, T_E_ERROR, T_E_REENTRANCY,
+    T_E_UNINIT, ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
+    WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
+    WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size,
+    get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
+    has_native_border, is_rect_visible, is_window_minimized, is_window_visible, loword,
+    monitor_from_window, post_message_w,
 };
-
-#[derive(Debug, Default, Clone)]
-pub struct WindowBorder {
-    border_window: HWND,
-    tracking_window: HWND,
-    window_state: WindowState,
-    window_rect: RECT,
-    window_padding: i32,
-    current_monitor: HMONITOR,
-    current_dpi: u32,
-    border_drawer: BorderDrawer,
-    border_z_order: ZOrderMode,
-    follow_native_border: bool,
-    initialize_delay: u64,
-    unminimize_delay: u64,
-    is_paused: bool,
-}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum WindowState {
@@ -72,6 +62,23 @@ impl WindowState {
             *self = WindowState::Inactive;
         }
     }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct WindowBorder {
+    border_window: HWND,
+    tracking_window: HWND,
+    window_state: WindowState,
+    window_rect: RECT,
+    window_padding: i32,
+    current_monitor: HMONITOR,
+    current_dpi: u32,
+    border_drawer: BorderDrawer,
+    border_z_order: ZOrderMode,
+    follow_native_border: bool,
+    initialize_delay: u64,
+    unminimize_delay: u64,
+    is_paused: bool,
 }
 
 impl WindowBorder {
@@ -143,25 +150,11 @@ impl WindowBorder {
                 .context("could not set LWA_ALPHA")?;
 
             let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .context("could not get monitor resolution")?;
-
-            let renderer_size = Self::compute_proper_renderer_size(
-                screen_width,
-                screen_height,
-                self.border_drawer.border_width,
-                self.window_padding,
-            );
-            self.border_drawer
-                .init_renderer(
-                    renderer_size.width,
-                    renderer_size.height,
-                    self.border_window,
-                    &self.window_rect,
-                    APP_STATE.config.read().unwrap().render_backend,
-                )
+                .prepend_err("could not get monitor resolution")?;
+            self.init_drawer(screen_width, screen_height)
                 .context("could not initialize border drawer in init()")?;
 
-            self.update_color(Some(self.initialize_delay)).log_if_err();
+            self.update_color(Some(self.initialize_delay));
             self.update_window_rect().log_if_err();
 
             if self.should_show_border() {
@@ -177,8 +170,7 @@ impl WindowBorder {
             }
 
             self.border_drawer
-                .animations
-                .set_timer_if_enabled(self.border_window, &mut self.border_drawer.last_anim_time);
+                .set_anims_timer_if_enabled(self.border_window);
 
             // Handle the edge case where the tracking window is already minimized
             if is_window_minimized(self.tracking_window) {
@@ -356,6 +348,103 @@ impl WindowBorder {
         Ok(())
     }
 
+    fn compute_proper_renderer_size(
+        screen_width: u32,
+        screen_height: u32,
+        border_width: i32,
+        window_padding: i32,
+    ) -> D2D_SIZE_U {
+        D2D_SIZE_U {
+            width: (screen_width as i32 + ((border_width + window_padding) * 2)) as u32,
+            height: (screen_height as i32 + ((border_width + window_padding) * 2)) as u32,
+        }
+    }
+
+    fn raw_init_drawer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> windows::core::Result<()> {
+        let renderer_size = Self::compute_proper_renderer_size(
+            screen_width,
+            screen_height,
+            self.border_drawer.border_width,
+            self.window_padding,
+        );
+        self.border_drawer
+            .init(
+                renderer_size.width,
+                renderer_size.height,
+                self.border_window,
+                &self.window_rect,
+                APP_STATE.config.read().unwrap().render_backend,
+            )
+            .prepend_err("could not initialize border drawer")?;
+
+        Ok(())
+    }
+
+    fn init_drawer(&mut self, screen_width: u32, screen_height: u32) -> windows::core::Result<()> {
+        self.raw_init_drawer(screen_width, screen_height)
+            .or_else(|err| {
+                self.handle_directx_errors(err)?;
+                self.raw_init_drawer(screen_width, screen_height)
+            })
+            .inspect_err(|err| {
+                if err.code() != T_E_REENTRANCY {
+                    self.cleanup_and_queue_exit();
+                }
+            })
+    }
+
+    fn needs_drawer_recreation(&self) -> windows::core::Result<bool> {
+        match self.border_drawer.render_backend {
+            // With the V2 backend, we use the stored adapter LUID to check whether our backend is
+            // still using the primary display adapter.
+            RenderBackend::V2(ref backend) => {
+                let dxgi_factory: IDXGIFactory6 =
+                    unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
+                        .prepend_err(
+                            "could not create dxgi_factory to check for GPU adapter changes",
+                        )?;
+
+                let new_dxgi_adapter: IDXGIAdapter = unsafe {
+                    dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)?
+                };
+                let new_adapter_desc = unsafe { new_dxgi_adapter.GetDesc() }
+                    .prepend_err("could not get new_adapter_desc")?;
+
+                Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
+            }
+            // With the Legacy backend, we check whether the underlying display adapter is still
+            // valid. This does not guarantee that it is the primary adapter.
+            RenderBackend::Legacy(ref backend) => unsafe {
+                backend.render_target.BeginDraw();
+                Ok(backend.render_target.EndDraw(None, None).is_err())
+            },
+            RenderBackend::None => Err(windows::core::Error::new(
+                T_E_UNINIT,
+                "render_backend is None",
+            )),
+        }
+    }
+
+    fn recreate_drawer_if_needed(&mut self) -> windows::core::Result<()> {
+        if self
+            .needs_drawer_recreation()
+            .prepend_err("could not check if border drawer needs to be recreated")?
+        {
+            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
+                .prepend_err("could not get monitor resolution")?;
+            self.init_drawer(screen_width, screen_height)
+                .prepend_err("could not recreate border drawer")?;
+            self.update_color(None);
+            self.render().prepend_err("could not render")?;
+        }
+
+        Ok(())
+    }
+
     fn should_show_border(&self) -> bool {
         !self.follow_native_border || has_native_border(self.tracking_window)
     }
@@ -427,10 +516,11 @@ impl WindowBorder {
                 return Err(e);
             }
         }
+
         Ok(())
     }
 
-    fn update_color(&mut self, check_delay: Option<u64>) -> anyhow::Result<()> {
+    fn update_color(&mut self, check_delay: Option<u64>) {
         self.window_state.update(
             self.tracking_window.0 as isize,
             *APP_STATE.active_window.lock().unwrap(),
@@ -451,8 +541,6 @@ impl WindowBorder {
             }
             true => {} // We will rely on the animations callback to update color
         }
-
-        Ok(())
     }
 
     fn update_brush_opacities(&mut self) {
@@ -470,7 +558,58 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
-    fn update_appearance(&mut self, new_dpi: u32) {
+    fn handle_directx_errors(&mut self, err: windows::core::Error) -> windows::core::Result<()> {
+        thread_local! {
+            static REENTRANCY_BLOCKER: ReentrancyBlocker = ReentrancyBlocker::new();
+        }
+
+        if err.code() == D2DERR_RECREATE_TARGET || err.code() == DXGI_ERROR_DEVICE_REMOVED {
+            let _guard = REENTRANCY_BLOCKER
+                .enter()
+                .context("handle_directx_errors")
+                .to_windows_result(T_E_REENTRANCY)?;
+
+            if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
+                directx_devices
+                    .recreate_if_needed()
+                    .prepend_err("could not recreate directx devices if needed")?;
+            }
+            self.recreate_drawer_if_needed()
+                .prepend_err("could not recreate border drawer if needed")?;
+        } else if err.code() == T_E_UNINIT {
+            // Functions like render() may be called via callback functions before init()
+            // completes, leading to errors due to uninitialized objects. This is likely only
+            // temporary, so I'll just use debug! instead of logging it as a full error.
+            debug!("an object is currently unitialized: {err}");
+        } else {
+            return Err(windows::core::Error::new(
+                T_E_ERROR,
+                format!("self.render() failed; exiting thread: {err}"),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn raw_render(&mut self) -> windows::core::Result<()> {
+        self.border_drawer
+            .render(&self.window_rect, self.window_padding, self.window_state)
+    }
+
+    pub fn render(&mut self) -> windows::core::Result<()> {
+        self.raw_render()
+            .or_else(|err| {
+                self.handle_directx_errors(err)?;
+                self.raw_render()
+            })
+            .inspect_err(|err| {
+                if err.code() != T_E_REENTRANCY {
+                    self.cleanup_and_queue_exit();
+                }
+            })
+    }
+
+    fn rescale_border(&mut self, new_dpi: u32) {
         let window_rule = get_window_rule(self.tracking_window);
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
@@ -492,32 +631,7 @@ impl WindowBorder {
         );
     }
 
-    fn compute_proper_renderer_size(
-        screen_width: u32,
-        screen_height: u32,
-        border_width: i32,
-        window_padding: i32,
-    ) -> D2D_SIZE_U {
-        D2D_SIZE_U {
-            width: (screen_width as i32 + ((border_width + window_padding) * 2)) as u32,
-            height: (screen_height as i32 + ((border_width + window_padding) * 2)) as u32,
-        }
-    }
-
-    fn update_renderer_size(&mut self, screen_width: u32, screen_height: u32) {
-        let renderer_size = Self::compute_proper_renderer_size(
-            screen_width,
-            screen_height,
-            self.border_drawer.border_width,
-            self.window_padding,
-        );
-        self.border_drawer
-            .update_renderer_size(renderer_size.width, renderer_size.height)
-            .context("could not update renderer")
-            .log_if_err();
-    }
-
-    fn needs_renderer_update(&self, screen_width: u32, screen_height: u32) -> anyhow::Result<bool> {
+    fn needs_renderer_resize(&self, screen_width: u32, screen_height: u32) -> anyhow::Result<bool> {
         let correct_renderer_size = Self::compute_proper_renderer_size(
             screen_width,
             screen_height,
@@ -533,7 +647,40 @@ impl WindowBorder {
         Ok(correct_renderer_size != actual_renderer_size)
     }
 
-    fn update_appearance_and_renderer_if_necessary(
+    fn raw_resize_renderer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> windows::core::Result<()> {
+        let renderer_size = Self::compute_proper_renderer_size(
+            screen_width,
+            screen_height,
+            self.border_drawer.border_width,
+            self.window_padding,
+        );
+        self.border_drawer
+            .resize_renderer(renderer_size.width, renderer_size.height)
+            .prepend_err("could not update renderer")
+    }
+
+    fn resize_renderer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> windows::core::Result<()> {
+        self.raw_resize_renderer(screen_width, screen_height)
+            .or_else(|err| {
+                self.handle_directx_errors(err)?;
+                self.raw_resize_renderer(screen_width, screen_height)
+            })
+            .inspect_err(|err| {
+                if err.code() != T_E_REENTRANCY {
+                    self.cleanup_and_queue_exit();
+                }
+            })
+    }
+
+    fn rescale_border_and_resize_renderer_if_needed(
         &mut self,
         new_monitor: HMONITOR,
     ) -> anyhow::Result<bool> {
@@ -546,76 +693,26 @@ impl WindowBorder {
             debug!("dpi has changed! new dpi: {new_dpi}");
             is_updated = true;
 
-            self.update_appearance(new_dpi);
+            self.rescale_border(new_dpi);
         }
 
         let (screen_width, screen_height) =
             get_monitor_resolution(new_monitor).context("could not get monitor resolution")?;
 
         if self
-            .needs_renderer_update(screen_width, screen_height)
-            .context("could not check if renderer needs update")?
+            .needs_renderer_resize(screen_width, screen_height)
+            .context("could not check if renderer needs resizing")?
         {
-            self.update_renderer_size(screen_width, screen_height);
+            self.resize_renderer(screen_width, screen_height)?;
             is_updated = true;
         }
 
         Ok(is_updated)
     }
 
-    fn render(&mut self) -> anyhow::Result<()> {
-        if let Err(err) =
-            self.border_drawer
-                .render(&self.window_rect, self.window_padding, self.window_state)
-        {
-            if err.code() == D2DERR_RECREATE_TARGET {
-                // D2DERR_RECREATE_TARGET is recoverable if we just recreate the render target.
-                // This error can be caused by things like waking up from sleep, updating GPU
-                // drivers, changing screen resolution, etc.
-                warn!("render target has been lost; attempting to recreate");
-
-                let pixel_size = self.border_drawer.render_backend.get_pixel_size()?;
-                let render_backend_config = match self.border_drawer.render_backend {
-                    RenderBackend::V2(_) => RenderBackendConfig::V2,
-                    RenderBackend::Legacy(_) => RenderBackendConfig::Legacy,
-                    RenderBackend::None => {
-                        // This branch should be unreachable (theoretically)
-                        self.cleanup_and_queue_exit();
-                        return Err(anyhow!("render_backend is None"));
-                    }
-                };
-
-                if let Err(err_2) = self.border_drawer.init_renderer(
-                    pixel_size.width,
-                    pixel_size.height,
-                    self.border_window,
-                    &self.window_rect,
-                    render_backend_config,
-                ) {
-                    self.cleanup_and_queue_exit();
-                    return Err(anyhow!(
-                        "could not recreate render target; exiting thread: {err_2}"
-                    ));
-                };
-
-                info!("successfully recreated render target; resuming thread");
-            } else if err.code() == T_E_UNINIT {
-                // Functions like render() may be called via callback functions before init()
-                // completes, leading to errors due to uninitialized objects. This is likely only
-                // temporary, so I'll just use debug! instead of logging it as a full error.
-                debug!("an object is currently unitialized: {err}");
-            } else {
-                self.cleanup_and_queue_exit();
-                return Err(anyhow!("self.render() failed; exiting thread: {err}"));
-            }
-        };
-
-        Ok(())
-    }
-
     fn cleanup_and_queue_exit(&mut self) {
         self.is_paused = true;
-        self.border_drawer.animations.destroy_timer();
+        self.border_drawer.destroy_anims_timer();
         unsafe { PostQuitMessage(0) };
     }
 
@@ -689,7 +786,7 @@ impl WindowBorder {
                     debug!("monitor has changed! new monitor: {new_monitor:?}");
 
                     needs_render |=
-                        match self.update_appearance_and_renderer_if_necessary(new_monitor) {
+                        match self.rescale_border_and_resize_renderer_if_needed(new_monitor) {
                             Ok(is_updated) => is_updated,
                             Err(err) => {
                                 error!("could not update appearance and renderer: {err}");
@@ -718,7 +815,7 @@ impl WindowBorder {
             },
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
-                self.update_color(None).log_if_err();
+                self.update_color(None);
                 self.update_position(None).log_if_err();
                 self.render().log_if_err();
             }
@@ -735,23 +832,21 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                self.update_color(None).log_if_err();
+                self.update_color(None);
 
                 if self.should_show_border() {
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
                 }
 
-                self.border_drawer.animations.set_timer_if_enabled(
-                    self.border_window,
-                    &mut self.border_drawer.last_anim_time,
-                );
+                self.border_drawer
+                    .set_anims_timer_if_enabled(self.border_window);
                 self.is_paused = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
-                self.border_drawer.animations.destroy_timer();
+                self.border_drawer.destroy_anims_timer();
                 self.is_paused = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
@@ -767,7 +862,7 @@ impl WindowBorder {
                     .set_opacity(0.0)
                     .log_if_err();
 
-                self.border_drawer.animations.destroy_timer();
+                self.border_drawer.destroy_anims_timer();
                 self.is_paused = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
@@ -776,16 +871,14 @@ impl WindowBorder {
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
                 if self.should_show_border() {
-                    self.update_color(Some(self.unminimize_delay)).log_if_err();
+                    self.update_color(Some(self.unminimize_delay));
                     self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
                 }
 
-                self.border_drawer.animations.set_timer_if_enabled(
-                    self.border_window,
-                    &mut self.border_drawer.last_anim_time,
-                );
+                self.border_drawer
+                    .set_anims_timer_if_enabled(self.border_window);
                 self.is_paused = false;
             }
             WM_APP_ANIMATE => {
@@ -906,7 +999,7 @@ impl WindowBorder {
                 // but it may not be relevant to our border window in a multi-monitor setup, so
                 // we'll run our own tests to determine whether we actually need to update anything.
                 let needs_render =
-                    match self.update_appearance_and_renderer_if_necessary(self.current_monitor) {
+                    match self.rescale_border_and_resize_renderer_if_needed(self.current_monitor) {
                         Ok(is_updated) => is_updated,
                         Err(err) => {
                             error!("could not update appearance and renderer: {err}");
@@ -929,7 +1022,7 @@ impl WindowBorder {
                     self.current_dpi = new_dpi;
                     debug!("dpi has changed! new dpi: {new_dpi}");
 
-                    self.update_appearance(new_dpi);
+                    self.rescale_border(new_dpi);
 
                     let (screen_width, screen_height) =
                         match get_monitor_resolution(self.current_monitor) {
@@ -940,10 +1033,68 @@ impl WindowBorder {
                             }
                         };
 
-                    self.update_renderer_size(screen_width, screen_height);
+                    self.resize_renderer(screen_width, screen_height)
+                        .log_if_err();
                     self.render().log_if_err();
                 }
             }
+            // This message is sent when a device is added or removed to the system. AFAIK, it
+            // doesn't directly have anything to do with GPU adapters, but we can still use it to
+            // help detect adapter changes in specific scenarios (e.g. when a monitor is
+            // connected/disconnected on an NVIDIA Optimus-supported laptop).
+            WM_DEVICECHANGE if wparam.0 as u32 == DBT_DEVNODES_CHANGED => {
+                if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
+                    && let Err(err) = directx_devices.recreate_if_needed()
+                {
+                    error!("could not recreate directx devices if needed: {err}");
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+                if let Err(err) = self.recreate_drawer_if_needed() {
+                    error!("could not recreate border drawer if needed: {err}");
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+            }
+            // This message is sent by the DisplayAdaptersWatcher
+            WM_APP_RECREATE_DRAWER => {
+                if let Err(err) = self.recreate_drawer_if_needed() {
+                    error!("could not recreate border drawer if needed: {err}");
+                    self.cleanup_and_queue_exit();
+                }
+            }
+            // This message should let us know when the system enters/leaves sleep/hibernation
+            WM_POWERBROADCAST => match wparam.0 as u32 {
+                PBT_APMSUSPEND => {
+                    debug!("system is suspending; uninitializing border drawer");
+                    self.border_drawer.destroy_anims_timer();
+                    self.border_drawer.uninit();
+                }
+                PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC
+                    if matches!(self.border_drawer.render_backend, RenderBackend::None) =>
+                {
+                    debug!("system is resuming; reinitializing border drawer");
+                    self.border_drawer
+                        .set_anims_timer_if_enabled(self.border_window);
+                    let (screen_width, screen_height) =
+                        match get_monitor_resolution(self.current_monitor) {
+                            Ok(resolution) => resolution,
+                            Err(err) => {
+                                error!(
+                                    "could not get monitor resolution in WM_POWERBROADCAST: {err}"
+                                );
+                                self.cleanup_and_queue_exit();
+                                return LRESULT(0);
+                            }
+                        };
+                    if let Err(err) = self.init_drawer(screen_width, screen_height) {
+                        error!("could not initialize border drawer in WM_POWERBROADCAST: {err}");
+                        self.cleanup_and_queue_exit();
+                        return LRESULT(0);
+                    };
+                }
+                _ => {}
+            },
             // Ignore these window position messages
             WM_WINDOWPOSCHANGING | WM_WINDOWPOSCHANGED => {}
             _ => {

@@ -1,5 +1,6 @@
 use anyhow::{Context, anyhow};
 use regex::Regex;
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -44,18 +45,20 @@ pub const WM_APP_MINIMIZESTART: u32 = WM_APP + 5;
 pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
+pub const WM_APP_RECREATE_DRAWER: u32 = WM_APP + 9;
 
-// Custom HRESULT error code indicating an uninitialized COM object within this application.
-// T_E_UNINIT typically represents an Option::None where an Option::Some(_) was expected. This is
-// used instead of something like E_POINTER to prevent overlap with Windows COM interface errors.
-// The code 0x2222 is completely arbitrary, but is within Microsoft's recommended range for custom
+// T_E_UNINIT indicates an uninitialized object, T_E_ERROR indicates a general error, and
+// T_E_REENTRANCY indicates re-entrancy where there shouldn't have been any. These custom HRESULTs
+// are used to help distinguish between this application's errors and Windows' COM interface
+// errors. The codes used are arbitrary, but are within Microsoft's recommended range for custom
 // FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
 pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2222));
+pub const T_E_ERROR: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2223));
+pub const T_E_REENTRANCY: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2224));
 
 pub trait LogIfErr {
     fn log_if_err(&self);
 }
-
 impl<T> LogIfErr for Result<(), T>
 where
     T: std::fmt::Display,
@@ -67,13 +70,76 @@ where
     }
 }
 
+// TODO: include the original error's source()
 pub trait ToWindowsResult<T> {
     fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T>;
 }
-
 impl<T> ToWindowsResult<T> for anyhow::Result<T> {
     fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T> {
         self.map_err(|err| windows::core::Error::new(hresult, err.to_string()))
+    }
+}
+
+// Basically anyhow's Context, but named differently and doesn't convert types
+pub trait PrependErr {
+    fn prepend_err<C>(self, context: C) -> Self
+    where
+        C: std::fmt::Display + Send + Sync + 'static;
+}
+impl<T> PrependErr for windows::core::Result<T> {
+    fn prepend_err<C>(self, context: C) -> windows::core::Result<T>
+    where
+        C: std::fmt::Display + Send + Sync + 'static,
+    {
+        self.map_err(|err| {
+            let code = err.code();
+            let message = format!("{}: {}", context, err.message());
+
+            windows::core::Error::new(code, message)
+        })
+    }
+}
+
+pub struct ReentrancyBlockerGuard {
+    local_key: &'static std::thread::LocalKey<ReentrancyBlocker>,
+}
+
+impl Drop for ReentrancyBlockerGuard {
+    fn drop(&mut self) {
+        self.local_key.with(|blocker| blocker.is_entered.set(false));
+    }
+}
+
+pub struct ReentrancyBlocker {
+    is_entered: Cell<bool>,
+}
+
+impl ReentrancyBlocker {
+    pub fn new() -> Self {
+        Self {
+            is_entered: Cell::new(false),
+        }
+    }
+}
+
+impl Default for ReentrancyBlocker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub trait ReentrancyBlockerExt {
+    fn enter(&'static self) -> anyhow::Result<ReentrancyBlockerGuard>;
+}
+
+impl ReentrancyBlockerExt for std::thread::LocalKey<ReentrancyBlocker> {
+    fn enter(&'static self) -> anyhow::Result<ReentrancyBlockerGuard> {
+        if self.with(|blocker| blocker.is_entered.get()) {
+            return Err(anyhow!("detected re-entrancy"));
+        }
+        self.with(|blocker| blocker.is_entered.set(true));
+
+        Ok(ReentrancyBlockerGuard { local_key: self })
     }
 }
 
@@ -425,25 +491,28 @@ pub fn loword(val: usize) -> u16 {
     (val & 0xFFFF) as u16
 }
 
-pub fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFO> {
+pub fn get_monitor_info(hmonitor: HMONITOR) -> windows::core::Result<MONITORINFO> {
     let mut mi = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
 
     if !unsafe { GetMonitorInfoW(hmonitor, &mut mi) }.as_bool() {
-        return Err(anyhow!(
-            "could not get monitor info for {:?}: {:?}",
-            hmonitor,
-            get_last_error()
+        return Err(windows::core::Error::new(
+            T_E_ERROR,
+            format!(
+                "could not get monitor info for {:?}: {:?}",
+                hmonitor,
+                get_last_error()
+            ),
         ));
     };
 
     Ok(mi)
 }
 
-pub fn get_monitor_resolution(hmonitor: HMONITOR) -> anyhow::Result<(u32, u32)> {
-    let m_info = get_monitor_info(hmonitor).context("could not get m_info")?;
+pub fn get_monitor_resolution(hmonitor: HMONITOR) -> windows::core::Result<(u32, u32)> {
+    let m_info = get_monitor_info(hmonitor).prepend_err("could not get m_info")?;
     let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
     let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
 
