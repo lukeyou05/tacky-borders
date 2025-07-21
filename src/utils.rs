@@ -47,12 +47,14 @@ pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 pub const WM_APP_RECREATE_DRAWER: u32 = WM_APP + 9;
 
-// T_E_UNINIT indicates an uninitialized object, and T_E_ERROR indicates a general error. These
-// custom HRESULTS are used to help distinguish between this application's errors and Windows' COM
-// interface errors. The codes used are arbitrary, but are within Microsoft's recommended range for
-// custom FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
+// T_E_UNINIT indicates an uninitialized object, T_E_ERROR indicates a general error, and
+// T_E_REENTRANCY indicates re-entrancy where there shouldn't have been any. These custom HRESULTs
+// are used to help distinguish between this application's errors and Windows' COM interface
+// errors. The codes used are arbitrary, but are within Microsoft's recommended range for custom
+// FACILITY_ITF HRESULTs (0x0200 to 0xFFFF).
 pub const T_E_UNINIT: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2222));
 pub const T_E_ERROR: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2223));
+pub const T_E_REENTRANCY: HRESULT = HRESULT((1 << 31) | ((FACILITY_ITF.0 as i32) << 16) | (0x2224));
 
 pub trait LogIfErr {
     fn log_if_err(&self);
@@ -98,21 +100,21 @@ impl<T> PrependErr for windows::core::Result<T> {
     }
 }
 
-pub struct ReentryBlockerGuard {
-    local_key: &'static std::thread::LocalKey<ReentryBlocker>,
+pub struct ReentrancyBlockerGuard {
+    local_key: &'static std::thread::LocalKey<ReentrancyBlocker>,
 }
 
-impl Drop for ReentryBlockerGuard {
+impl Drop for ReentrancyBlockerGuard {
     fn drop(&mut self) {
         self.local_key.with(|blocker| blocker.is_entered.set(false));
     }
 }
 
-pub struct ReentryBlocker {
+pub struct ReentrancyBlocker {
     is_entered: Cell<bool>,
 }
 
-impl ReentryBlocker {
+impl ReentrancyBlocker {
     pub fn new() -> Self {
         Self {
             is_entered: Cell::new(false),
@@ -120,24 +122,24 @@ impl ReentryBlocker {
     }
 }
 
-impl Default for ReentryBlocker {
+impl Default for ReentrancyBlocker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub trait ReentryBlockerExt {
-    fn enter(&'static self) -> anyhow::Result<ReentryBlockerGuard>;
+pub trait ReentrancyBlockerExt {
+    fn enter(&'static self) -> anyhow::Result<ReentrancyBlockerGuard>;
 }
 
-impl ReentryBlockerExt for std::thread::LocalKey<ReentryBlocker> {
-    fn enter(&'static self) -> anyhow::Result<ReentryBlockerGuard> {
+impl ReentrancyBlockerExt for std::thread::LocalKey<ReentrancyBlocker> {
+    fn enter(&'static self) -> anyhow::Result<ReentrancyBlockerGuard> {
         if self.with(|blocker| blocker.is_entered.get()) {
             return Err(anyhow!("detected re-entrancy"));
         }
         self.with(|blocker| blocker.is_entered.set(true));
 
-        Ok(ReentryBlockerGuard { local_key: self })
+        Ok(ReentrancyBlockerGuard { local_key: self })
     }
 }
 

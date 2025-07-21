@@ -38,12 +38,13 @@ use crate::config::ZOrderMode;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
-    LogIfErr, PrependErr, ReentryBlocker, ReentryBlockerExt, T_E_ERROR, T_E_UNINIT,
-    ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED, WM_APP_KOMOREBI,
-    WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER,
-    WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size, get_dpi_for_monitor,
-    get_monitor_resolution, get_window_rule, get_window_title, has_native_border, is_rect_visible,
-    is_window_minimized, is_window_visible, loword, monitor_from_window, post_message_w,
+    LogIfErr, PrependErr, ReentrancyBlocker, ReentrancyBlockerExt, T_E_ERROR, T_E_REENTRANCY,
+    T_E_UNINIT, ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
+    WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
+    WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size,
+    get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
+    has_native_border, is_rect_visible, is_window_minimized, is_window_visible, loword,
+    monitor_from_window, post_message_w,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -389,7 +390,11 @@ impl WindowBorder {
                 self.handle_directx_errors(err)?;
                 self.raw_init_drawer(screen_width, screen_height)
             })
-            .inspect_err(|_| self.cleanup_and_queue_exit())
+            .inspect_err(|err| {
+                if err.code() != T_E_REENTRANCY {
+                    self.cleanup_and_queue_exit();
+                }
+            })
     }
 
     fn needs_drawer_recreation(&self) -> windows::core::Result<bool> {
@@ -555,14 +560,14 @@ impl WindowBorder {
 
     fn handle_directx_errors(&mut self, err: windows::core::Error) -> windows::core::Result<()> {
         thread_local! {
-            static REENTRY_BLOCKER: ReentryBlocker = ReentryBlocker::new();
+            static REENTRANCY_BLOCKER: ReentrancyBlocker = ReentrancyBlocker::new();
         }
 
         if err.code() == D2DERR_RECREATE_TARGET || err.code() == DXGI_ERROR_DEVICE_REMOVED {
-            let _guard = REENTRY_BLOCKER
+            let _guard = REENTRANCY_BLOCKER
                 .enter()
                 .context("handle_directx_errors")
-                .to_windows_result(T_E_ERROR)?;
+                .to_windows_result(T_E_REENTRANCY)?;
 
             if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
                 directx_devices
@@ -597,7 +602,11 @@ impl WindowBorder {
                 self.handle_directx_errors(err)?;
                 self.raw_render()
             })
-            .inspect_err(|_| self.cleanup_and_queue_exit())
+            .inspect_err(|err| {
+                if err.code() != T_E_REENTRANCY {
+                    self.cleanup_and_queue_exit();
+                }
+            })
     }
 
     fn rescale_border(&mut self, new_dpi: u32) {
@@ -664,7 +673,11 @@ impl WindowBorder {
                 self.handle_directx_errors(err)?;
                 self.raw_resize_renderer(screen_width, screen_height)
             })
-            .inspect_err(|_| self.cleanup_and_queue_exit())
+            .inspect_err(|err| {
+                if err.code() != T_E_REENTRANCY {
+                    self.cleanup_and_queue_exit();
+                }
+            })
     }
 
     fn rescale_border_and_resize_renderer_if_needed(
