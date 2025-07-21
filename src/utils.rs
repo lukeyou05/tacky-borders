@@ -1,5 +1,6 @@
 use anyhow::{Context, anyhow};
 use regex::Regex;
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
@@ -65,38 +66,230 @@ where
 {
     fn log_if_err(&self) {
         if let Err(err) = self {
+            // NOTE: This will not print out the chain of errors unless using anyhow::Result or
+            // WindowsCompatibleResult due to how they implement Display when using ':#'
             error!("{err:#}");
         }
     }
 }
 
-// TODO: include the original error's source()
-pub trait ToWindowsResult<T> {
-    fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T>;
+// Used to convert an already existing error to a Windows-style error (with HRESULT codes)
+#[derive(Debug)]
+pub struct WrappedWindowsError {
+    code: HRESULT,
+    inner: Box<dyn std::error::Error + Send + Sync>,
 }
-impl<T> ToWindowsResult<T> for anyhow::Result<T> {
-    fn to_windows_result(self, hresult: HRESULT) -> windows::core::Result<T> {
-        self.map_err(|err| windows::core::Error::new(hresult, err.to_string()))
+
+impl WrappedWindowsError {
+    pub fn new(code: HRESULT, inner: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        Self { code, inner }
+    }
+
+    pub fn code(&self) -> HRESULT {
+        self.code
+    }
+
+    pub fn message(&self) -> Cow<'_, str> {
+        Cow::Owned(self.inner.to_string())
     }
 }
 
-// Basically anyhow's Context, but named differently and doesn't convert types
-pub trait PrependErr {
-    fn prepend_err<C>(self, context: C) -> Self
+// Used to construct a standalone Windows-style error with an optional source chain
+#[derive(Debug)]
+pub struct StandaloneWindowsError {
+    code: HRESULT,
+    message: String,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+}
+
+impl StandaloneWindowsError {
+    pub fn new<T>(code: HRESULT, message: T) -> Self
+    where
+        T: std::fmt::Display,
+    {
+        Self {
+            code,
+            message: message.to_string(),
+            source: None,
+        }
+    }
+
+    pub fn with_source<T>(
+        code: HRESULT,
+        message: T,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    ) -> Self
+    where
+        T: std::fmt::Display,
+    {
+        Self {
+            code,
+            message: message.to_string(),
+            source: Some(source),
+        }
+    }
+
+    pub fn code(&self) -> HRESULT {
+        self.code
+    }
+
+    pub fn message(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.message)
+    }
+}
+
+#[derive(Debug)]
+pub enum WindowsCompatibleError {
+    Wrapped(WrappedWindowsError),
+    Standalone(StandaloneWindowsError),
+}
+
+impl WindowsCompatibleError {
+    pub fn code(&self) -> HRESULT {
+        match self {
+            WindowsCompatibleError::Wrapped(err) => err.code(),
+            WindowsCompatibleError::Standalone(err) => err.code(),
+        }
+    }
+
+    pub fn message(&self) -> Cow<'_, str> {
+        match self {
+            WindowsCompatibleError::Wrapped(err) => err.message(),
+            WindowsCompatibleError::Standalone(err) => err.message(),
+        }
+    }
+}
+
+impl std::fmt::Display for WindowsCompatibleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.message())?;
+
+        if f.alternate() {
+            let mut source_opt = match self {
+                WindowsCompatibleError::Wrapped(err) => err.inner.source(),
+                WindowsCompatibleError::Standalone(err) => err
+                    .source
+                    .as_deref()
+                    .map(|err| err as &(dyn std::error::Error)),
+            };
+            while let Some(source) = source_opt {
+                write!(f, ": {source}")?;
+                source_opt = source.source();
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for WindowsCompatibleError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            WindowsCompatibleError::Wrapped(err) => err.inner.source(),
+            WindowsCompatibleError::Standalone(err) => err
+                .source
+                .as_ref()
+                .map(|err| err.as_ref() as &(dyn std::error::Error)),
+        }
+    }
+}
+
+impl From<windows::core::Error> for WindowsCompatibleError {
+    fn from(value: windows::core::Error) -> WindowsCompatibleError {
+        WindowsCompatibleError::Wrapped(WrappedWindowsError::new(value.code(), Box::new(value)))
+    }
+}
+
+// A custom Result type that is compatible with Windows-style errors (with HRESULT codes)
+pub type WindowsCompatibleResult<T> = Result<T, WindowsCompatibleError>;
+
+pub trait ToWindowsResult<T> {
+    fn to_windows_result(self, hresult: HRESULT) -> WindowsCompatibleResult<T>;
+}
+
+impl<T> ToWindowsResult<T> for anyhow::Result<T> {
+    fn to_windows_result(self, hresult: HRESULT) -> WindowsCompatibleResult<T> {
+        match self {
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(WindowsCompatibleError::Wrapped(WrappedWindowsError::new(
+                hresult,
+                err.into_boxed_dyn_error(),
+            ))),
+        }
+    }
+}
+
+// Basically anyhow's Context, but named differently and preserves Windows' HRESULT codes
+pub trait WindowsContext<T> {
+    fn windows_context<C>(self, context: C) -> WindowsCompatibleResult<T>
     where
         C: std::fmt::Display + Send + Sync + 'static;
+
+    fn with_windows_context<C, F>(self, context: F) -> WindowsCompatibleResult<T>
+    where
+        C: std::fmt::Display + Send + Sync + 'static,
+        F: FnOnce() -> C;
 }
-impl<T> PrependErr for windows::core::Result<T> {
-    fn prepend_err<C>(self, context: C) -> windows::core::Result<T>
+
+impl<T> WindowsContext<T> for windows::core::Result<T> {
+    fn windows_context<C>(self, context: C) -> WindowsCompatibleResult<T>
     where
         C: std::fmt::Display + Send + Sync + 'static,
     {
-        self.map_err(|err| {
-            let code = err.code();
-            let message = format!("{}: {}", context, err.message());
+        match self {
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::with_source(err.code(), context.to_string(), Box::new(err)),
+            )),
+        }
+    }
 
-            windows::core::Error::new(code, message)
-        })
+    fn with_windows_context<C, F>(self, context: F) -> WindowsCompatibleResult<T>
+    where
+        C: std::fmt::Display + Send + Sync + 'static,
+        F: FnOnce() -> C,
+    {
+        match self {
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::with_source(
+                    err.code(),
+                    context().to_string(),
+                    Box::new(err),
+                ),
+            )),
+        }
+    }
+}
+
+impl<T> WindowsContext<T> for WindowsCompatibleResult<T> {
+    fn windows_context<C>(self, context: C) -> WindowsCompatibleResult<T>
+    where
+        C: std::fmt::Display + Send + Sync + 'static,
+    {
+        match self {
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::with_source(err.code(), context.to_string(), Box::new(err)),
+            )),
+        }
+    }
+
+    fn with_windows_context<C, F>(self, context: F) -> WindowsCompatibleResult<T>
+    where
+        C: std::fmt::Display + Send + Sync + 'static,
+        F: FnOnce() -> C,
+    {
+        match self {
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::with_source(
+                    err.code(),
+                    context().to_string(),
+                    Box::new(err),
+                ),
+            )),
+        }
     }
 }
 
@@ -511,8 +704,8 @@ pub fn get_monitor_info(hmonitor: HMONITOR) -> windows::core::Result<MONITORINFO
     Ok(mi)
 }
 
-pub fn get_monitor_resolution(hmonitor: HMONITOR) -> windows::core::Result<(u32, u32)> {
-    let m_info = get_monitor_info(hmonitor).prepend_err("could not get m_info")?;
+pub fn get_monitor_resolution(hmonitor: HMONITOR) -> WindowsCompatibleResult<(u32, u32)> {
+    let m_info = get_monitor_info(hmonitor).windows_context("could not get m_info")?;
     let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
     let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
 

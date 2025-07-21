@@ -38,10 +38,11 @@ use crate::config::ZOrderMode;
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
-    LogIfErr, PrependErr, ReentrancyBlocker, ReentrancyBlockerExt, T_E_ERROR, T_E_REENTRANCY,
-    T_E_UNINIT, ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND, WM_APP_HIDECLOAKED,
-    WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
-    WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED, are_rects_same_size,
+    LogIfErr, ReentrancyBlocker, ReentrancyBlockerExt, StandaloneWindowsError, T_E_ERROR,
+    T_E_REENTRANCY, T_E_UNINIT, ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND,
+    WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
+    WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
+    WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
     get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
     has_native_border, is_rect_visible, is_window_minimized, is_window_visible, loword,
     monitor_from_window, post_message_w,
@@ -89,7 +90,7 @@ impl WindowBorder {
         }
     }
 
-    pub fn create_window(&mut self) -> windows::core::Result<HWND> {
+    pub fn create_window(&mut self) -> WindowsCompatibleResult<HWND> {
         let title: Vec<u16> = format!(
             "tacky-border | {} | {:?}\0",
             get_window_title(self.tracking_window).unwrap_or_default(),
@@ -150,7 +151,7 @@ impl WindowBorder {
                 .context("could not set LWA_ALPHA")?;
 
             let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .prepend_err("could not get monitor resolution")?;
+                .windows_context("could not get monitor resolution")?;
             self.init_drawer(screen_width, screen_height)
                 .context("could not initialize border drawer in init()")?;
 
@@ -364,7 +365,7 @@ impl WindowBorder {
         &mut self,
         screen_width: u32,
         screen_height: u32,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         let renderer_size = Self::compute_proper_renderer_size(
             screen_width,
             screen_height,
@@ -379,12 +380,16 @@ impl WindowBorder {
                 &self.window_rect,
                 APP_STATE.config.read().unwrap().render_backend,
             )
-            .prepend_err("could not initialize border drawer")?;
+            .windows_context("could not initialize border drawer")?;
 
         Ok(())
     }
 
-    fn init_drawer(&mut self, screen_width: u32, screen_height: u32) -> windows::core::Result<()> {
+    fn init_drawer(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> WindowsCompatibleResult<()> {
         self.raw_init_drawer(screen_width, screen_height)
             .or_else(|err| {
                 self.handle_directx_errors(err)?;
@@ -397,14 +402,14 @@ impl WindowBorder {
             })
     }
 
-    fn needs_drawer_recreation(&self) -> windows::core::Result<bool> {
+    fn needs_drawer_recreation(&self) -> WindowsCompatibleResult<bool> {
         match self.border_drawer.render_backend {
             // With the V2 backend, we use the stored adapter LUID to check whether our backend is
             // still using the primary display adapter.
             RenderBackend::V2(ref backend) => {
                 let dxgi_factory: IDXGIFactory6 =
                     unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                        .prepend_err(
+                        .windows_context(
                             "could not create dxgi_factory to check for GPU adapter changes",
                         )?;
 
@@ -412,7 +417,7 @@ impl WindowBorder {
                     dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)?
                 };
                 let new_adapter_desc = unsafe { new_dxgi_adapter.GetDesc() }
-                    .prepend_err("could not get new_adapter_desc")?;
+                    .windows_context("could not get new_adapter_desc")?;
 
                 Ok(backend.adapter_luid != new_adapter_desc.AdapterLuid)
             }
@@ -422,24 +427,23 @@ impl WindowBorder {
                 backend.render_target.BeginDraw();
                 Ok(backend.render_target.EndDraw(None, None).is_err())
             },
-            RenderBackend::None => Err(windows::core::Error::new(
-                T_E_UNINIT,
-                "render_backend is None",
+            RenderBackend::None => Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(T_E_UNINIT, "render_backend is None"),
             )),
         }
     }
 
-    fn recreate_drawer_if_needed(&mut self) -> windows::core::Result<()> {
+    fn recreate_drawer_if_needed(&mut self) -> WindowsCompatibleResult<()> {
         if self
             .needs_drawer_recreation()
-            .prepend_err("could not check if border drawer needs to be recreated")?
+            .windows_context("could not check if border drawer needs to be recreated")?
         {
             let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .prepend_err("could not get monitor resolution")?;
+                .windows_context("could not get monitor resolution")?;
             self.init_drawer(screen_width, screen_height)
-                .prepend_err("could not recreate border drawer")?;
+                .windows_context("could not recreate border drawer")?;
             self.update_color(None);
-            self.render().prepend_err("could not render")?;
+            self.render().windows_context("could not render")?;
         }
 
         Ok(())
@@ -558,7 +562,10 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
-    fn handle_directx_errors(&mut self, err: windows::core::Error) -> windows::core::Result<()> {
+    fn handle_directx_errors(
+        &mut self,
+        err: WindowsCompatibleError,
+    ) -> WindowsCompatibleResult<()> {
         thread_local! {
             static REENTRANCY_BLOCKER: ReentrancyBlocker = ReentrancyBlocker::new();
         }
@@ -572,31 +579,33 @@ impl WindowBorder {
             if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut() {
                 directx_devices
                     .recreate_if_needed()
-                    .prepend_err("could not recreate directx devices if needed")?;
+                    .windows_context("could not recreate directx devices if needed")?;
             }
             self.recreate_drawer_if_needed()
-                .prepend_err("could not recreate border drawer if needed")?;
+                .windows_context("could not recreate border drawer if needed")?;
         } else if err.code() == T_E_UNINIT {
             // Functions like render() may be called via callback functions before init()
             // completes, leading to errors due to uninitialized objects. This is likely only
             // temporary, so I'll just use debug! instead of logging it as a full error.
             debug!("an object is currently unitialized: {err}");
         } else {
-            return Err(windows::core::Error::new(
-                T_E_ERROR,
-                format!("self.render() failed; exiting thread: {err}"),
+            return Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(
+                    T_E_ERROR,
+                    format!("self.render() failed; exiting thread: {err}"),
+                ),
             ));
         }
 
         Ok(())
     }
 
-    fn raw_render(&mut self) -> windows::core::Result<()> {
+    fn raw_render(&mut self) -> WindowsCompatibleResult<()> {
         self.border_drawer
             .render(&self.window_rect, self.window_padding, self.window_state)
     }
 
-    pub fn render(&mut self) -> windows::core::Result<()> {
+    pub fn render(&mut self) -> WindowsCompatibleResult<()> {
         self.raw_render()
             .or_else(|err| {
                 self.handle_directx_errors(err)?;
@@ -651,7 +660,7 @@ impl WindowBorder {
         &mut self,
         screen_width: u32,
         screen_height: u32,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         let renderer_size = Self::compute_proper_renderer_size(
             screen_width,
             screen_height,
@@ -660,14 +669,14 @@ impl WindowBorder {
         );
         self.border_drawer
             .resize_renderer(renderer_size.width, renderer_size.height)
-            .prepend_err("could not update renderer")
+            .windows_context("could not update renderer")
     }
 
     fn resize_renderer(
         &mut self,
         screen_width: u32,
         screen_height: u32,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         self.raw_resize_renderer(screen_width, screen_height)
             .or_else(|err| {
                 self.handle_directx_errors(err)?;

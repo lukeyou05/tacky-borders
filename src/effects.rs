@@ -17,7 +17,10 @@ use windows_numerics::Matrix3x2;
 
 use crate::config::{serde_default_bool, serde_default_f32};
 use crate::render_backend::RenderBackend;
-use crate::utils::{PrependErr, T_E_ERROR, T_E_UNINIT, ToWindowsResult};
+use crate::utils::{
+    StandaloneWindowsError, T_E_ERROR, T_E_UNINIT, ToWindowsResult, WindowsCompatibleError,
+    WindowsCompatibleResult, WindowsContext,
+};
 use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
@@ -81,15 +84,14 @@ impl Effects {
     pub fn init_command_lists_if_enabled(
         &mut self,
         render_backend: &RenderBackend,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         if !self.is_enabled() {
             return Ok(());
         }
 
         let RenderBackend::V2(backend) = render_backend else {
-            return Err(windows::core::Error::new(
-                T_E_ERROR,
-                "render backend is not V2",
+            return Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(T_E_ERROR, "render backend is not V2"),
             ));
         };
         let d2d_context = &backend.d2d_context;
@@ -105,12 +107,12 @@ impl Effects {
             .to_windows_result(T_E_UNINIT)?;
 
         let create_single_list =
-            |effect_params_vec: &Vec<EffectParams>| -> windows::core::Result<ID2D1CommandList> {
+            |effect_params_vec: &Vec<EffectParams>| -> WindowsCompatibleResult<ID2D1CommandList> {
                 unsafe {
                     // Open a command list to record draw operations
                     let command_list = d2d_context
                         .CreateCommandList()
-                        .prepend_err("d2d_context.CreateCommandList()")?;
+                        .windows_context("d2d_context.CreateCommandList()")?;
 
                     d2d_context.SetTarget(&command_list);
 
@@ -122,7 +124,7 @@ impl Effects {
                             EffectType::Glow => {
                                 let blur_effect = d2d_context
                                     .CreateEffect(&CLSID_D2D1GaussianBlur)
-                                    .prepend_err("blur_effect")?;
+                                    .windows_context("blur_effect")?;
                                 blur_effect.SetInput(0, border_bitmap, false);
                                 blur_effect
                                     .SetValue(
@@ -130,21 +132,21 @@ impl Effects {
                                         D2D1_PROPERTY_TYPE_FLOAT,
                                         &effect_params.std_dev.to_le_bytes(),
                                     )
-                                    .prepend_err("blur_effect.SetValue() std deviation")?;
+                                    .windows_context("blur_effect.SetValue() std deviation")?;
                                 blur_effect
                                     .SetValue(
                                         D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION.0 as u32,
                                         D2D1_PROPERTY_TYPE_ENUM,
                                         &D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED.0.to_le_bytes(),
                                     )
-                                    .prepend_err("blur_effect.SetValue() optimization")?;
+                                    .windows_context("blur_effect.SetValue() optimization")?;
 
                                 blur_effect
                             }
                             EffectType::Shadow => {
                                 let shadow_effect = d2d_context
                                     .CreateEffect(&CLSID_D2D1Shadow)
-                                    .prepend_err("shadow_effect")?;
+                                    .windows_context("shadow_effect")?;
                                 shadow_effect.SetInput(0, border_bitmap, false);
                                 shadow_effect
                                     .SetValue(
@@ -152,14 +154,14 @@ impl Effects {
                                         D2D1_PROPERTY_TYPE_FLOAT,
                                         &effect_params.std_dev.to_le_bytes(),
                                     )
-                                    .prepend_err("shadow_effect.SetValue() std deviation")?;
+                                    .windows_context("shadow_effect.SetValue() std deviation")?;
                                 shadow_effect
                                     .SetValue(
                                         D2D1_SHADOW_PROP_OPTIMIZATION.0 as u32,
                                         D2D1_PROPERTY_TYPE_ENUM,
                                         &D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED.0.to_le_bytes(),
                                     )
-                                    .prepend_err("shadow_effect.SetValue() optimization")?;
+                                    .windows_context("shadow_effect.SetValue() optimization")?;
 
                                 shadow_effect
                             }
@@ -167,12 +169,12 @@ impl Effects {
 
                         let effect_with_opacity = d2d_context
                             .CreateEffect(&CLSID_D2D1Opacity)
-                            .prepend_err("effect_with_opacity")?;
+                            .windows_context("effect_with_opacity")?;
                         effect_with_opacity.SetInput(
                             0,
                             &effect
                                 .GetOutput()
-                                .prepend_err("could not get _ effect output")?,
+                                .windows_context("could not get _ effect output")?,
                             false,
                         );
                         effect_with_opacity
@@ -181,16 +183,16 @@ impl Effects {
                                 D2D1_PROPERTY_TYPE_FLOAT,
                                 &effect_params.opacity.to_le_bytes(),
                             )
-                            .prepend_err("effect_with_opacity.SetValue()")?;
+                            .windows_context("effect_with_opacity.SetValue()")?;
 
                         let effect_with_opacity_translation = d2d_context
                             .CreateEffect(&CLSID_D2D12DAffineTransform)
-                            .prepend_err("effect_with_opacity_translation")?;
+                            .windows_context("effect_with_opacity_translation")?;
                         effect_with_opacity_translation.SetInput(
                             0,
                             &effect_with_opacity
                                 .GetOutput()
-                                .prepend_err("could not get effect_with_opacity output")?,
+                                .windows_context("could not get effect_with_opacity output")?,
                             false,
                         );
                         let translation_matrix = Matrix3x2::translation(
@@ -207,7 +209,7 @@ impl Effects {
                                 D2D1_PROPERTY_TYPE_MATRIX_3X2,
                                 translation_matrix_bytes,
                             )
-                            .prepend_err("effect_with_opacity_translation.SetValue()")?;
+                            .windows_context("effect_with_opacity_translation.SetValue()")?;
 
                         effects_vec.push(effect_with_opacity_translation);
                     }
@@ -215,17 +217,17 @@ impl Effects {
                     // Create a composite effect and link it to the above effects
                     let composite_effect = d2d_context
                         .CreateEffect(&CLSID_D2D1Composite)
-                        .prepend_err("composite_effect")?;
+                        .windows_context("composite_effect")?;
                     composite_effect
                         .SetInputCount(effects_vec.len() as u32 + 1)
-                        .prepend_err("could not set composite effect input count")?;
+                        .windows_context("could not set composite effect input count")?;
 
                     for (index, effect) in effects_vec.iter().enumerate() {
                         composite_effect.SetInput(
                             index as u32,
                             &effect
                                 .GetOutput()
-                                .prepend_err(format!("could not get effect output: {index}"))?,
+                                .windows_context(format!("could not get effect output: {index}"))?,
                             false,
                         );
                     }
@@ -238,7 +240,7 @@ impl Effects {
                     d2d_context.DrawImage(
                         &composite_effect
                             .GetOutput()
-                            .prepend_err("could not get composite output")?,
+                            .windows_context("could not get composite output")?,
                         None,
                         None,
                         D2D1_INTERPOLATION_MODE_LINEAR,
@@ -257,16 +259,18 @@ impl Effects {
                     d2d_context.EndDraw(None, None)?;
 
                     // Close the command list to tell it we are done recording
-                    command_list.Close().prepend_err("command_list.Close()")?;
+                    command_list
+                        .Close()
+                        .windows_context("command_list.Close()")?;
 
                     Ok(command_list)
                 }
             };
 
         let active_command_list =
-            create_single_list(&self.active).prepend_err("active_command_list")?;
+            create_single_list(&self.active).windows_context("active_command_list")?;
         let inactive_command_list =
-            create_single_list(&self.inactive).prepend_err("inactive_command_list")?;
+            create_single_list(&self.inactive).windows_context("inactive_command_list")?;
 
         self.active_command_list = Some(active_command_list);
         self.inactive_command_list = Some(inactive_command_list);

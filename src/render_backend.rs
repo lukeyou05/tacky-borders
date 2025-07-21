@@ -23,7 +23,10 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::core::Interface;
 
 use crate::APP_STATE;
-use crate::utils::{LogIfErr, PrependErr, T_E_UNINIT, ToWindowsResult};
+use crate::utils::{
+    LogIfErr, StandaloneWindowsError, T_E_UNINIT, ToWindowsResult, WindowsCompatibleError,
+    WindowsCompatibleResult, WindowsContext,
+};
 
 pub const TARGET_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1 {
     bitmapOptions: D2D1_BITMAP_OPTIONS(
@@ -92,7 +95,7 @@ impl RenderBackendConfig {
         height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> windows::core::Result<RenderBackend> {
+    ) -> WindowsCompatibleResult<RenderBackend> {
         match self {
             RenderBackendConfig::V2 => Ok(RenderBackend::V2(V2RenderBackend::new(
                 width,
@@ -113,7 +116,7 @@ impl RenderBackend {
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         match self {
             RenderBackend::V2(backend) => {
                 backend.resize(width, height, create_extra_bitmaps)?;
@@ -122,9 +125,8 @@ impl RenderBackend {
             // BorderDrawer::render(), but I might want to move it here instead?
             RenderBackend::Legacy(_) => return Ok(()),
             RenderBackend::None => {
-                return Err(windows::core::Error::new(
-                    T_E_UNINIT,
-                    "render backend is None",
+                return Err(WindowsCompatibleError::Standalone(
+                    StandaloneWindowsError::new(T_E_UNINIT, "render backend is None"),
                 ));
             }
         }
@@ -132,16 +134,15 @@ impl RenderBackend {
         Ok(())
     }
 
-    pub fn get_pixel_size(&self) -> windows::core::Result<D2D_SIZE_U> {
+    pub fn get_pixel_size(&self) -> WindowsCompatibleResult<D2D_SIZE_U> {
         match self {
             RenderBackend::V2(backend) => Ok(backend.surface_size),
             RenderBackend::Legacy(backend) => {
                 let pixel_size = unsafe { backend.render_target.GetPixelSize() };
                 Ok(pixel_size)
             }
-            RenderBackend::None => Err(windows::core::Error::new(
-                T_E_UNINIT,
-                "render backend is None",
+            RenderBackend::None => Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(T_E_UNINIT, "render backend is None"),
             )),
         }
     }
@@ -157,7 +158,7 @@ impl V2RenderBackend {
         height: u32,
         border_window: HWND,
         create_extra_bitmaps: bool,
-    ) -> windows::core::Result<Self> {
+    ) -> WindowsCompatibleResult<Self> {
         let directx_devices_opt = APP_STATE.directx_devices.read().unwrap();
         let directx_devices = directx_devices_opt
             .as_ref()
@@ -169,7 +170,7 @@ impl V2RenderBackend {
                 .d2d_device
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)
         }
-        .prepend_err("d2d_context")?;
+        .windows_context("d2d_context")?;
 
         unsafe {
             d2d_context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -178,13 +179,13 @@ impl V2RenderBackend {
             let d2d_multithread: ID2D1Multithread = APP_STATE
                 .render_factory
                 .cast()
-                .prepend_err("d2d_multithread")?;
+                .windows_context("d2d_multithread")?;
             d2d_multithread.Enter();
 
             let dxgi_adapter = directx_devices
                 .dxgi_device
                 .GetAdapter()
-                .prepend_err("dxgi_adapter")?;
+                .windows_context("dxgi_adapter")?;
 
             // Not only does IDCompositionDevice3 not implement CreateTargetForHwnd, but you can't
             // even create one using DCompositionCreateDevice3 without casting (but you can with
@@ -192,16 +193,18 @@ impl V2RenderBackend {
             // first, which does implement CreateTargetForHwnd, then cast() it.
             let d_comp_desktop_device: IDCompositionDesktopDevice =
                 DCompositionCreateDevice3(&directx_devices.dxgi_device)
-                    .prepend_err("d_comp_desktop_device")?;
+                    .windows_context("d_comp_desktop_device")?;
             let d_comp_target = d_comp_desktop_device
                 .CreateTargetForHwnd(border_window, true)
-                .prepend_err("d_comp_target")?;
+                .windows_context("d_comp_target")?;
 
             let d_comp_device: IDCompositionDevice3 = d_comp_desktop_device
                 .cast()
-                .prepend_err("d_comp_desktop_device.cast()")?;
+                .windows_context("d_comp_desktop_device.cast()")?;
 
-            let d_comp_visual = d_comp_device.CreateVisual().prepend_err("d_comp_visual")?;
+            let d_comp_visual = d_comp_device
+                .CreateVisual()
+                .windows_context("d_comp_visual")?;
             let d_comp_surface = d_comp_device
                 .CreateSurface(
                     width,
@@ -209,16 +212,16 @@ impl V2RenderBackend {
                     DXGI_FORMAT_B8G8R8A8_UNORM,
                     DXGI_ALPHA_MODE_PREMULTIPLIED,
                 )
-                .prepend_err("d_comp_surface")?;
+                .windows_context("d_comp_surface")?;
             d_comp_visual
                 .SetContent(&d_comp_surface)
-                .prepend_err("d_comp_visual.SetContent()")?;
+                .windows_context("d_comp_visual.SetContent()")?;
             d_comp_target
                 .SetRoot(&d_comp_visual)
-                .prepend_err("d_comp_target.SetRoot()")?;
+                .windows_context("d_comp_target.SetRoot()")?;
             d_comp_device
                 .Commit()
-                .prepend_err("d_comp_device.Commit()")?;
+                .windows_context("d_comp_device.Commit()")?;
 
             d2d_multithread.Leave();
 
@@ -232,7 +235,7 @@ impl V2RenderBackend {
 
             // The LUID identifies the GPU adapter this render backend was initialized with. It's
             // used to help determine when the primary GPU adapter of the system has changed.
-            let adapter_desc = dxgi_adapter.GetDesc().prepend_err("adapter_desc")?;
+            let adapter_desc = dxgi_adapter.GetDesc().windows_context("adapter_desc")?;
             let adapter_luid = adapter_desc.AdapterLuid;
 
             Ok(Self {
@@ -253,24 +256,24 @@ impl V2RenderBackend {
         d2d_context: &ID2D1DeviceContext,
         width: u32,
         height: u32,
-    ) -> windows::core::Result<(ID2D1Bitmap1, ID2D1Bitmap1)> {
+    ) -> WindowsCompatibleResult<(ID2D1Bitmap1, ID2D1Bitmap1)> {
         // We need border_bitmap because you cannot directly apply effects on target_bitmap
         // due to its D2D1_BITMAP_OPTIONS, so we'll apply effects on border_bitmap instead
         let border_bitmap = unsafe {
             d2d_context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &EXTRA_BITMAP_PROPS)
         }
-        .prepend_err("border_bitmap")?;
+        .windows_context("border_bitmap")?;
 
         // Aaaand we need yet another bitmap to serve as a mask for the border_bitmap
         let mask_bitmap = unsafe {
             d2d_context.CreateBitmap(D2D_SIZE_U { width, height }, None, 0, &EXTRA_BITMAP_PROPS)
         }
-        .prepend_err("mask_bitmap")?;
+        .windows_context("mask_bitmap")?;
 
         Ok((border_bitmap, mask_bitmap))
     }
 
-    pub fn release_references(&mut self) -> windows::core::Result<()> {
+    pub fn release_references(&mut self) -> WindowsCompatibleResult<()> {
         unsafe {
             self.d2d_context.SetTarget(None);
 
@@ -278,18 +281,18 @@ impl V2RenderBackend {
             let d2d_multithread: ID2D1Multithread = APP_STATE
                 .render_factory
                 .cast()
-                .prepend_err("d2d_multithread")?;
+                .windows_context("d2d_multithread")?;
             d2d_multithread.Enter();
 
             self.d_comp_visual
                 .SetContent(None)
-                .prepend_err("d_comp_visual.SetContent()")?;
+                .windows_context("d_comp_visual.SetContent()")?;
             self.d_comp_target
                 .SetRoot(None)
-                .prepend_err("d_comp_target.SetRoot()")?;
+                .windows_context("d_comp_target.SetRoot()")?;
             self.d_comp_device
                 .Commit()
-                .prepend_err("d_comp_device.Commit()")?;
+                .windows_context("d_comp_device.Commit()")?;
 
             d2d_multithread.Leave();
         }
@@ -304,9 +307,9 @@ impl V2RenderBackend {
         width: u32,
         height: u32,
         create_extra_bitmaps: bool,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         self.release_references()
-            .prepend_err("could not release renderer references")?;
+            .windows_context("could not release renderer references")?;
         self.border_bitmap = None;
         self.mask_bitmap = None;
 
@@ -315,7 +318,7 @@ impl V2RenderBackend {
             let d2d_multithread: ID2D1Multithread = APP_STATE
                 .render_factory
                 .cast()
-                .prepend_err("d2d_multithread")?;
+                .windows_context("d2d_multithread")?;
             d2d_multithread.Enter();
 
             *self.d_comp_surface = self
@@ -326,16 +329,16 @@ impl V2RenderBackend {
                     DXGI_FORMAT_B8G8R8A8_UNORM,
                     DXGI_ALPHA_MODE_PREMULTIPLIED,
                 )
-                .prepend_err("d_comp_surface")?;
+                .windows_context("d_comp_surface")?;
             self.d_comp_visual
                 .SetContent(&*self.d_comp_surface)
-                .prepend_err("d_comp_visual.SetContent()")?;
+                .windows_context("d_comp_visual.SetContent()")?;
             self.d_comp_target
                 .SetRoot(&self.d_comp_visual)
-                .prepend_err("d_comp_visual.SetContent()")?;
+                .windows_context("d_comp_visual.SetContent()")?;
             self.d_comp_device
                 .Commit()
-                .prepend_err("d_comp_device.Commit()")?;
+                .windows_context("d_comp_device.Commit()")?;
 
             d2d_multithread.Leave();
         }
@@ -366,7 +369,7 @@ impl Drop for V2RenderBackend {
 }
 
 impl LegacyRenderBackend {
-    fn new(border_window: HWND) -> windows::core::Result<Self> {
+    fn new(border_window: HWND) -> WindowsCompatibleResult<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -387,7 +390,7 @@ impl LegacyRenderBackend {
             let render_target = APP_STATE
                 .render_factory
                 .CreateHwndRenderTarget(&render_target_properties, &hwnd_render_target_properties)
-                .prepend_err("render_target")?;
+                .windows_context("render_target")?;
 
             render_target.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 

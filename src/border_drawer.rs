@@ -17,7 +17,10 @@ use crate::animations::{AnimType, Animations};
 use crate::colors::ColorBrush;
 use crate::effects::Effects;
 use crate::render_backend::{RenderBackend, RenderBackendConfig, TARGET_BITMAP_PROPS};
-use crate::utils::{PrependErr, T_E_UNINIT, ToWindowsResult};
+use crate::utils::{
+    StandaloneWindowsError, T_E_UNINIT, ToWindowsResult, WindowsCompatibleError,
+    WindowsCompatibleResult, WindowsContext,
+};
 use crate::window_border::WindowState;
 
 #[derive(Debug, Default, Clone)]
@@ -65,22 +68,21 @@ impl BorderDrawer {
         border_window: HWND,
         window_rect: &RECT,
         render_backend_config: RenderBackendConfig,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         // Drop our current render backend to avoid issues with recreating existing resources when
         // calling init() multiple times in a row
         self.render_backend = RenderBackend::None;
 
         self.render_backend = render_backend_config
             .to_render_backend(width, height, border_window, self.effects.is_enabled())
-            .prepend_err("could not initialize render backend in init()")?;
+            .windows_context("could not initialize render backend in init()")?;
 
         let renderer: &ID2D1RenderTarget = match self.render_backend {
             RenderBackend::V2(ref backend) => &backend.d2d_context,
             RenderBackend::Legacy(ref backend) => &backend.render_target,
             RenderBackend::None => {
-                return Err(windows::core::Error::new(
-                    T_E_UNINIT,
-                    "render backend is None",
+                return Err(WindowsCompatibleError::Standalone(
+                    StandaloneWindowsError::new(T_E_UNINIT, "render backend is None"),
                 ));
             }
         };
@@ -98,7 +100,7 @@ impl BorderDrawer {
         if self.render_backend.supports_effects() {
             self.effects
                 .init_command_lists_if_enabled(&self.render_backend)
-                .prepend_err("could not initialize command list")?;
+                .windows_context("could not initialize command list")?;
         }
 
         self.render_rect = D2D1_ROUNDED_RECT {
@@ -118,10 +120,10 @@ impl BorderDrawer {
         let _ = self.effects.take_inactive_command_list();
     }
 
-    pub fn resize_renderer(&mut self, width: u32, height: u32) -> windows::core::Result<()> {
+    pub fn resize_renderer(&mut self, width: u32, height: u32) -> WindowsCompatibleResult<()> {
         self.render_backend
             .resize(width, height, self.effects.is_enabled())
-            .prepend_err("could not update render resources")?;
+            .windows_context("could not update render resources")?;
 
         if self.render_backend.supports_effects() {
             self.effects
@@ -138,7 +140,7 @@ impl BorderDrawer {
         window_rect: &RECT,
         window_padding: i32,
         window_state: WindowState,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         self.last_render_time = Some(time::Instant::now());
 
         let border_width = self.border_width as f32;
@@ -171,9 +173,8 @@ impl BorderDrawer {
             RenderBackend::V2(_) => self.render_v2(window_rect, window_state)?,
             RenderBackend::Legacy(_) => self.render_legacy(window_rect, window_state)?,
             RenderBackend::None => {
-                return Err(windows::core::Error::new(
-                    T_E_UNINIT,
-                    "render_backend is None",
+                return Err(WindowsCompatibleError::Standalone(
+                    StandaloneWindowsError::new(T_E_UNINIT, "render_backend is None"),
                 ));
             }
         }
@@ -185,11 +186,13 @@ impl BorderDrawer {
         &mut self,
         window_rect: &RECT,
         window_state: WindowState,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         let RenderBackend::Legacy(ref backend) = self.render_backend else {
-            return Err(windows::core::Error::new(
-                T_E_UNINIT,
-                "could not get render_backend within render()",
+            return Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(
+                    T_E_UNINIT,
+                    "could not get render_backend within render()",
+                ),
             ));
         };
         let render_target = &backend.render_target;
@@ -242,11 +245,13 @@ impl BorderDrawer {
         &mut self,
         window_rect: &RECT,
         window_state: WindowState,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         let RenderBackend::V2(ref backend) = self.render_backend else {
-            return Err(windows::core::Error::new(
-                T_E_UNINIT,
-                "could not get render_backend within render()",
+            return Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(
+                    T_E_UNINIT,
+                    "could not get render_backend within render()",
+                ),
             ));
         };
         let d2d_context = &backend.d2d_context;
@@ -265,7 +270,7 @@ impl BorderDrawer {
             let d2d_multithread: ID2D1Multithread = APP_STATE
                 .render_factory
                 .cast()
-                .prepend_err("d2d_multithread")?;
+                .windows_context("d2d_multithread")?;
             d2d_multithread.Enter();
 
             // Set d2d_context's target back to the target_bitmap so we can draw to the display
@@ -273,10 +278,10 @@ impl BorderDrawer {
             let dxgi_surface: IDXGISurface = backend
                 .d_comp_surface
                 .BeginDraw(None, &mut point)
-                .prepend_err("dxgi_surface")?;
+                .windows_context("dxgi_surface")?;
             let target_bitmap = d2d_context
                 .CreateBitmapFromDxgiSurface(&dxgi_surface, Some(&TARGET_BITMAP_PROPS))
-                .prepend_err("target_bitmap")?;
+                .windows_context("target_bitmap")?;
             d2d_context.SetTarget(&target_bitmap);
 
             // Draw to the target_bitmap
@@ -310,11 +315,11 @@ impl BorderDrawer {
             backend
                 .d_comp_surface
                 .EndDraw()
-                .prepend_err("d_comp_surface.EndDraw()")?;
+                .windows_context("d_comp_surface.EndDraw()")?;
             backend
                 .d_comp_device
                 .Commit()
-                .prepend_err("d_comp_device.Commit()")?;
+                .windows_context("d_comp_device.Commit()")?;
 
             d2d_multithread.Leave();
         }
@@ -326,11 +331,13 @@ impl BorderDrawer {
         &mut self,
         window_rect: &RECT,
         window_state: WindowState,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         let RenderBackend::V2(ref backend) = self.render_backend else {
-            return Err(windows::core::Error::new(
-                T_E_UNINIT,
-                "could not get render_backend within render()",
+            return Err(WindowsCompatibleError::Standalone(
+                StandaloneWindowsError::new(
+                    T_E_UNINIT,
+                    "could not get render_backend within render()",
+                ),
             ));
         };
         let d2d_context = &backend.d2d_context;
@@ -449,7 +456,7 @@ impl BorderDrawer {
             let d2d_multithread: ID2D1Multithread = APP_STATE
                 .render_factory
                 .cast()
-                .prepend_err("d2d_multithread")?;
+                .windows_context("d2d_multithread")?;
             d2d_multithread.Enter();
 
             // Set d2d_context's target back to the target_bitmap so we can draw to the display
@@ -457,10 +464,10 @@ impl BorderDrawer {
             let dxgi_surface: IDXGISurface = backend
                 .d_comp_surface
                 .BeginDraw(None, &mut point)
-                .prepend_err("dxgi_surface")?;
+                .windows_context("dxgi_surface")?;
             let target_bitmap = d2d_context
                 .CreateBitmapFromDxgiSurface(&dxgi_surface, Some(&TARGET_BITMAP_PROPS))
-                .prepend_err("target_bitmap")?;
+                .windows_context("target_bitmap")?;
             d2d_context.SetTarget(&target_bitmap);
 
             // Retrieve our command list (includes border_bitmap, mask_bitmap, and effects)
@@ -487,11 +494,11 @@ impl BorderDrawer {
             backend
                 .d_comp_surface
                 .EndDraw()
-                .prepend_err("d_comp_surface.EndDraw()")?;
+                .windows_context("d_comp_surface.EndDraw()")?;
             backend
                 .d_comp_device
                 .Commit()
-                .prepend_err("d_comp_device.Commit()")?;
+                .windows_context("d_comp_device.Commit()")?;
 
             d2d_multithread.Leave();
         }
