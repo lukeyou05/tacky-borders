@@ -33,6 +33,9 @@ global:
   # border_z_order: Z-order of the border relative to its window. Supported values:
   #   - AboveWindow: Place the border above its window
   #   - BelowWindow: Place the border below its window
+  #
+  # NOTE: 'AboveWindow' may cause the border to flicker when used with certain applications
+  # that also manipulate window layering, leading to z-order conflicts.
   border_z_order: AboveWindow
 
   # follow_native_border: Follow the system's behavior for border visibility.
