@@ -167,8 +167,8 @@ impl std::error::Error for WindowsCompatibleError {
             WindowsCompatibleError::Wrapped(err) => err.inner.source(),
             WindowsCompatibleError::Standalone(err) => err
                 .source
-                .as_ref()
-                .map(|err| err.as_ref() as &(dyn std::error::Error)),
+                .as_deref()
+                .map(|err| err as &(dyn std::error::Error)),
         }
     }
 }
