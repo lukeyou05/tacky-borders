@@ -6,9 +6,9 @@ edition = "2024"
 [dependencies]
 serde = "1.0.219"
 serde_yml = "0.0.12"
-serde_json = "1.0.140"
-serde_json_borrow = "0.7.1"
-tray-icon = "0.20.1"
+serde_json = "1.0.141"
+serde_json_borrow = "0.8.0"
+tray-icon = "0.21.0"
 open = "5.3.2"
 dirs = "6.0.0"
 regex = "1.11.1"
@@ -18,7 +18,7 @@ anyhow = "1.0.98"
 windows-numerics = "0.2.0"
 
 [dependencies.windows]
-version = "0.61.1"
+version = "0.61.3"
 features = [
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",
