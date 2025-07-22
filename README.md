@@ -59,6 +59,10 @@ The following auto-generated config.yaml is included as reference:
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
 
+# enable_logging: Log messages (info, warnings, and errors) to a file.
+# NOTE: Changes require an application restart to take effect.
+enable_logging: True
+
 # rendering_backend: Type of renderer. Supported values:
 #   - V2: A more complex, feature-rich renderer. Available in v1.2.0 and above.
 #   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
@@ -83,6 +87,24 @@ global:
   #   - RoundSmall: Slightly rounded corners
   #   - Or specify any numeric value for a custom radius
   border_radius: Auto
+
+  # border_z_order: Z-order of the border relative to its window. Supported values:
+  #   - AboveWindow: Place the border above its window
+  #   - BelowWindow: Place the border below its window
+  #
+  # NOTE: Using 'AboveWindow' may cause the border to flicker when used with some applications
+  # that manipulate window layering, leading to z-order conflicts.
+  border_z_order: AboveWindow
+
+  # follow_native_border: Follow Windows' behavior for border visibility.
+  #
+  # Windows already shows or hides native borders depending on a window's type or state
+  # (e.g., they're hidden for borderless fullscreen windows). When enabled, this option makes
+  # tacky-borders follow that visibility behavior.
+  #
+  # NOTE: This setting only affects visibility for borders that have been initialized.
+  # To make sure a border is initialized in the first place, use window_rules.
+  follow_native_border: True
 
   # initialize_delay: Time (in ms) before the border appears after opening a new window
   # unminimize_delay: Time (in ms) before the border appears after unminimizing a window
@@ -238,6 +260,10 @@ window_rules:
     enabled: False
 
   - match: Process
+    name: "tacky-borders"
+    enabled: False
+
+  - match: Process
     name: "zebar"
     enabled: False
 
@@ -257,11 +283,13 @@ window_rules:
   # - match: Class                   # Match based on Class, Title, or Process
   #   name: "MozillaWindowClass"     # Class/title/process name to match
   #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
-  #   enabled: True                  # Border enabled: True, False, or Auto (default: Auto)
+  #   enabled: True                  # Enable border initialization: True, False, or Auto (default: Auto)
   #
-  # Notes:
+  # NOTE:
   #   - Any option in the global config can also be defined in window_rules.
   #   - If not defined in a rule, settings will fall back to global config values.
+  #   - Setting 'border enabled' to True forces its initialization, but not necessarily its visibility.
+  #     If the border still isn't visible, try setting 'follow_native_border' to False.
 ```
 
 ## Comparison to cute-borders
