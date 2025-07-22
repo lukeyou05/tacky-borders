@@ -2,6 +2,7 @@ use anyhow::{Context, anyhow};
 use regex::Regex;
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::error::Error;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -160,28 +161,6 @@ impl WindowsCompatibleError {
     }
 }
 
-impl std::fmt::Display for WindowsCompatibleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", self.message())?;
-
-        if f.alternate() {
-            let mut source_opt = match self {
-                WindowsCompatibleError::Wrapped(err) => err.inner.source(),
-                WindowsCompatibleError::Standalone(err) => err
-                    .source
-                    .as_deref()
-                    .map(|err| err as &(dyn std::error::Error)),
-            };
-            while let Some(source) = source_opt {
-                write!(f, ": {source}")?;
-                source_opt = source.source();
-            }
-        }
-
-        Ok(())
-    }
-}
-
 impl std::error::Error for WindowsCompatibleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -191,6 +170,22 @@ impl std::error::Error for WindowsCompatibleError {
                 .as_ref()
                 .map(|err| err.as_ref() as &(dyn std::error::Error)),
         }
+    }
+}
+
+impl std::fmt::Display for WindowsCompatibleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.message())?;
+
+        if f.alternate() {
+            let mut source_opt = self.source();
+            while let Some(source) = source_opt {
+                write!(f, ": {source}")?;
+                source_opt = source.source();
+            }
+        }
+
+        Ok(())
     }
 }
 
