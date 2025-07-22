@@ -2,6 +2,20 @@
 extern crate log;
 extern crate sp_log;
 
+pub mod anim_timer;
+pub mod animations;
+pub mod border_drawer;
+pub mod colors;
+pub mod config;
+pub mod effects;
+pub mod event_hook;
+pub mod iocp;
+pub mod komorebi;
+pub mod render_backend;
+pub mod sys_tray_icon;
+pub mod utils;
+pub mod window_border;
+
 use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
 use core::time;
@@ -14,10 +28,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use utils::{
-    LogIfErr, PrependErr, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
-    create_border_for_window, get_foreground_window, get_last_error, get_window_rule,
-    has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible, post_message_w,
-    send_message_w,
+    WindowsCompatibleResult, LogIfErr, WindowsContext, T_E_UNINIT, ToWindowsResult,
+    WM_APP_RECREATE_DRAWER, create_border_for_window, get_foreground_window, get_last_error,
+    get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible,
+    post_message_w, send_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
@@ -49,20 +63,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
 use windows::core::{BOOL, Interface, PCWSTR, w};
-
-pub mod anim_timer;
-pub mod animations;
-pub mod border_drawer;
-pub mod colors;
-pub mod config;
-pub mod effects;
-pub mod event_hook;
-pub mod iocp;
-pub mod komorebi;
-pub mod render_backend;
-pub mod sys_tray_icon;
-pub mod utils;
-pub mod window_border;
 
 static IS_WINDOWS_11: LazyLock<bool> = LazyLock::new(|| {
     let mut version_info = OSVERSIONINFOW {
@@ -295,7 +295,7 @@ pub struct DirectXDevices {
 }
 
 impl DirectXDevices {
-    pub fn new(factory: &ID2D1Factory1) -> windows::core::Result<Self> {
+    pub fn new(factory: &ID2D1Factory1) -> WindowsCompatibleResult<Self> {
         let creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
         let feature_levels = [
@@ -330,12 +330,12 @@ impl DirectXDevices {
         let d3d11_device = device_opt
             .context("could not get d3d11_device")
             .to_windows_result(T_E_UNINIT)?;
-        let dxgi_device: IDXGIDevice = d3d11_device.cast().prepend_err("dxgi_device")?;
-        let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.prepend_err("d2d_device")?;
+        let dxgi_device: IDXGIDevice = d3d11_device.cast().windows_context("dxgi_device")?;
+        let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.windows_context("d2d_device")?;
 
         let dxgi_adapter: IDXGIAdapter =
-            unsafe { dxgi_device.GetAdapter() }.prepend_err("dxgi_adapter")?;
-        let adapter_desc = unsafe { dxgi_adapter.GetDesc() }.prepend_err("adapter_desc")?;
+            unsafe { dxgi_device.GetAdapter() }.windows_context("dxgi_adapter")?;
+        let adapter_desc = unsafe { dxgi_adapter.GetDesc() }.windows_context("adapter_desc")?;
         let name_len = adapter_desc
             .Description
             .iter()
@@ -350,28 +350,28 @@ impl DirectXDevices {
         })
     }
 
-    pub fn needs_recreation(&self) -> windows::core::Result<bool> {
+    pub fn needs_recreation(&self) -> WindowsCompatibleResult<bool> {
         let dxgi_factory: IDXGIFactory6 =
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                .prepend_err("could not create dxgi_factory to check for GPU adapter changes")?;
+                .windows_context("could not create dxgi_factory to check for GPU adapter changes")?;
 
         let new_dxgi_adapter: IDXGIAdapter =
             unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
         let new_adapter_desc =
-            unsafe { new_dxgi_adapter.GetDesc() }.prepend_err("could not get new_adapter_desc")?;
+            unsafe { new_dxgi_adapter.GetDesc() }.windows_context("could not get new_adapter_desc")?;
 
         let curr_dxgi_adapter: IDXGIAdapter = unsafe {
             self.dxgi_device
                 .GetAdapter()
-                .prepend_err("could not get curr_dxgi_adapter")?
+                .windows_context("could not get curr_dxgi_adapter")?
         };
         let curr_adapter_desc = unsafe { curr_dxgi_adapter.GetDesc() }
-            .prepend_err("could not get curr_adapter_desc")?;
+            .windows_context("could not get curr_adapter_desc")?;
 
         Ok(curr_adapter_desc.AdapterLuid != new_adapter_desc.AdapterLuid)
     }
 
-    pub fn recreate_if_needed(&mut self) -> windows::core::Result<()> {
+    pub fn recreate_if_needed(&mut self) -> WindowsCompatibleResult<()> {
         if self.needs_recreation()? {
             info!("recreating render devices");
             *self = DirectXDevices::new(&APP_STATE.render_factory)?;
@@ -453,7 +453,7 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
     }
 }
 
-pub fn create_borders_for_existing_windows() -> windows::core::Result<()> {
+pub fn create_borders_for_existing_windows() -> WindowsCompatibleResult<()> {
     unsafe { EnumWindows(Some(create_borders_callback), LPARAM::default()) }?;
     debug!("windows have been enumerated!");
 

@@ -14,6 +14,7 @@ use windows::core::BOOL;
 use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::LogIfErr;
+use crate::utils::WindowsCompatibleResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -222,7 +223,7 @@ impl ColorBrush {
         renderer: &ID2D1RenderTarget,
         window_rect: &RECT,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
-    ) -> windows::core::Result<()> {
+    ) -> WindowsCompatibleResult<()> {
         match self {
             ColorBrush::Solid(solid) => unsafe {
                 let id2d1_brush =
