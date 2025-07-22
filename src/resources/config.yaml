@@ -10,7 +10,7 @@ enable_logging: True
 #   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
 #
 # NOTE: Performance between the two may vary system-to-system. Choose whichever works best.
-rendering_backend: Legacy
+rendering_backend: V2
 
 # Global configuration options
 global:
@@ -33,16 +33,19 @@ global:
   # border_z_order: Z-order of the border relative to its window. Supported values:
   #   - AboveWindow: Place the border above its window
   #   - BelowWindow: Place the border below its window
+  #
+  # NOTE: Using 'AboveWindow' may cause the border to flicker when used with some applications
+  # that manipulate window layering, leading to z-order conflicts.
   border_z_order: AboveWindow
 
-  # follow_native_border: Follow the system's behavior for border visibility.
+  # follow_native_border: Follow Windows' behavior for border visibility.
   #
-  # Microsoft Windows draws native borders on windows depending on their state (e.g., fullscreen
-  # windows typically don't have one) or window type. When enabled, this config option makes
+  # Windows already shows or hides native borders depending on a window's type or state
+  # (e.g., they're hidden for borderless fullscreen windows). When enabled, this option makes
   # tacky-borders follow that visibility behavior.
   #
-  # NOTE: Regardless of this setting, tacky-borders still uses additional logic to determine
-  # whether a border should be initialized. Use window_rules to force the initialization of one.
+  # NOTE: This setting only affects visibility for borders that have been initialized.
+  # To make sure a border is initialized in the first place, use window_rules.
   follow_native_border: True
 
   # initialize_delay: Time (in ms) before the border appears after opening a new window
@@ -222,7 +225,7 @@ window_rules:
   # - match: Class                   # Match based on Class, Title, or Process
   #   name: "MozillaWindowClass"     # Class/title/process name to match
   #   strategy: Equals               # Matching strategy: Equals, Contains, or Regex (default: Equals)
-  #   enabled: True                  # Border enabled: True, False, or Auto (default: Auto)
+  #   enabled: True                  # Enable border initialization: True, False, or Auto (default: Auto)
   #
   # NOTE:
   #   - Any option in the global config can also be defined in window_rules.
