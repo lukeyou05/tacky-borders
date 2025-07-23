@@ -8,8 +8,8 @@ use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::{ptr, thread};
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, FALSE,
-    GetLastError, HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
+    CloseHandle, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, GetLastError,
+    HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -507,45 +507,44 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
     WindowRule::default()
 }
 
-pub fn is_window_visible(hwnd: HWND) -> bool {
-    unsafe { IsWindowVisible(hwnd).as_bool() }
-}
-
-pub fn is_rect_visible(rect: &RECT) -> bool {
-    rect.top >= 0 || rect.left >= 0 || rect.bottom >= 0 || rect.right >= 0
-}
-
 pub fn are_rects_same_size(rect1: &RECT, rect2: &RECT) -> bool {
     rect1.right - rect1.left == rect2.right - rect2.left
         && rect1.bottom - rect1.top == rect2.bottom - rect2.top
 }
 
+pub fn is_window(hwnd: Option<HWND>) -> bool {
+    unsafe { IsWindow(hwnd).as_bool() }
+}
+
+pub fn is_window_visible(hwnd: HWND) -> bool {
+    unsafe { IsWindowVisible(hwnd).as_bool() }
+}
+
 pub fn is_window_cloaked(hwnd: HWND) -> bool {
-    let mut is_cloaked = FALSE;
+    let mut cloaked_state = 0u32;
     if let Err(err) = unsafe {
         DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED,
-            ptr::addr_of_mut!(is_cloaked) as _,
-            size_of::<BOOL>() as u32,
+            ptr::addr_of_mut!(cloaked_state) as _,
+            size_of::<u32>() as u32,
         )
     } {
+        // I've never seen this fail, so I think returning a default value is better than a Result
+        // type which would sacrifice ergonomics elsewhere in the code
         error!("could not check if window is cloaked: {err}");
-        return true;
+        return false;
     }
-    is_cloaked.as_bool()
-}
 
-pub fn get_foreground_window() -> HWND {
-    unsafe { GetForegroundWindow() }
+    cloaked_state != 0
 }
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
     unsafe { IsIconic(hwnd).as_bool() }
 }
 
-pub fn is_window(hwnd: Option<HWND>) -> bool {
-    unsafe { IsWindow(hwnd).as_bool() }
+pub fn get_foreground_window() -> HWND {
+    unsafe { GetForegroundWindow() }
 }
 
 pub fn post_message_w(

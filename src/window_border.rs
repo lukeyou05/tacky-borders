@@ -44,7 +44,7 @@ use crate::utils::{
     WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
     WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
     get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
-    has_native_border, is_rect_visible, is_window_minimized, is_window_visible, loword,
+    has_native_border, is_window_cloaked, is_window_minimized, is_window_visible, loword,
     monitor_from_window, post_message_w,
 };
 
@@ -450,9 +450,14 @@ impl WindowBorder {
     }
 
     fn should_show_border(&self) -> bool {
-        !self.follow_native_border || has_native_border(self.tracking_window)
+        (!self.follow_native_border || has_native_border(self.tracking_window))
+            && is_window_visible(self.tracking_window)
+            && !is_window_cloaked(self.tracking_window)
+            && !is_window_minimized(self.tracking_window)
     }
 
+    // NOTE: Avoid calling this function + self.render() while the tracking window is minimized
+    // as its coordinates will be meaningless and will lead to an oddly sized border.
     fn update_window_rect(&mut self) -> anyhow::Result<()> {
         if let Err(e) = unsafe {
             DwmGetWindowAttribute(
@@ -480,6 +485,8 @@ impl WindowBorder {
         Ok(())
     }
 
+    // NOTE: SetWindowPos is asynchronous, meaning it sends a request to the DWM but doesn't wait
+    // for it to complete. Keep this in mind when ordering function calls elsewhere in the code.
     fn update_position(&mut self, other_flags: Option<SET_WINDOW_POS_FLAGS>) -> anyhow::Result<()> {
         unsafe {
             let mut swp_flags = SWP_NOSENDCHANGING
@@ -775,13 +782,6 @@ impl WindowBorder {
                 let prev_rect = self.window_rect;
                 self.update_window_rect().log_if_err();
 
-                // TODO: After restoring a minimized window, render() may use the minimized
-                // (invisible) rect instead of the updated one. This is a temporary "fix".
-                if !is_rect_visible(&self.window_rect) {
-                    self.window_rect = prev_rect;
-                    return LRESULT(0);
-                }
-
                 let update_pos_flags =
                     (!is_window_visible(self.border_window)).then_some(SWP_SHOWWINDOW);
                 self.update_position(update_pos_flags).log_if_err();
@@ -829,21 +829,18 @@ impl WindowBorder {
                 self.render().log_if_err();
             }
             // EVENT_OBJECT_SHOW / EVENT_OBJECT_UNCLOAKED
+            // NOTE: This message can still be sent while the window is minimized.
             WM_APP_SHOWUNCLOAKED => {
-                // With GlazeWM, if I switch to another workspace while a window is minimized and
-                // switch back, then we will receive this message even though the window is not yet
-                // visible. And, the window rect will be all weird. So, we apply the following fix.
-                let prev_rect = self.window_rect;
-                self.update_window_rect().log_if_err();
-
-                if !is_rect_visible(&self.window_rect) {
-                    self.window_rect = prev_rect;
+                if !is_window_visible(self.tracking_window)
+                    || is_window_cloaked(self.tracking_window)
+                    || is_window_minimized(self.tracking_window)
+                {
                     return LRESULT(0);
                 }
 
-                self.update_color(None);
-
                 if self.should_show_border() {
+                    self.update_color(None);
+                    self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
                 }
@@ -862,6 +859,7 @@ impl WindowBorder {
             WM_APP_MINIMIZESTART => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
 
+                // Needed for the fade animation to work correctly when window is unminimized
                 self.border_drawer
                     .active_color
                     .set_opacity(0.0)
@@ -876,6 +874,13 @@ impl WindowBorder {
             }
             // EVENT_SYSTEM_MINIMIZEEND
             WM_APP_MINIMIZEEND => {
+                if !is_window_visible(self.tracking_window)
+                    || is_window_cloaked(self.tracking_window)
+                    || is_window_minimized(self.tracking_window)
+                {
+                    return LRESULT(0);
+                }
+
                 // Keep the border hidden while the tracking window is in its unminimize animation
                 thread::sleep(time::Duration::from_millis(self.unminimize_delay));
 
