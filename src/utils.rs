@@ -592,7 +592,7 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 }
 
 pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) {
-    debug!("creating border for: {:?}", tracking_window);
+    debug!("creating border for: {tracking_window:?}");
     let tracking_window_isize = tracking_window.0 as isize;
 
     let _ = thread::spawn(move || {

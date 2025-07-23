@@ -433,7 +433,7 @@ impl ConfigWatcher {
                 slice::from_raw_parts(info.FileName.as_ptr(), info.FileNameLength as usize / 2)
             };
             let file_name = String::from_utf16_lossy(name_slice);
-            debug!("file changed: {}", file_name);
+            debug!("file changed: {file_name}");
 
             if file_name == *config_name {
                 callback_fn();
