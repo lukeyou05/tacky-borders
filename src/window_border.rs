@@ -735,7 +735,9 @@ impl WindowBorder {
     }
 
     // Overrides the border radius to be square when the tracking window is arranged (snapped)
-    fn sync_radius_for_snapped_state(&mut self) -> anyhow::Result<()> {
+    fn sync_radius_for_snapped_state(&mut self) -> bool {
+        let mut is_updated = false;
+
         // RadiusConfig::Custom(-1.0) is also checked for legacy reasons
         let is_radius_config_auto = matches!(
             self.radius_config,
@@ -749,11 +751,11 @@ impl WindowBorder {
                 .border_radius
                 .set(0.0)
                 .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
-
             self.border_drawer.border_radius.lock_writes();
+
+            is_updated = true;
         } else if !is_tracking_window_arranged && is_radius_locked {
             self.border_drawer.border_radius.unlock_writes();
-
             let radius = self.radius_config.to_radius(
                 self.border_drawer.border_width,
                 self.current_dpi,
@@ -763,9 +765,11 @@ impl WindowBorder {
                 .border_radius
                 .set(radius)
                 .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
+
+            is_updated = true;
         }
 
-        Ok(())
+        is_updated
     }
 
     fn cleanup_and_queue_exit(&mut self) {
@@ -846,7 +850,7 @@ impl WindowBorder {
                         };
                 }
 
-                self.sync_radius_for_snapped_state().log_if_err();
+                needs_render |= self.sync_radius_for_snapped_state();
 
                 if needs_render {
                     self.render().log_if_err();
