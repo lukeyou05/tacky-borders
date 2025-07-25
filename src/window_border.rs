@@ -33,8 +33,7 @@ use windows::core::{PCWSTR, w};
 use crate::APP_STATE;
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
-use crate::config::WindowRule;
-use crate::config::ZOrderMode;
+use crate::config::{RadiusConfig, WindowRule, ZOrderMode};
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
@@ -44,8 +43,8 @@ use crate::utils::{
     WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
     WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
     get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
-    has_native_border, is_window_cloaked, is_window_minimized, is_window_visible, loword,
-    monitor_from_window, post_message_w,
+    has_native_border, is_window_arranged, is_window_cloaked, is_window_minimized,
+    is_window_visible, loword, monitor_from_window, post_message_w,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -65,7 +64,7 @@ impl WindowState {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct WindowBorder {
     border_window: HWND,
     tracking_window: HWND,
@@ -75,10 +74,13 @@ pub struct WindowBorder {
     current_monitor: HMONITOR,
     current_dpi: u32,
     border_drawer: BorderDrawer,
+    // ---- cached config values ----
+    radius_config: RadiusConfig,
     border_z_order: ZOrderMode,
     follow_native_border: bool,
     initialize_delay: u64,
     unminimize_delay: u64,
+    // ------------------------------
     is_paused: bool,
 }
 
@@ -246,6 +248,8 @@ impl WindowBorder {
             .as_ref()
             .unwrap_or(&global.animations);
         let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
+
+        self.radius_config = *radius_config;
 
         // Adjust the border parameters based on the window/monitor dpi
         let border_width = (width_config * dpi as f32 / 96.0).round() as i32;
@@ -640,11 +644,15 @@ impl WindowBorder {
         self.border_drawer.border_width = (width_config * new_dpi as f32 / 96.0).round() as i32;
         self.border_drawer.border_offset =
             (offset_config as f32 * new_dpi as f32 / 96.0).round() as i32;
-        self.border_drawer.border_radius = radius_config.to_radius(
+        let new_radius = radius_config.to_radius(
             self.border_drawer.border_width,
             new_dpi,
             self.tracking_window,
         );
+        self.border_drawer
+            .border_radius
+            .set(new_radius)
+            .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
     }
 
     fn needs_renderer_resize(&self, screen_width: u32, screen_height: u32) -> anyhow::Result<bool> {
@@ -726,6 +734,40 @@ impl WindowBorder {
         Ok(is_updated)
     }
 
+    // Overrides the border radius to be square when the tracking window is arranged (snapped)
+    fn sync_radius_for_snapped_state(&mut self) -> anyhow::Result<()> {
+        // RadiusConfig::Custom(-1.0) is also checked for legacy reasons
+        let is_radius_config_auto = matches!(
+            self.radius_config,
+            RadiusConfig::Auto | RadiusConfig::Custom(-1.0)
+        );
+        let is_tracking_window_arranged = is_window_arranged(self.tracking_window);
+        let is_radius_locked = self.border_drawer.border_radius.is_locked();
+
+        if is_radius_config_auto && is_tracking_window_arranged && !is_radius_locked {
+            self.border_drawer
+                .border_radius
+                .set(0.0)
+                .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
+
+            self.border_drawer.border_radius.lock_writes();
+        } else if !is_tracking_window_arranged && is_radius_locked {
+            self.border_drawer.border_radius.unlock_writes();
+
+            let radius = self.radius_config.to_radius(
+                self.border_drawer.border_width,
+                self.current_dpi,
+                self.tracking_window,
+            );
+            self.border_drawer
+                .border_radius
+                .set(radius)
+                .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
+        }
+
+        Ok(())
+    }
+
     fn cleanup_and_queue_exit(&mut self) {
         self.is_paused = true;
         self.border_drawer.destroy_anims_timer();
@@ -803,6 +845,8 @@ impl WindowBorder {
                             }
                         };
                 }
+
+                self.sync_radius_for_snapped_state().log_if_err();
 
                 if needs_render {
                     self.render().log_if_err();

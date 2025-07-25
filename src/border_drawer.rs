@@ -19,7 +19,7 @@ use crate::effects::Effects;
 use crate::render_backend::{RenderBackend, RenderBackendConfig, TARGET_BITMAP_PROPS};
 use crate::utils::{
     StandaloneWindowsError, T_E_UNINIT, ToWindowsResult, WindowsCompatibleError,
-    WindowsCompatibleResult, WindowsContext,
+    WindowsCompatibleResult, WindowsContext, WriteLockable,
 };
 use crate::window_border::WindowState;
 
@@ -27,7 +27,7 @@ use crate::window_border::WindowState;
 pub struct BorderDrawer {
     pub border_width: i32,
     pub border_offset: i32,
-    pub border_radius: f32,
+    pub border_radius: WriteLockable<f32>,
     // TODO: maybe get rid of render_rect; it would make sense to have the WindowBorder struct
     // calculate the coordinates for the border, and then delegate the rendering here
     pub render_rect: D2D1_ROUNDED_RECT,
@@ -54,7 +54,7 @@ impl BorderDrawer {
     ) {
         self.border_width = border_width;
         self.border_offset = border_offset;
-        self.border_radius = border_radius;
+        self.border_radius = WriteLockable::new(border_radius);
         self.active_color = active_color;
         self.inactive_color = inactive_color;
         self.animations = animations;
@@ -105,8 +105,8 @@ impl BorderDrawer {
 
         self.render_rect = D2D1_ROUNDED_RECT {
             rect: Default::default(),
-            radiusX: self.border_radius,
-            radiusY: self.border_radius,
+            radiusX: *self.border_radius.get(),
+            radiusY: *self.border_radius.get(),
         };
 
         Ok(())
@@ -160,8 +160,8 @@ impl BorderDrawer {
                     - window_padding
                     + border_offset,
             },
-            radiusX: self.border_radius,
-            radiusY: self.border_radius,
+            radiusX: *self.border_radius.get(),
+            radiusY: *self.border_radius.get(),
         };
 
         // Note that Rust's borrow checker prevents passing the render backend from the match arm,
@@ -359,8 +359,8 @@ impl BorderDrawer {
                     right: self.render_rect.rect.right + (border_width / 2.0),
                     bottom: self.render_rect.rect.bottom + (border_width / 2.0),
                 },
-                radiusX: self.border_radius + (border_width / 2.0),
-                radiusY: self.border_radius + (border_width / 2.0),
+                radiusX: self.border_radius.get() + (border_width / 2.0),
+                radiusY: self.border_radius.get() + (border_width / 2.0),
             };
 
             // Set the d2d_context target to the border_bitmap
@@ -425,8 +425,8 @@ impl BorderDrawer {
                     right: self.render_rect.rect.right - (border_width / 2.0),
                     bottom: self.render_rect.rect.bottom - (border_width / 2.0),
                 },
-                radiusX: self.border_radius - (border_width / 2.0),
-                radiusY: self.border_radius - (border_width / 2.0),
+                radiusX: self.border_radius.get() - (border_width / 2.0),
+                radiusY: self.border_radius.get() - (border_width / 2.0),
             };
 
             // Create a 100% opaque brush because our active/inactive colors' brushes might not be
@@ -509,7 +509,7 @@ impl BorderDrawer {
     // NOTE: ID2D1DeviceContext implements From<&ID2D1DeviceContext> for &ID2D1RenderTarget
     fn draw_rectangle(&self, renderer: &ID2D1RenderTarget, brush: &ID2D1Brush) {
         unsafe {
-            match self.border_radius {
+            match self.border_radius.get() {
                 0.0 => renderer.DrawRectangle(
                     &self.render_rect.rect,
                     brush,
@@ -534,7 +534,7 @@ impl BorderDrawer {
         brush: &ID2D1Brush,
     ) {
         unsafe {
-            match self.border_radius {
+            match self.border_radius.get() {
                 0.0 => renderer.FillRectangle(&render_rect.rect, brush),
                 _ => renderer.FillRoundedRectangle(render_rect, brush),
             }

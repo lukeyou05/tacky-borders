@@ -28,7 +28,7 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowArranged, IsWindowVisible, PostMessageW,
     RealGetWindowClassW, SendMessageW, SendNotifyMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
     WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
@@ -331,6 +331,48 @@ impl ReentrancyBlockerExt for std::thread::LocalKey<ReentrancyBlocker> {
     }
 }
 
+// Prevents mutation while locked
+#[derive(Debug, Default, Clone)]
+pub struct WriteLockable<T> {
+    inner: T,
+    is_locked: bool,
+}
+
+impl<T> WriteLockable<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            inner: value,
+            is_locked: false,
+        }
+    }
+
+    pub fn lock_writes(&mut self) {
+        self.is_locked = true;
+    }
+
+    pub fn unlock_writes(&mut self) {
+        self.is_locked = false;
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.is_locked
+    }
+
+    pub fn get(&self) -> &T {
+        &self.inner
+    }
+
+    pub fn set(&mut self, value: T) -> anyhow::Result<()> {
+        if self.is_locked {
+            return Err(anyhow!("attempted to set a value while it is locked"));
+        } else {
+            self.inner = value;
+        }
+
+        Ok(())
+    }
+}
+
 pub fn get_window_style(hwnd: HWND) -> WINDOW_STYLE {
     unsafe { WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32) }
 }
@@ -541,6 +583,10 @@ pub fn is_window_cloaked(hwnd: HWND) -> bool {
 
 pub fn is_window_minimized(hwnd: HWND) -> bool {
     unsafe { IsIconic(hwnd).as_bool() }
+}
+
+pub fn is_window_arranged(hwnd: HWND) -> bool {
+    unsafe { IsWindowArranged(hwnd).as_bool() }
 }
 
 pub fn get_foreground_window() -> HWND {

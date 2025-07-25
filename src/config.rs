@@ -125,21 +125,21 @@ pub struct WindowRule {
     pub enabled: Option<EnableMode>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub enum MatchKind {
     Title,
     Class,
     Process,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub enum MatchStrategy {
     Equals,
     Contains,
     Regex,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
 pub enum RadiusConfig {
     #[default]
     Auto,
@@ -177,7 +177,7 @@ impl RadiusConfig {
         }
     }
 }
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
 pub enum EnableMode {
     #[default]
     Auto,
