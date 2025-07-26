@@ -170,10 +170,10 @@ impl WindowBorder {
                 thread::sleep(time::Duration::from_millis(5));
                 self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                 self.render().log_if_err();
-            }
 
-            self.border_drawer
-                .set_anims_timer_if_enabled(self.border_window);
+                self.border_drawer
+                    .set_anims_timer_if_needed(self.border_window);
+            }
 
             // Handle the edge case where the tracking window is already minimized
             if is_window_minimized(self.tracking_window) {
@@ -816,12 +816,20 @@ impl WindowBorder {
         match message {
             // EVENT_OBJECT_LOCATIONCHANGE
             WM_APP_LOCATIONCHANGE => {
+                // This is here to prevent LOCATIONCHANGE events from being handled before
+                // MINIMIZEEND or SHOW/UNCLOAKED events.
                 if self.is_paused {
                     return LRESULT(0);
                 }
 
+                // This is mainly here to handle cases where a window is made borderless fullscreen
+                // (if 'follow_native_border' is set to true in the config), which doesn't have any
+                // dedicated events like MINIMIZEEND. Note that we don't set 'is_paused' to true as
+                // doing so would prevent us from handling the transition back to a regular window.
                 if !self.should_show_border() {
                     self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
+                    self.border_drawer.destroy_anims_timer();
+
                     return LRESULT(0);
                 }
 
@@ -832,7 +840,6 @@ impl WindowBorder {
                     (!is_window_visible(self.border_window)).then_some(SWP_SHOWWINDOW);
                 self.update_position(update_pos_flags).log_if_err();
 
-                // If the window rect changes size, we need to re-render the border
                 let mut needs_render = !are_rects_same_size(&self.window_rect, &prev_rect);
 
                 let new_monitor = monitor_from_window(self.tracking_window);
@@ -855,6 +862,9 @@ impl WindowBorder {
                 if needs_render {
                     self.render().log_if_err();
                 }
+
+                self.border_drawer
+                    .set_anims_timer_if_needed(self.border_window);
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => match self.border_z_order {
@@ -891,10 +901,11 @@ impl WindowBorder {
                     self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
+
+                    self.border_drawer
+                        .set_anims_timer_if_needed(self.border_window);
                 }
 
-                self.border_drawer
-                    .set_anims_timer_if_enabled(self.border_window);
                 self.is_paused = false;
             }
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
@@ -937,10 +948,11 @@ impl WindowBorder {
                     self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
+
+                    self.border_drawer
+                        .set_anims_timer_if_needed(self.border_window);
                 }
 
-                self.border_drawer
-                    .set_anims_timer_if_enabled(self.border_window);
                 self.is_paused = false;
             }
             WM_APP_ANIMATE => {
@@ -1136,8 +1148,6 @@ impl WindowBorder {
                     if matches!(self.border_drawer.render_backend, RenderBackend::None) =>
                 {
                     debug!("system is resuming; reinitializing border drawer");
-                    self.border_drawer
-                        .set_anims_timer_if_enabled(self.border_window);
                     let (screen_width, screen_height) =
                         match get_monitor_resolution(self.current_monitor) {
                             Ok(resolution) => resolution,
@@ -1154,6 +1164,11 @@ impl WindowBorder {
                         self.cleanup_and_queue_exit();
                         return LRESULT(0);
                     };
+
+                    if self.should_show_border() {
+                        self.border_drawer
+                            .set_anims_timer_if_needed(self.border_window);
+                    }
                 }
                 _ => {}
             },

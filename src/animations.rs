@@ -170,12 +170,12 @@ impl Animations {
         }
     }
 
-    pub fn set_timer_if_enabled(
+    pub fn set_timer_if_needed(
         &mut self,
         border_window: HWND,
         last_anim_time: &mut Option<time::Instant>,
     ) {
-        if (!self.active.is_empty() || !self.inactive.is_empty()) && self.timer.is_none() {
+        if self.timer.is_none() && (!self.active.is_empty() || !self.inactive.is_empty()) {
             let timer_duration = (1000.0 / self.fps as f32) as u64;
             self.timer = Some(AnimationTimer::start(border_window, timer_duration));
 

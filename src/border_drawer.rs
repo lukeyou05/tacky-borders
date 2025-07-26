@@ -541,9 +541,9 @@ impl BorderDrawer {
         }
     }
 
-    pub fn set_anims_timer_if_enabled(&mut self, border_window: HWND) {
+    pub fn set_anims_timer_if_needed(&mut self, border_window: HWND) {
         self.animations
-            .set_timer_if_enabled(border_window, &mut self.last_anim_time);
+            .set_timer_if_needed(border_window, &mut self.last_anim_time);
     }
 
     pub fn destroy_anims_timer(&mut self) {
