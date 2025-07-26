@@ -106,19 +106,18 @@ impl AppState {
 
         let config = match Config::create() {
             Ok(config) => {
+                if config.enable_logging {
+                    if let Err(err) = create_logger() {
+                        eprintln!("[ERROR] could not create logger: {err}");
+                    };
+                }
+
                 if config.is_config_watcher_enabled() {
                     *config_watcher.lock().unwrap() = create_config_watcher().ok()
                 }
 
                 if komorebi_integration.is_enabled(&config) {
                     komorebi_integration.start().log_if_err();
-                }
-
-                // TODO: move this to the beginning of this match arm
-                if config.enable_logging {
-                    if let Err(err) = create_logger() {
-                        eprintln!("[ERROR] could not create logger: {err}");
-                    };
                 }
 
                 config

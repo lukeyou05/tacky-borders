@@ -322,8 +322,19 @@ impl Config {
 }
 
 #[derive(Debug)]
+struct ScopedHandle(HANDLE);
+
+impl Drop for ScopedHandle {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) }
+            .context("could not close handle")
+            .log_if_err();
+    }
+}
+
+#[derive(Debug)]
 pub struct ConfigWatcher {
-    dir_handle: HANDLE,
+    dir_handle: ScopedHandle,
 }
 
 impl ConfigWatcher {
@@ -343,7 +354,7 @@ impl ConfigWatcher {
             .chain(iter::once(0))
             .collect();
 
-        let dir_handle = unsafe {
+        let handle = unsafe {
             CreateFileW(
                 PCWSTR(config_dir_vec.as_ptr()),
                 FILE_LIST_DIRECTORY.0,
@@ -353,11 +364,12 @@ impl ConfigWatcher {
                 FILE_FLAG_BACKUP_SEMANTICS,
                 None,
             )
-            .context("could not create dir handle for config watcher")?
-        };
+        }
+        .context("could not create dir handle for config watcher")?;
+        let dir_handle = ScopedHandle(handle);
 
         // Convert HANDLE to isize so we can move it into the new thread
-        let dir_handle_isize = dir_handle.0 as isize;
+        let dir_handle_isize = dir_handle.0.0 as isize;
 
         // Also initialize these variables so we move them into the new thread
         let config_name = config_path
@@ -440,14 +452,10 @@ impl Drop for ConfigWatcher {
     fn drop(&mut self) {
         debug!("stopping config watcher");
 
-        // Cancel all pending I/O operations on the handle
-        unsafe { CancelIoEx(self.dir_handle, None) }
+        // Cancel all pending I/O operations on the handle. This should make the worker thread
+        // automatically exit.
+        unsafe { CancelIoEx(self.dir_handle.0, None) }
             .context("could not cancel config watcher I/O operation")
-            .log_if_err();
-
-        // Close the handle for cleanup. This should automatically exit the watcher thread.
-        unsafe { CloseHandle(self.dir_handle) }
-            .context("could not close config watcher handle")
             .log_if_err();
     }
 }
