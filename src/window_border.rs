@@ -156,63 +156,8 @@ impl WindowBorder {
                 .windows_context("could not get monitor resolution")?;
             self.init_drawer(screen_width, screen_height)
                 .context("could not initialize border drawer in init()")?;
-
-            self.update_color(Some(self.initialize_delay));
-            self.update_window_rect().log_if_err();
-
-            if self.should_show_border() {
-                self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
-                self.render().log_if_err();
-
-                // TODO: sometimes, the border doesn't show up on the first try. So, we just wait
-                // 5ms and call render() again. This seems to be an issue with the visibility of
-                // the window itself.
-                thread::sleep(time::Duration::from_millis(5));
-                self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
-                self.render().log_if_err();
-
-                self.border_drawer
-                    .set_anims_timer_if_needed(self.border_window);
-            }
-
-            // Handle the edge case where the tracking window is already minimized
-            if is_window_minimized(self.tracking_window) {
-                post_message_w(
-                    Some(self.border_window),
-                    WM_APP_MINIMIZESTART,
-                    WPARAM(0),
-                    LPARAM(0),
-                )
-                .context("could not post WM_APP_MINIMIZESTART message in init()")
-                .log_if_err();
-            }
-
-            {
-                let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
-                if komorebi_integration.is_running() {
-                    let self_focus_state = komorebi_integration
-                        .focus_state
-                        .lock()
-                        .unwrap()
-                        .get(&(self.tracking_window.0 as isize))
-                        .copied();
-
-                    // Handle the edge case where the focus state is already komorebi-specific upon border creation
-                    if !matches!(
-                        self_focus_state,
-                        None | Some(WindowKind::Single) | Some(WindowKind::Unfocused)
-                    ) {
-                        post_message_w(
-                            Some(self.border_window),
-                            WM_APP_KOMOREBI,
-                            WPARAM(0),
-                            LPARAM(0),
-                        )
-                        .context("could not post WM_APP_KOMOREBI message in init()")
-                        .log_if_err();
-                    }
-                }
-            }
+            self.init_border()
+                .context("could not initialize border in init()")?;
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, None, 0, 0).into() {
@@ -220,6 +165,65 @@ impl WindowBorder {
                 DispatchMessageW(&message);
             }
             debug!("exiting border thread for {:?}!", self.tracking_window);
+        }
+
+        Ok(())
+    }
+
+    fn init_border(&mut self) -> anyhow::Result<()> {
+        self.update_color(Some(self.initialize_delay));
+        self.update_window_rect().log_if_err();
+        if self.should_show_border() {
+            self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
+            self.render().log_if_err();
+
+            // TODO: sometimes, the border doesn't show up on the first try. So, we just wait
+            // 5ms and call render() again. This seems to be an issue with the visibility of
+            // the window itself.
+            thread::sleep(time::Duration::from_millis(5));
+            self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
+            self.render().log_if_err();
+
+            self.border_drawer
+                .set_anims_timer_if_needed(self.border_window);
+        }
+
+        // Handle the edge case where the tracking window is already minimized
+        if is_window_minimized(self.tracking_window) {
+            post_message_w(
+                Some(self.border_window),
+                WM_APP_MINIMIZESTART,
+                WPARAM(0),
+                LPARAM(0),
+            )
+            .context("could not post WM_APP_MINIMIZESTART message in init()")?;
+        }
+
+        {
+            let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+            if komorebi_integration.is_running() {
+                let self_focus_state = komorebi_integration
+                    .focus_state
+                    .lock()
+                    .unwrap()
+                    .get(&(self.tracking_window.0 as isize))
+                    .copied();
+
+                // Handle the edge case where the focus state is already komorebi-specific upon border creation
+                if !matches!(
+                    self_focus_state,
+                    None | Some(WindowKind::Single) | Some(WindowKind::Unfocused)
+                ) {
+                    post_message_w(
+                        Some(self.border_window),
+                        WM_APP_KOMOREBI,
+                        WPARAM(0),
+                        LPARAM(0),
+                    )
+                    .context("could not post WM_APP_KOMOREBI message in init()")
+                    .log_if_err();
+                }
+            }
         }
 
         Ok(())
@@ -1164,11 +1168,7 @@ impl WindowBorder {
                         self.cleanup_and_queue_exit();
                         return LRESULT(0);
                     };
-
-                    if self.should_show_border() {
-                        self.border_drawer
-                            .set_anims_timer_if_needed(self.border_window);
-                    }
+                    self.init_border().log_if_err();
                 }
                 _ => {}
             },
