@@ -59,7 +59,6 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
             let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
 
             let event_unhook_res = unsafe { UnhookWinEvent(hwineventhook) }.ok();
-            let config_stop_res = APP_STATE.config_watcher.lock().unwrap().stop();
             let komorebi_stop_res = APP_STATE.komorebi_integration.lock().unwrap().stop();
             let adapters_stop_res = {
                 let mut watcher_opt = APP_STATE.display_adapters_watcher.lock().unwrap();
@@ -69,16 +68,11 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
                 }
             };
 
-            if event_unhook_res.is_ok()
-                && config_stop_res.is_ok()
-                && komorebi_stop_res.is_ok()
-                && adapters_stop_res.is_ok()
-            {
+            if event_unhook_res.is_ok() && komorebi_stop_res.is_ok() && adapters_stop_res.is_ok() {
                 unsafe { PostQuitMessage(0) };
             } else {
                 let results = [
                     format!("attempt to unhook win event: {event_unhook_res:?}"),
-                    format!("attempt to stop config watcher: {config_stop_res:?}"),
                     format!("attempt to stop komorebi integration: {komorebi_stop_res:?}"),
                     format!("attempt to stop display adapters watcher: {adapters_stop_res:?}"),
                 ];

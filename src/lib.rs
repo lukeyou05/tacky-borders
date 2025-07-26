@@ -23,13 +23,12 @@ use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use utils::{
-    WindowsCompatibleResult, LogIfErr, WindowsContext, T_E_UNINIT, ToWindowsResult,
-    WM_APP_RECREATE_DRAWER, create_border_for_window, get_foreground_window, get_last_error,
+    LogIfErr, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER, WindowsCompatibleResult,
+    WindowsContext, create_border_for_window, get_foreground_window, get_last_error,
     get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible,
     post_message_w, send_message_w,
 };
@@ -88,7 +87,7 @@ pub struct AppState {
     active_window: Mutex<isize>,
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
-    config_watcher: Mutex<ConfigWatcher>,
+    config_watcher: Mutex<Option<ConfigWatcher>>,
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<KomorebiIntegration>,
@@ -102,29 +101,20 @@ impl AppState {
     fn new() -> Self {
         let active_window = get_foreground_window().0 as isize;
 
-        let mut config_watcher = ConfigWatcher::new(
-            Config::get_dir()
-                .map(|dir| dir.join("config.yaml"))
-                .unwrap_or_else(|err| {
-                    error!("could not get path for config watcher: {err}");
-                    PathBuf::default()
-                }),
-            500,
-            config_watcher_callback,
-        );
-
+        let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
         let mut komorebi_integration = KomorebiIntegration::new();
 
         let config = match Config::create() {
             Ok(config) => {
-                if config_watcher.is_enabled(&config) {
-                    config_watcher.start().log_if_err();
+                if config.is_config_watcher_enabled() {
+                    *config_watcher.lock().unwrap() = create_config_watcher().ok()
                 }
 
                 if komorebi_integration.is_enabled(&config) {
                     komorebi_integration.start().log_if_err();
                 }
 
+                // TODO: move this to the beginning of this match arm
                 if config.enable_logging {
                     if let Err(err) = create_logger() {
                         eprintln!("[ERROR] could not create logger: {err}");
@@ -178,7 +168,7 @@ impl AppState {
             active_window: Mutex::new(active_window),
             is_polling_active_window: AtomicBool::new(false),
             config: RwLock::new(config),
-            config_watcher: Mutex::new(config_watcher),
+            config_watcher,
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
             komorebi_integration: Mutex::new(komorebi_integration),
@@ -331,7 +321,8 @@ impl DirectXDevices {
             .context("could not get d3d11_device")
             .to_windows_result(T_E_UNINIT)?;
         let dxgi_device: IDXGIDevice = d3d11_device.cast().windows_context("dxgi_device")?;
-        let d2d_device = unsafe { factory.CreateDevice(&dxgi_device) }.windows_context("d2d_device")?;
+        let d2d_device =
+            unsafe { factory.CreateDevice(&dxgi_device) }.windows_context("d2d_device")?;
 
         let dxgi_adapter: IDXGIAdapter =
             unsafe { dxgi_device.GetAdapter() }.windows_context("dxgi_adapter")?;
@@ -352,13 +343,14 @@ impl DirectXDevices {
 
     pub fn needs_recreation(&self) -> WindowsCompatibleResult<bool> {
         let dxgi_factory: IDXGIFactory6 =
-            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
-                .windows_context("could not create dxgi_factory to check for GPU adapter changes")?;
+            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }.windows_context(
+                "could not create dxgi_factory to check for GPU adapter changes",
+            )?;
 
         let new_dxgi_adapter: IDXGIAdapter =
             unsafe { dxgi_factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_UNSPECIFIED)? };
-        let new_adapter_desc =
-            unsafe { new_dxgi_adapter.GetDesc() }.windows_context("could not get new_adapter_desc")?;
+        let new_adapter_desc = unsafe { new_dxgi_adapter.GetDesc() }
+            .windows_context("could not get new_adapter_desc")?;
 
         let curr_dxgi_adapter: IDXGIAdapter = unsafe {
             self.dxgi_device
@@ -379,6 +371,14 @@ impl DirectXDevices {
 
         Ok(())
     }
+}
+
+fn create_config_watcher() -> anyhow::Result<ConfigWatcher> {
+    let config_path = Config::get_dir()
+        .map(|dir| dir.join("config.yaml"))
+        .context("could not get dir for config watcher")?;
+    ConfigWatcher::new(config_path, 500, config_watcher_callback)
+        .context("could not create config watcher")
 }
 
 pub fn create_logger() -> anyhow::Result<()> {

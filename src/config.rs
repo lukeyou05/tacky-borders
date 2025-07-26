@@ -4,7 +4,10 @@ use crate::effects::EffectsConfig;
 use crate::komorebi::KomorebiColorsConfig;
 use crate::render_backend::RenderBackendConfig;
 use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
-use crate::{APP_STATE, DirectXDevices, IS_WINDOWS_11, display_error_box, reload_borders};
+use crate::{
+    APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
+    reload_borders,
+};
 use anyhow::{Context, anyhow};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
@@ -260,10 +263,10 @@ impl Config {
                 {
                     let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
 
-                    if config_watcher.is_enabled(&config) && !config_watcher.is_running() {
-                        config_watcher.start().log_if_err();
-                    } else if !config_watcher.is_enabled(&config) && config_watcher.is_running() {
-                        config_watcher.stop().log_if_err();
+                    if config.is_config_watcher_enabled() && config_watcher.is_none() {
+                        *config_watcher = create_config_watcher().ok()
+                    } else if !config.is_config_watcher_enabled() && config_watcher.is_some() {
+                        *config_watcher = None;
                     }
                 }
 
@@ -312,39 +315,26 @@ impl Config {
         };
         *APP_STATE.config.write().unwrap() = new_config;
     }
+
+    pub fn is_config_watcher_enabled(&self) -> bool {
+        self.watch_config_changes
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConfigWatcher {
-    config_path: PathBuf,
-    debounce_time: time::Duration,
-    callback_fn: fn(),
-    config_dir_handle: Option<isize>,
+    dir_handle: HANDLE,
 }
 
 impl ConfigWatcher {
-    pub fn new(config_path: PathBuf, debounce_time: u64, callback_fn: fn()) -> Self {
-        Self {
-            config_path,
-            debounce_time: time::Duration::from_millis(debounce_time),
-            callback_fn,
-            config_dir_handle: None,
-        }
-    }
-
-    pub fn is_enabled(&mut self, config: &Config) -> bool {
-        config.watch_config_changes
-    }
-
-    pub fn start(&mut self) -> anyhow::Result<()> {
+    pub fn new(
+        config_path: PathBuf,
+        debounce_time: u64,
+        callback_fn: fn(),
+    ) -> anyhow::Result<Self> {
         debug!("starting config watcher");
 
-        if self.is_running() {
-            return Err(anyhow!("config watcher is already running"));
-        }
-
-        let config_dir = self
-            .config_path
+        let config_dir = config_path
             .parent()
             .context("could not get parent dir for config watcher")?;
         let config_dir_vec: Vec<u16> = config_dir
@@ -368,18 +358,14 @@ impl ConfigWatcher {
 
         // Convert HANDLE to isize so we can move it into the new thread
         let dir_handle_isize = dir_handle.0 as isize;
-        self.config_dir_handle = Some(dir_handle_isize);
 
         // Also initialize these variables so we move them into the new thread
-        let config_name = self
-            .config_path
+        let config_name = config_path
             .file_name()
             .context("could not get config name for config watcher")?
             .to_owned()
             .into_string()
             .map_err(|_| anyhow!("could not convert config name for config watcher"))?;
-        let debounce_time = self.debounce_time;
-        let callback_fn = self.callback_fn;
 
         let _ = thread::spawn(move || unsafe {
             // Reconvert isize back to HANDLE
@@ -408,13 +394,13 @@ impl ConfigWatcher {
                 // Prevent too many directory checks in quick succession
                 // NOTE: if any dir changes are made while the thread is asleep, the OS will hold
                 // the operations in queue, so we can immediately check them again after looping
-                thread::sleep(debounce_time);
+                thread::sleep(time::Duration::from_millis(debounce_time));
             }
 
             debug!("exiting config watcher thread");
         });
 
-        Ok(())
+        Ok(Self { dir_handle })
     }
 
     pub fn process_dir_change_notifs(
@@ -448,37 +434,21 @@ impl ConfigWatcher {
             }
         }
     }
+}
 
-    pub fn stop(&mut self) -> anyhow::Result<()> {
+impl Drop for ConfigWatcher {
+    fn drop(&mut self) {
         debug!("stopping config watcher");
 
-        if let Some(dir_handle_isize) = self.config_dir_handle {
-            let dir_handle = HANDLE(dir_handle_isize as _);
+        // Cancel all pending I/O operations on the handle
+        unsafe { CancelIoEx(self.dir_handle, None) }
+            .context("could not cancel config watcher I/O operation")
+            .log_if_err();
 
-            // Cancel all pending I/O operations on the handle
-            unsafe { CancelIoEx(dir_handle, None) }
-                .context("could not cancel config watcher I/O operation")
-                .log_if_err();
-
-            // Close the handle for cleanup. This should automatically exit the watcher thread.
-            let res =
-                unsafe { CloseHandle(dir_handle) }.context("could not close config watcher handle");
-
-            // Reset the config dir handle if we successfully closed it
-            if res.is_ok() {
-                self.config_dir_handle = None;
-            }
-
-            res
-        } else {
-            debug!("config watcher is not running; skipping cleanup");
-
-            Ok(())
-        }
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.config_dir_handle.is_some()
+        // Close the handle for cleanup. This should automatically exit the watcher thread.
+        unsafe { CloseHandle(self.dir_handle) }
+            .context("could not close config watcher handle")
+            .log_if_err();
     }
 }
 
