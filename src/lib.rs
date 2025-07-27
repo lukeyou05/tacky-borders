@@ -27,10 +27,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use utils::{
-    LogIfErr, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER, WindowsCompatibleResult,
-    WindowsContext, create_border_for_window, get_foreground_window, get_last_error,
-    get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible,
-    post_message_w, send_message_w,
+    LogIfErr, ScopedHandle, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
+    WindowsCompatibleResult, WindowsContext, create_border_for_window, get_foreground_window,
+    get_last_error, get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level,
+    is_window_visible, post_message_w, send_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
@@ -104,6 +104,7 @@ impl AppState {
         let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
         let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
 
+        // TODO: Log object creation errors instead of silently calling .ok()
         let config = match Config::create() {
             Ok(config) => {
                 if config.enable_logging {
@@ -130,22 +131,14 @@ impl AppState {
             }
         };
 
+        let display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>> =
+            Mutex::new(DisplayAdaptersWatcher::new().ok());
+
         let render_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
                 error!("could not create ID2D1Factory: {err}");
                 panic!()
             })
-        };
-
-        let display_adapters_watcher_opt = match DisplayAdaptersWatcher::new() {
-            Ok(mut watcher) => {
-                watcher.start().log_if_err();
-                Some(watcher)
-            }
-            Err(err) => {
-                error!("could not create display_adapters_watcher: {err}");
-                None
-            }
         };
 
         let directx_devices_opt = match config.render_backend {
@@ -171,7 +164,7 @@ impl AppState {
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
             komorebi_integration,
-            display_adapters_watcher: Mutex::new(display_adapters_watcher_opt),
+            display_adapters_watcher,
         }
     }
 
@@ -197,9 +190,11 @@ impl AppState {
     }
 }
 
+#[allow(unused)]
 struct DisplayAdaptersWatcher {
     dxgi_factory: IDXGIFactory7,
-    event_cookie: Option<u32>,
+    event_handle: ScopedHandle,
+    event_cookie: u32,
 }
 
 impl DisplayAdaptersWatcher {
@@ -208,20 +203,12 @@ impl DisplayAdaptersWatcher {
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
                 .context("could not create dxgi_factory to watch for display adapter changes; issues may occur due to an inability to update DirectX devices accordingly")?;
 
-        Ok(Self {
-            dxgi_factory,
-            event_cookie: None,
-        })
-    }
-
-    fn start(&mut self) -> anyhow::Result<()> {
         let handle = unsafe { CreateEventW(None, false, false, None) }?;
-        let cookie = unsafe { self.dxgi_factory.RegisterAdaptersChangedEvent(handle) }?;
-
-        self.event_cookie = Some(cookie);
+        let event_handle = ScopedHandle(handle);
+        let event_cookie = unsafe { dxgi_factory.RegisterAdaptersChangedEvent(event_handle.0) }?;
 
         // Convert the HANDLE to an isize so we can pass it into the thread below
-        let handle_isize = handle.0 as isize;
+        let handle_isize = event_handle.0.0 as isize;
 
         let _ = thread::spawn(move || {
             debug!("starting display adapters watcher");
@@ -238,14 +225,14 @@ impl DisplayAdaptersWatcher {
                         "could not check for display adapter changes: {last_error:?}; exiting thread"
                     );
 
-                    return;
+                    break;
                 }
 
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
                     && let Err(err) = directx_devices.recreate_if_needed()
                 {
                     error!("could not recreate directx devices if needed: {err}");
-                    return;
+                    break;
                 }
 
                 for hwnd_isize in APP_STATE.borders.lock().unwrap().values() {
@@ -260,21 +247,26 @@ impl DisplayAdaptersWatcher {
                     .log_if_err();
                 }
             }
+
+            debug!("exiting display adapters watcher");
         });
 
-        Ok(())
+        Ok(Self {
+            dxgi_factory,
+            event_handle,
+            event_cookie,
+        })
     }
+}
 
-    fn stop(&mut self) -> anyhow::Result<()> {
-        let cookie = self
-            .event_cookie
-            .context("could not get adapters changed event cookie; perhaps the event was never registered in the first place")?;
-        unsafe { self.dxgi_factory.UnregisterAdaptersChangedEvent(cookie) }
-            .context("UnregisterAdaptersChangedEvent()")?;
-
-        self.event_cookie = None;
-
-        Ok(())
+impl Drop for DisplayAdaptersWatcher {
+    fn drop(&mut self) {
+        unsafe {
+            self.dxgi_factory
+                .UnregisterAdaptersChangedEvent(self.event_cookie)
+        }
+        .context("could not unregister adapters changed event")
+        .log_if_err();
     }
 }
 

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::{ptr, thread};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, GetLastError,
-    HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
+    HANDLE, HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_CLOAKED, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -373,6 +373,17 @@ impl<T> WriteLockable<T> {
     }
 }
 
+#[derive(Debug)]
+pub struct ScopedHandle(pub HANDLE);
+
+impl Drop for ScopedHandle {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) }
+            .context("could not close handle")
+            .log_if_err();
+    }
+}
+
 pub fn get_window_style(hwnd: HWND) -> WINDOW_STYLE {
     unsafe { WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32) }
 }
@@ -463,6 +474,7 @@ pub fn get_window_process_name(hwnd: HWND) -> anyhow::Result<String> {
     }
     .context(format!("could not query process image name for {hwnd:?}"));
 
+    // TODO: Use format! inside context() to ensure variables are handled correctly
     unsafe { CloseHandle(hprocess) }.context("could not close {hprocess:?}")?;
 
     result?;

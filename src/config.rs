@@ -3,7 +3,7 @@ use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
 use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
-use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
+use crate::utils::{LogIfErr, ScopedHandle, get_adjusted_radius, get_window_corner_preference};
 use crate::{
     APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
     reload_borders,
@@ -15,7 +15,7 @@ use std::fs::{self, DirBuilder};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::{env, iter, ptr, slice, thread, time};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
+use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Dwm::{
     DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
 };
@@ -329,18 +329,6 @@ impl Config {
                     .map(|komocolors| komocolors.enabled)
                     .unwrap_or(false)
             })
-    }
-}
-
-// TODO: Maybe move this into utils.rs
-#[derive(Debug)]
-struct ScopedHandle(HANDLE);
-
-impl Drop for ScopedHandle {
-    fn drop(&mut self) {
-        unsafe { CloseHandle(self.0) }
-            .context("could not close handle")
-            .log_if_err();
     }
 }
 
