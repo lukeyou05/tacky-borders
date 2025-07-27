@@ -1,7 +1,7 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
-use crate::komorebi::KomorebiColorsConfig;
+use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
 use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
 use crate::{
@@ -261,26 +261,27 @@ impl Config {
         let new_config = match Self::create() {
             Ok(config) => {
                 {
-                    let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
+                    let mut config_watcher_opt = APP_STATE.config_watcher.lock().unwrap();
 
-                    if config.is_config_watcher_enabled() && config_watcher.is_none() {
-                        *config_watcher = create_config_watcher().ok()
-                    } else if !config.is_config_watcher_enabled() && config_watcher.is_some() {
-                        *config_watcher = None;
+                    if config.is_config_watcher_enabled() && config_watcher_opt.is_none() {
+                        *config_watcher_opt = create_config_watcher().ok()
+                    } else if !config.is_config_watcher_enabled() && config_watcher_opt.is_some() {
+                        *config_watcher_opt = None;
                     }
                 }
 
                 {
-                    let mut komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                    let mut komorebi_integration_opt =
+                        APP_STATE.komorebi_integration.lock().unwrap();
 
-                    if komorebi_integration.is_enabled(&config)
-                        && !komorebi_integration.is_running()
+                    if config.is_komorebi_integration_enabled()
+                        && komorebi_integration_opt.is_none()
                     {
-                        komorebi_integration.start().log_if_err();
-                    } else if !komorebi_integration.is_enabled(&config)
-                        && komorebi_integration.is_running()
+                        *komorebi_integration_opt = KomorebiIntegration::new().ok();
+                    } else if !config.is_komorebi_integration_enabled()
+                        && komorebi_integration_opt.is_some()
                     {
-                        komorebi_integration.stop().log_if_err();
+                        *komorebi_integration_opt = None;
                     }
                 }
 
@@ -319,8 +320,19 @@ impl Config {
     pub fn is_config_watcher_enabled(&self) -> bool {
         self.watch_config_changes
     }
+
+    pub fn is_komorebi_integration_enabled(&self) -> bool {
+        self.global.komorebi_colors.enabled
+            || self.window_rules.iter().any(|rule| {
+                rule.komorebi_colors
+                    .as_ref()
+                    .map(|komocolors| komocolors.enabled)
+                    .unwrap_or(false)
+            })
+    }
 }
 
+// TODO: Maybe move this into utils.rs
 #[derive(Debug)]
 struct ScopedHandle(HANDLE);
 

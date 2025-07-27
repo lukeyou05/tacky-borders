@@ -90,7 +90,7 @@ pub struct AppState {
     config_watcher: Mutex<Option<ConfigWatcher>>,
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
-    komorebi_integration: Mutex<KomorebiIntegration>,
+    komorebi_integration: Mutex<Option<KomorebiIntegration>>,
     display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
 }
 
@@ -102,7 +102,7 @@ impl AppState {
         let active_window = get_foreground_window().0 as isize;
 
         let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
-        let mut komorebi_integration = KomorebiIntegration::new();
+        let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
 
         let config = match Config::create() {
             Ok(config) => {
@@ -116,8 +116,8 @@ impl AppState {
                     *config_watcher.lock().unwrap() = create_config_watcher().ok()
                 }
 
-                if komorebi_integration.is_enabled(&config) {
-                    komorebi_integration.start().log_if_err();
+                if config.is_komorebi_integration_enabled() {
+                    *komorebi_integration.lock().unwrap() = KomorebiIntegration::new().ok();
                 }
 
                 config
@@ -170,7 +170,7 @@ impl AppState {
             config_watcher,
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
-            komorebi_integration: Mutex::new(komorebi_integration),
+            komorebi_integration,
             display_adapters_watcher: Mutex::new(display_adapters_watcher_opt),
         }
     }

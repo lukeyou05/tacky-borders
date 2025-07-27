@@ -8,13 +8,13 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::{fs, thread, time};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup, closesocket};
+use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup};
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
-use crate::config::{Config, serde_default_bool};
+use crate::config::serde_default_bool;
 use crate::iocp::{CompletionPort, UnixDomainSocket, UnixListener, UnixStream};
 use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, is_window, post_message_w};
 
@@ -35,33 +35,12 @@ pub struct KomorebiColorsConfig {
 pub struct KomorebiIntegration {
     // NOTE: in komorebi it's <Border HWND, WindowKind>, but here it's <Tracking HWND, WindowKind>
     pub focus_state: Arc<Mutex<HashMap<isize, WindowKind>>>,
-    pub listen_socket: Option<UnixDomainSocket>,
+    pub listen_socket: Arc<UnixDomainSocket>,
 }
 
 impl KomorebiIntegration {
-    pub fn new() -> Self {
-        Self {
-            focus_state: Arc::new(Mutex::new(HashMap::new())),
-            listen_socket: None,
-        }
-    }
-
-    pub fn is_enabled(&mut self, config: &Config) -> bool {
-        config.global.komorebi_colors.enabled
-            || config.window_rules.iter().any(|rule| {
-                rule.komorebi_colors
-                    .as_ref()
-                    .map(|komocolors| komocolors.enabled)
-                    .unwrap_or(false)
-            })
-    }
-
-    pub fn start(&mut self) -> anyhow::Result<()> {
+    pub fn new() -> anyhow::Result<Self> {
         debug!("starting komorebic integration");
-
-        if self.is_running() {
-            return Err(anyhow!("komorebi integration is already running"));
-        }
 
         // Start the WinSock service
         let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
@@ -81,18 +60,15 @@ impl KomorebiIntegration {
             fs::remove_file(&socket_path)?;
         }
 
-        let mut listener = UnixListener::bind(&socket_path)?;
+        let listener = UnixListener::bind(&socket_path)?;
 
         let port = CompletionPort::new(2)?;
         port.associate_handle(listener.socket.to_handle(), listener.token())?;
 
-        // Prevent overriding already existing sockets
-        if self.listen_socket.is_some() {
-            return Err(anyhow!("found existing socket; cannot reassign"));
-        }
-        self.listen_socket = Some(listener.socket.clone());
+        let listen_socket = listener.socket.clone();
 
-        let focus_state = self.focus_state.clone();
+        let focus_state = Arc::new(Mutex::new(HashMap::new()));
+        let focus_state_clone = focus_state.clone();
 
         let _ = thread::spawn(move || {
             move || -> anyhow::Result<()> {
@@ -116,7 +92,7 @@ impl KomorebiIntegration {
                     }
                     if last_focus_state_prune.elapsed() > FOCUS_STATE_PRUNE_INTERVAL {
                         debug!("pruning focus state for komorebi integration");
-                        focus_state
+                        focus_state_clone
                             .lock()
                             .unwrap()
                             .retain(|&hwnd_isize, _| is_window(Some(HWND(hwnd_isize as _))));
@@ -155,7 +131,7 @@ impl KomorebiIntegration {
                                 .1;
 
                             Self::process_komorebi_notification(
-                                focus_state.clone(),
+                                &focus_state_clone,
                                 &stream.buffer,
                                 entry.dwNumberOfBytesTransferred,
                             );
@@ -178,30 +154,15 @@ impl KomorebiIntegration {
             .context("could not get komorebic subscribe-socket exit status")?
             .success()
         {
-            error!("could not subscribe to komorebic socket; stopping integration");
-            self.stop().context("could not stop komorebi integration")?;
+            return Err(anyhow!(
+                "could not subscribe to komorebic socket; stopping integration"
+            ));
         }
 
-        Ok(())
-    }
-
-    pub fn stop(&mut self) -> anyhow::Result<()> {
-        debug!("stopping komorebi integration");
-
-        // If this is Some, it means WinSock is (most likely) running, so we need to cleanup. Doing
-        // so should also cause the socket worker thread to automatically fail and exit.
-        if let Some(ref socket) = self.listen_socket {
-            unsafe { WSACleanup() };
-
-            unsafe { closesocket(socket.0) };
-            self.listen_socket = None;
-        }
-
-        Ok(())
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.listen_socket.is_some()
+        Ok(Self {
+            focus_state,
+            listen_socket,
+        })
     }
 
     pub fn get_komorebic_socket_path() -> anyhow::Result<PathBuf> {
@@ -216,7 +177,7 @@ impl KomorebiIntegration {
 
     // Largely adapted from komorebi's own border implementation. Thanks @LGUG2Z
     pub fn process_komorebi_notification(
-        focus_state_mutex: Arc<Mutex<HashMap<isize, WindowKind>>>,
+        focus_state_mutex: &Arc<Mutex<HashMap<isize, WindowKind>>>,
         buffer: &[u8],
         bytes_received: u32,
     ) {
@@ -367,9 +328,15 @@ impl KomorebiIntegration {
     }
 }
 
-impl Default for KomorebiIntegration {
-    fn default() -> Self {
-        Self::new()
+impl Drop for KomorebiIntegration {
+    fn drop(&mut self) {
+        debug!("stopping komorebi integration");
+
+        // Cleaning up should cause the worker thread to automatically fail and exit
+        unsafe { WSACleanup() };
+
+        // TODO: likely unnecessary if the worker thread actually exits like intended
+        // unsafe { closesocket(self.listen_socket.0) };
     }
 }
 

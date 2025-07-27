@@ -200,8 +200,8 @@ impl WindowBorder {
         }
 
         {
-            let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
-            if komorebi_integration.is_running() {
+            let komorebi_integration_opt = APP_STATE.komorebi_integration.lock().unwrap();
+            if let Some(komorebi_integration) = komorebi_integration_opt.as_ref() {
                 let self_focus_state = komorebi_integration
                     .focus_state
                     .lock()
@@ -984,7 +984,10 @@ impl WindowBorder {
                 }
 
                 let window_kind = {
-                    let komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                    let komorebi_integration_opt = APP_STATE.komorebi_integration.lock().unwrap();
+                    let Some(komorebi_integration) = komorebi_integration_opt.as_ref() else {
+                        return LRESULT(0);
+                    };
                     let focus_state = komorebi_integration.focus_state.lock().unwrap();
 
                     *focus_state
