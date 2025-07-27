@@ -25,7 +25,7 @@ use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, T
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use utils::{
     LogIfErr, ScopedHandle, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
     WindowsCompatibleResult, WindowsContext, create_border_for_window, get_foreground_window,
@@ -34,8 +34,8 @@ use utils::{
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
-    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED, WAIT_FAILED,
-    WPARAM,
+    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED_0, WAIT_EVENT,
+    WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
@@ -54,7 +54,7 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
-use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
+use windows::Win32::System::Threading::{CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_MAX, EVENT_MIN, EnumWindows, IDC_ARROW, LoadCursorW, MB_ICONERROR, MB_OK,
@@ -193,8 +193,10 @@ impl AppState {
 #[allow(unused)]
 struct DisplayAdaptersWatcher {
     dxgi_factory: IDXGIFactory7,
-    event_handle: ScopedHandle,
-    event_cookie: u32,
+    changed_event: ScopedHandle,
+    changed_cookie: u32,
+    stop_event: ScopedHandle,
+    thread_handle: Option<JoinHandle<()>>,
 }
 
 impl DisplayAdaptersWatcher {
@@ -203,27 +205,48 @@ impl DisplayAdaptersWatcher {
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
                 .context("could not create dxgi_factory to watch for display adapter changes; issues may occur due to an inability to update DirectX devices accordingly")?;
 
-        let handle = unsafe { CreateEventW(None, false, false, None) }?;
-        let event_handle = ScopedHandle(handle);
-        let event_cookie = unsafe { dxgi_factory.RegisterAdaptersChangedEvent(event_handle.0) }?;
+        let changed_event = {
+            let handle = unsafe { CreateEventW(None, false, false, None)? };
+            ScopedHandle(handle)
+        };
+        let changed_cookie = unsafe { dxgi_factory.RegisterAdaptersChangedEvent(changed_event.0) }?;
 
-        // Convert the HANDLE to an isize so we can pass it into the thread below
-        let handle_isize = event_handle.0.0 as isize;
+        let stop_event = {
+            let handle = unsafe { CreateEventW(None, true, false, None)? };
+            ScopedHandle(handle)
+        };
 
-        let _ = thread::spawn(move || {
+        // Convert the HANDLEs to isize so we can pass them into the thread below
+        let changed_handle_isize = changed_event.0.0 as isize;
+        let stop_handle_isize = stop_event.0.0 as isize;
+
+        let thread_handle = thread::spawn(move || {
             debug!("starting display adapters watcher");
 
+            let events = [
+                HANDLE(changed_handle_isize as _),
+                HANDLE(stop_handle_isize as _),
+            ];
+
+            const WAIT_OBJECT_1: WAIT_EVENT = WAIT_EVENT(WAIT_OBJECT_0.0 + 1);
+            const WAIT_ABANDONED_1: WAIT_EVENT = WAIT_EVENT(WAIT_ABANDONED_0.0 + 1);
+
             loop {
-                // This function will block until an adapters changed event or an error has occurred.
-                let wait_event =
-                    unsafe { WaitForSingleObject(HANDLE(handle_isize as _), INFINITE) };
+                // This function will block until an event or error has been signaled.
+                let wait_event = unsafe { WaitForMultipleObjects(&events, false, INFINITE) };
+
+                // If the stop event has been signaled, exit the loop
+                if wait_event == WAIT_OBJECT_1 {
+                    break;
+                }
 
                 // If an error has occurred, log it and exit the thread.
-                if wait_event == WAIT_ABANDONED || wait_event == WAIT_FAILED {
+                if wait_event == WAIT_ABANDONED_0
+                    || wait_event == WAIT_ABANDONED_1
+                    || wait_event == WAIT_FAILED
+                {
                     let last_error = get_last_error();
-                    error!(
-                        "could not check for display adapter changes: {last_error:?}; exiting thread"
-                    );
+                    error!("could not check for display adapter changes: {last_error:?}");
 
                     break;
                 }
@@ -253,8 +276,10 @@ impl DisplayAdaptersWatcher {
 
         Ok(Self {
             dxgi_factory,
-            event_handle,
-            event_cookie,
+            changed_event,
+            changed_cookie,
+            stop_event,
+            thread_handle: Some(thread_handle),
         })
     }
 }
@@ -263,10 +288,22 @@ impl Drop for DisplayAdaptersWatcher {
     fn drop(&mut self) {
         unsafe {
             self.dxgi_factory
-                .UnregisterAdaptersChangedEvent(self.event_cookie)
+                .UnregisterAdaptersChangedEvent(self.changed_cookie)
         }
         .context("could not unregister adapters changed event")
         .log_if_err();
+
+        unsafe { SetEvent(self.stop_event.0) }
+            .context("could not signal stop event for display adapters watcher")
+            .log_if_err();
+
+        if let Some(handle) = self.thread_handle.take() {
+            if let Err(err) = handle.join() {
+                error!("could not join thread_handle in display adapters watcher: {err:?}");
+            }
+        } else {
+            error!("could not take thread_handle from display adapters watcher");
+        }
     }
 }
 
