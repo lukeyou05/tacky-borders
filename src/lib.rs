@@ -221,7 +221,7 @@ impl DisplayAdaptersWatcher {
         let stop_handle_isize = stop_event.0.0 as isize;
 
         let thread_handle = thread::spawn(move || {
-            debug!("starting display adapters watcher");
+            debug!("entering display adapters watcher thread");
 
             let events = [
                 HANDLE(changed_handle_isize as _),
@@ -271,7 +271,7 @@ impl DisplayAdaptersWatcher {
                 }
             }
 
-            debug!("exiting display adapters watcher");
+            debug!("exiting display adapters watcher thread");
         });
 
         Ok(Self {

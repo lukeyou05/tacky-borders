@@ -88,7 +88,7 @@ impl KomorebiIntegration {
         }
 
         let thread_handle = thread::spawn(move || {
-            debug!("starting komorebic integration");
+            debug!("entering komorebi integration thread");
 
             move || -> anyhow::Result<()> {
                 let mut entries = vec![OVERLAPPED_ENTRY::default(); 8];
@@ -390,8 +390,6 @@ impl KomorebiIntegration {
 
 impl Drop for KomorebiIntegration {
     fn drop(&mut self) {
-        debug!("stopping komorebi integration");
-
         let post_res =
             unsafe { PostQueuedCompletionStatus(self.iocp_handle, 0, STOP_PACKET_KEY, None) };
 

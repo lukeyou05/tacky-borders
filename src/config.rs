@@ -343,9 +343,6 @@ impl ConfigWatcher {
         debounce_time: u64,
         callback_fn: fn(),
     ) -> anyhow::Result<Self> {
-        // TODO: Move this debug statement to the start of the thread spawn
-        debug!("starting config watcher");
-
         let config_dir = config_path
             .parent()
             .context("could not get parent dir for config watcher")?;
@@ -381,6 +378,8 @@ impl ConfigWatcher {
             .map_err(|_| anyhow!("could not convert config name for config watcher"))?;
 
         let _ = thread::spawn(move || unsafe {
+            debug!("entering config watcher thread");
+
             // Reconvert isize back to HANDLE
             let dir_handle = HANDLE(dir_handle_isize as _);
 
@@ -451,8 +450,6 @@ impl ConfigWatcher {
 
 impl Drop for ConfigWatcher {
     fn drop(&mut self) {
-        debug!("stopping config watcher");
-
         // Cancel all pending I/O operations on the handle. This should make the worker thread
         // automatically exit.
         unsafe { CancelIoEx(self.dir_handle.0, None) }
