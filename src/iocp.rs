@@ -291,12 +291,6 @@ impl UnixDomainSocket {
     }
 }
 
-impl From<UnixDomainSocket> for HANDLE {
-    fn from(value: UnixDomainSocket) -> Self {
-        Self(value.0.0 as _)
-    }
-}
-
 impl Drop for UnixDomainSocket {
     fn drop(&mut self) {
         unsafe { closesocket(self.0) };
@@ -362,6 +356,7 @@ impl CompletionPort {
             None => INFINITE,
         };
 
+        // TODO: Replace context() with with_context()
         unsafe {
             GetQueuedCompletionStatus(
                 self.0,
