@@ -15,7 +15,7 @@ use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
 use crate::config::serde_default_bool;
-use crate::iocp::{CompletionPort, UnixDomainSocket, UnixListener, UnixStream};
+use crate::iocp::{CompletionPort, UnixListener, UnixStream};
 use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, is_window, post_message_w};
 
 const BUFFER_POOL_PRUNE_INTERVAL: time::Duration = time::Duration::from_secs(600);
@@ -35,7 +35,6 @@ pub struct KomorebiColorsConfig {
 pub struct KomorebiIntegration {
     // NOTE: in komorebi it's <Border HWND, WindowKind>, but here it's <Tracking HWND, WindowKind>
     pub focus_state: Arc<Mutex<HashMap<isize, WindowKind>>>,
-    pub listen_socket: Arc<UnixDomainSocket>,
 }
 
 impl KomorebiIntegration {
@@ -64,8 +63,6 @@ impl KomorebiIntegration {
 
         let port = CompletionPort::new(2)?;
         port.associate_handle(listener.socket.to_handle(), listener.token())?;
-
-        let listen_socket = listener.socket.clone();
 
         let focus_state = Arc::new(Mutex::new(HashMap::new()));
         let focus_state_clone = focus_state.clone();
@@ -159,10 +156,7 @@ impl KomorebiIntegration {
             ));
         }
 
-        Ok(Self {
-            focus_state,
-            listen_socket,
-        })
+        Ok(Self { focus_state })
     }
 
     pub fn get_komorebic_socket_path() -> anyhow::Result<PathBuf> {

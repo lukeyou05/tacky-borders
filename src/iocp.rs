@@ -1,7 +1,6 @@
 use anyhow::{Context, anyhow};
 use core::time;
 use std::path::Path;
-use std::sync::Arc;
 use std::{io, mem, ptr};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
@@ -22,7 +21,7 @@ const UNIX_ADDR_LEN: u32 = mem::size_of::<SOCKADDR_UN>() as u32;
 
 #[allow(unused)]
 pub struct UnixListener {
-    pub socket: Arc<UnixDomainSocket>,
+    pub socket: UnixDomainSocket,
     pub buffer: Vec<u8>,
     pub overlapped: Box<OVERLAPPED>,
     pub flags: u32,
@@ -38,7 +37,7 @@ impl UnixListener {
         server_socket.listen(SOMAXCONN as i32)?;
 
         Ok(Self {
-            socket: Arc::new(server_socket),
+            socket: server_socket,
             buffer: Vec::new(),
             overlapped: Box::new(OVERLAPPED::default()),
             flags: 0,
@@ -55,7 +54,7 @@ impl UnixListener {
             .accept(&mut client_buffer, client_overlapped.as_mut())?;
 
         Ok(UnixStream {
-            socket: Arc::new(client_socket),
+            socket: client_socket,
             buffer: client_buffer,
             overlapped: client_overlapped,
             flags: 0,
@@ -72,7 +71,7 @@ impl UnixListener {
 }
 
 pub struct UnixStream {
-    pub socket: Arc<UnixDomainSocket>,
+    pub socket: UnixDomainSocket,
     pub buffer: Vec<u8>,
     // I'm not sure if I need the Box, but I'll keep in just in case because I don't know if
     // GetQueuedCompletionStatus can get the OVERLAPPED pointers if the structs move in memory.
@@ -89,7 +88,7 @@ impl UnixStream {
         client_socket.connect(path)?;
 
         Ok(Self {
-            socket: Arc::new(client_socket),
+            socket: client_socket,
             buffer: Vec::new(),
             overlapped: Box::new(OVERLAPPED::default()),
             flags: 0,

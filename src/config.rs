@@ -343,6 +343,7 @@ impl ConfigWatcher {
         debounce_time: u64,
         callback_fn: fn(),
     ) -> anyhow::Result<Self> {
+        // TODO: Move this debug statement to the start of the thread spawn
         debug!("starting config watcher");
 
         let config_dir = config_path
