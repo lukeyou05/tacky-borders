@@ -293,16 +293,18 @@ impl Drop for DisplayAdaptersWatcher {
         .context("could not unregister adapters changed event")
         .log_if_err();
 
-        unsafe { SetEvent(self.stop_event.0) }
-            .context("could not signal stop event for display adapters watcher")
-            .log_if_err();
+        let set_res = unsafe { SetEvent(self.stop_event.0) };
 
-        if let Some(handle) = self.thread_handle.take() {
-            if let Err(err) = handle.join() {
-                error!("could not join thread_handle in display adapters watcher: {err:?}");
-            }
-        } else {
-            error!("could not take thread_handle from display adapters watcher");
+        match set_res {
+            Ok(()) => match self.thread_handle.take() {
+                Some(handle) => {
+                    if let Err(err) = handle.join() {
+                        error!("could not join display adapters watcher thread handle: {err:?}");
+                    }
+                }
+                None => error!("could not take display adapters watcher thread handle"),
+            },
+            Err(err) => error!("could not signal stop event for display adapters watcher: {err}"),
         }
     }
 }
