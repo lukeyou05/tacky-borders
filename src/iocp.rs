@@ -121,7 +121,7 @@ impl UnixStream {
 }
 
 #[derive(Debug)]
-pub struct UnixDomainSocket(pub SOCKET);
+pub struct UnixDomainSocket(SOCKET);
 
 impl UnixDomainSocket {
     pub fn new() -> anyhow::Result<Self> {
@@ -322,9 +322,7 @@ fn sockaddr_un(path: &Path) -> anyhow::Result<SOCKADDR_UN> {
 }
 
 #[derive(Debug)]
-pub struct CompletionPort {
-    iocp_handle: HANDLE,
-}
+pub struct CompletionPort(HANDLE);
 
 unsafe impl Send for CompletionPort {}
 
@@ -339,12 +337,12 @@ impl CompletionPort {
                 }
             };
 
-        Ok(Self { iocp_handle })
+        Ok(Self(iocp_handle))
     }
 
     pub fn associate_handle(&self, handle: HANDLE, token: usize) -> anyhow::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.iocp_handle), token, 0) }
+        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }
             .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
 
         Ok(())
@@ -366,7 +364,7 @@ impl CompletionPort {
 
         unsafe {
             GetQueuedCompletionStatus(
-                self.iocp_handle,
+                self.0,
                 &mut bytes_transferred,
                 &mut completion_key,
                 &mut lpoverlapped,
@@ -402,7 +400,7 @@ impl CompletionPort {
 
         unsafe {
             GetQueuedCompletionStatusEx(
-                self.iocp_handle,
+                self.0,
                 entries,
                 &mut num_entries_removed,
                 timeout_ms,
@@ -420,6 +418,27 @@ impl CompletionPort {
 
 impl Drop for CompletionPort {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.iocp_handle) }.log_if_err();
+        unsafe { CloseHandle(self.0) }.log_if_err();
+    }
+}
+
+// Like AsRawHandle, but specifically for windows-rs' HANDLE type
+pub trait AsWin32Handle {
+    fn as_win32_handle(&self) -> HANDLE;
+}
+
+impl AsWin32Handle for CompletionPort {
+    fn as_win32_handle(&self) -> HANDLE {
+        self.0
+    }
+}
+
+pub trait AsWin32Socket {
+    fn as_win32_socket(&self) -> SOCKET;
+}
+
+impl AsWin32Socket for UnixDomainSocket {
+    fn as_win32_socket(&self) -> SOCKET {
+        self.0
     }
 }
