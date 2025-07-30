@@ -27,10 +27,11 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::Ime::ImmDisableIME;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowArranged, IsWindowVisible, PostMessageW,
-    RealGetWindowClassW, SendMessageW, SendNotifyMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_NCDESTROY, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    DestroyWindow, DispatchMessageW, GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetMessageW,
+    GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowArranged,
+    IsWindowVisible, MSG, PostMessageW, RealGetWindowClassW, SendMessageW, SendNotifyMessageW,
+    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_NCDESTROY, WS_CHILD,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
 };
 use windows::core::{BOOL, HRESULT, PWSTR};
 
@@ -384,6 +385,19 @@ impl Drop for ScopedHandle {
     }
 }
 
+// NOTE: This struct must stay on the thread that created the window because DestroyWindow only
+// works on windows created by the calling thread.
+#[derive(Debug)]
+pub struct OwnedHWND(pub HWND);
+
+impl Drop for OwnedHWND {
+    fn drop(&mut self) {
+        unsafe { DestroyWindow(self.0) }
+            .with_context(|| format!("could not destroy window {:?}", self.0))
+            .log_if_err();
+    }
+}
+
 pub fn get_window_style(hwnd: HWND) -> WINDOW_STYLE {
     unsafe { WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32) }
 }
@@ -650,7 +664,6 @@ pub fn has_native_border(hwnd: HWND) -> bool {
 }
 
 pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) {
-    debug!("creating border for: {tracking_window:?}");
     let tracking_window_isize = tracking_window.0 as isize;
 
     let _ = thread::spawn(move || {
@@ -664,33 +677,46 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
             return;
         }
 
+        debug!("creating border for: {tracking_window:?}");
+
         // Otherwise, continue creating the border window
-        let mut border = WindowBorder::new(tracking_window);
-        let border_window = match border.create_window() {
-            Ok(hwnd) => hwnd,
+        let mut border = match WindowBorder::new(tracking_window) {
+            Ok(border) => border,
             Err(err) => {
-                error!("could not create border window: {err}");
+                error!("could not create window border for {tracking_window:?}: {err}");
                 return;
             }
         };
 
-        borders_hashmap.insert(tracking_window_isize, border_window.0 as isize);
+        borders_hashmap.insert(tracking_window_isize, border.border_window.0.0 as isize);
         drop(borders_hashmap);
 
         // Drop these values (to save some RAM?) before calling init and entering a message loop
         let _ = tracking_window;
         let _ = tracking_window_isize;
 
-        // NOTE: init() contains a message loop
-        border.init(window_rule).log_if_err();
+        if let Err(err) = border.init(window_rule) {
+            error!("could not initialize border: {err}");
+        } else {
+            // Window message loop
+            unsafe {
+                let mut message = MSG::default();
+                while GetMessageW(&mut message, None, 0, 0).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+        };
 
-        // If init() exits, that means the border has been destroyed, so we should remove it from
-        // the hashmap
+        // If the above loop exits, that means the border has been destroyed, so we should remove
+        // it from the hashmap
         APP_STATE
             .borders
             .lock()
             .unwrap()
             .remove(&tracking_window_isize);
+
+        debug!("exiting border thread for {:?}!", border.tracking_window);
     });
 }
 
