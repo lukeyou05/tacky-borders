@@ -55,29 +55,21 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
         }
         // Close
         "2" => {
-            // Convert hwineventhook_isize back into HWINEVENTHOOK
-            let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
-
             destroy_borders();
 
-            let event_unhook_res = unsafe { UnhookWinEvent(hwineventhook) }.ok();
-            // NOTE: It's important to set these to None to ensure the Drop impl is called
+            // Convert hwineventhook_isize back into HWINEVENTHOOK, and unhook it
+            let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
+            unsafe { UnhookWinEvent(hwineventhook) }
+                .ok()
+                .context("could not unhook win event")
+                .log_if_err();
+
+            // Set to None to call their Drop impls
             *APP_STATE.config_watcher.lock().unwrap() = None;
             *APP_STATE.komorebi_integration.lock().unwrap() = None;
             *APP_STATE.display_adapters_watcher.lock().unwrap() = None;
 
-            if event_unhook_res.is_ok() {
-                unsafe { PostQuitMessage(0) };
-            } else {
-                // TODO: Update this branch to reflect the fact that there is only one Result left
-                // since RAII requires cleanup in the Drop impl (which cannot return a result).
-                let results = [format!("attempt to unhook win event: {event_unhook_res:?}")];
-                // TODO: Display an error box as well
-                error!(
-                    "one or more errors encountered when cleaning up resources upon application exit: \n{}",
-                    results.join("\n")
-                );
-            }
+            unsafe { PostQuitMessage(0) };
         }
         _ => {}
     }));
