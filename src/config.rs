@@ -264,7 +264,9 @@ impl Config {
                     let mut config_watcher_opt = APP_STATE.config_watcher.lock().unwrap();
 
                     if config.is_config_watcher_enabled() && config_watcher_opt.is_none() {
-                        *config_watcher_opt = create_config_watcher().ok()
+                        *config_watcher_opt = create_config_watcher()
+                            .inspect_err(|err| error!("could not start config watcher: {err}"))
+                            .ok();
                     } else if !config.is_config_watcher_enabled() && config_watcher_opt.is_some() {
                         *config_watcher_opt = None;
                     }
@@ -277,7 +279,11 @@ impl Config {
                     if config.is_komorebi_integration_enabled()
                         && komorebi_integration_opt.is_none()
                     {
-                        *komorebi_integration_opt = KomorebiIntegration::new().ok();
+                        *komorebi_integration_opt = KomorebiIntegration::new()
+                            .inspect_err(|err| {
+                                error!("could not start komorebi integration: {err}")
+                            })
+                            .ok();
                     } else if !config.is_komorebi_integration_enabled()
                         && komorebi_integration_opt.is_some()
                     {

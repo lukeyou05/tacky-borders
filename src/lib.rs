@@ -105,7 +105,6 @@ impl AppState {
         let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
         let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
 
-        // TODO: Log object creation errors instead of silently calling .ok()
         let config = match Config::create() {
             Ok(config) => {
                 if config.enable_logging {
@@ -115,11 +114,15 @@ impl AppState {
                 }
 
                 if config.is_config_watcher_enabled() {
-                    *config_watcher.lock().unwrap() = create_config_watcher().ok()
+                    *config_watcher.lock().unwrap() = create_config_watcher()
+                        .inspect_err(|err| error!("could not start config watcher: {err}"))
+                        .ok()
                 }
 
                 if config.is_komorebi_integration_enabled() {
-                    *komorebi_integration.lock().unwrap() = KomorebiIntegration::new().ok();
+                    *komorebi_integration.lock().unwrap() = KomorebiIntegration::new()
+                        .inspect_err(|err| error!("could not start komorebi integration: {err}"))
+                        .ok();
                 }
 
                 config
@@ -132,8 +135,11 @@ impl AppState {
             }
         };
 
-        let display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>> =
-            Mutex::new(DisplayAdaptersWatcher::new().ok());
+        let display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>> = Mutex::new(
+            DisplayAdaptersWatcher::new()
+                .inspect_err(|err| error!("could not start display adapters watcher: {err}"))
+                .ok(),
+        );
 
         let render_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
