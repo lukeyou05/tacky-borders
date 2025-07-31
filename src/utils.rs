@@ -375,9 +375,9 @@ impl<T> WriteLockable<T> {
 }
 
 #[derive(Debug)]
-pub struct ScopedHandle(pub HANDLE);
+pub struct OwnedHANDLE(pub HANDLE);
 
-impl Drop for ScopedHandle {
+impl Drop for OwnedHANDLE {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) }
             .context("could not close handle")

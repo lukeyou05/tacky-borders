@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
 use std::thread::{self, JoinHandle};
 use utils::{
-    LogIfErr, ScopedHandle, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
+    LogIfErr, OwnedHANDLE, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
     WindowsCompatibleResult, WindowsContext, create_border_for_window, get_foreground_window,
     get_last_error, get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level,
     is_window_visible, post_message_w, send_message_w,
@@ -193,9 +193,9 @@ impl AppState {
 #[allow(unused)]
 struct DisplayAdaptersWatcher {
     dxgi_factory: IDXGIFactory7,
-    changed_event: ScopedHandle,
+    changed_event: OwnedHANDLE,
     changed_cookie: u32,
-    stop_event: ScopedHandle,
+    stop_event: OwnedHANDLE,
     thread_handle: Option<JoinHandle<()>>,
 }
 
@@ -207,13 +207,13 @@ impl DisplayAdaptersWatcher {
 
         let changed_event = {
             let handle = unsafe { CreateEventW(None, false, false, None)? };
-            ScopedHandle(handle)
+            OwnedHANDLE(handle)
         };
         let changed_cookie = unsafe { dxgi_factory.RegisterAdaptersChangedEvent(changed_event.0) }?;
 
         let stop_event = {
             let handle = unsafe { CreateEventW(None, true, false, None)? };
-            ScopedHandle(handle)
+            OwnedHANDLE(handle)
         };
 
         // Convert the HANDLEs to isize so we can pass them into the thread below

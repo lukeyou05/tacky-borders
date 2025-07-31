@@ -3,7 +3,7 @@ use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
 use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
-use crate::utils::{LogIfErr, ScopedHandle, get_adjusted_radius, get_window_corner_preference};
+use crate::utils::{LogIfErr, OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
 use crate::{
     APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
     reload_borders,
@@ -334,7 +334,7 @@ impl Config {
 
 #[derive(Debug)]
 pub struct ConfigWatcher {
-    dir_handle: ScopedHandle,
+    dir_handle: OwnedHANDLE,
 }
 
 impl ConfigWatcher {
@@ -364,7 +364,7 @@ impl ConfigWatcher {
             )
         }
         .context("could not create dir handle for config watcher")?;
-        let dir_handle = ScopedHandle(handle);
+        let dir_handle = OwnedHANDLE(handle);
 
         // Convert HANDLE to isize so we can move it into the new thread
         let dir_handle_isize = dir_handle.0.0 as isize;
