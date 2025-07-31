@@ -472,26 +472,25 @@ pub fn get_window_process_name(hwnd: HWND) -> anyhow::Result<String> {
         ));
     }
 
-    let hprocess = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
-        .context(format!("could not open process of {hwnd:?}"))?;
+    let hprocess = {
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
+            .with_context(|| format!("could not open process of {hwnd:?}"))?;
+        OwnedHANDLE(handle)
+    };
 
+    // TODO: Maybe increase buffer sizes
     let mut process_buf = [0u16; 256];
     let mut lpdwsize = process_buf.len() as u32;
 
-    let result = unsafe {
+    unsafe {
         QueryFullProcessImageNameW(
-            hprocess,
+            hprocess.0,
             PROCESS_NAME_WIN32,
             PWSTR(process_buf.as_mut_ptr()),
             &mut lpdwsize,
         )
     }
-    .context(format!("could not query process image name for {hwnd:?}"));
-
-    // TODO: Use format! inside context() to ensure variables are handled correctly
-    unsafe { CloseHandle(hprocess) }.context("could not close {hprocess:?}")?;
-
-    result?;
+    .with_context(|| format!("could not query process image name for {hwnd:?}"))?;
 
     // QueryFullProcessImageNameW will update lpdwsize with the number of characters written
     // (excluding the null terminating char), so if it's about the same as the size of our buffer,
