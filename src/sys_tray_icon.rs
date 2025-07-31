@@ -6,7 +6,7 @@ use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
 use crate::config::Config;
 use crate::utils::LogIfErr;
-use crate::{APP_STATE, reload_borders};
+use crate::{APP_STATE, destroy_borders, reload_borders};
 
 pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
@@ -57,6 +57,8 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
         "2" => {
             // Convert hwineventhook_isize back into HWINEVENTHOOK
             let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
+
+            destroy_borders();
 
             let event_unhook_res = unsafe { UnhookWinEvent(hwineventhook) }.ok();
             // NOTE: It's important to set these to None to ensure the Drop impl is called
