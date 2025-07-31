@@ -33,8 +33,8 @@ use utils::{
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED_0,
-    WAIT_EVENT, WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
+    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED_0, WAIT_EVENT,
+    WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
@@ -552,11 +552,8 @@ pub fn destroy_borders() {
         );
     }
 
-    for handle in thread_handles.into_iter() {
-        unsafe { CloseHandle(handle) }
-            .with_context(|| format!("could not close {handle:?}"))
-            .log_if_err();
-    }
+    // Convert HANDLEs to OwnedHANDLEs so they automatically close when dropped
+    let _owned_handles: Vec<OwnedHANDLE> = thread_handles.into_iter().map(OwnedHANDLE).collect();
 
     // NOTE: we will rely on each border thread to remove themselves from the hashmap, so we won't
     // do any manual cleanup here
