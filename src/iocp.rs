@@ -5,8 +5,8 @@ use std::{io, mem, ptr};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
     ADDRESS_FAMILY, AF_UNIX, AcceptEx, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR,
-    SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSARecv, WSASend, WSASocketW, bind,
-    closesocket, connect, listen,
+    SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSAGetLastError, WSARecv, WSASend,
+    WSASocketW, bind, closesocket, connect, listen,
 };
 use windows::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx, OVERLAPPED,
@@ -293,7 +293,14 @@ impl UnixDomainSocket {
 
 impl Drop for UnixDomainSocket {
     fn drop(&mut self) {
-        unsafe { closesocket(self.0) };
+        let iresult = unsafe { closesocket(self.0) };
+        if iresult != 0 {
+            error!(
+                "could not close unix domain socket {:?}: {:?}",
+                self.0,
+                unsafe { WSAGetLastError() }
+            )
+        }
     }
 }
 
@@ -413,7 +420,9 @@ impl CompletionPort {
 
 impl Drop for CompletionPort {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.0) }.log_if_err();
+        unsafe { CloseHandle(self.0) }
+            .with_context(|| format!("could not close i/o completion port {:?}", self.0))
+            .log_if_err();
     }
 }
 

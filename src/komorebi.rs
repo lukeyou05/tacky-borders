@@ -402,7 +402,10 @@ impl Drop for KomorebiIntegration {
                 }
                 None => error!("could not take komorebi integration thread handle"),
             },
-            Err(err) => error!("could not post stop packet to komorebi integration: {err}"),
+            Err(err) => error!(
+                "could not post stop packet to iocp {:?} for komorebi integration: {err}",
+                self.iocp_handle
+            ),
         }
 
         unsafe { WSACleanup() };

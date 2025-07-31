@@ -380,7 +380,7 @@ pub struct OwnedHANDLE(pub HANDLE);
 impl Drop for OwnedHANDLE {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) }
-            .context("could not close handle")
+            .with_context(|| format!("could not close {:?}", self.0))
             .log_if_err();
     }
 }
@@ -393,7 +393,7 @@ pub struct OwnedHWND(pub HWND);
 impl Drop for OwnedHWND {
     fn drop(&mut self) {
         unsafe { DestroyWindow(self.0) }
-            .with_context(|| format!("could not destroy window {:?}", self.0))
+            .with_context(|| format!("could not destroy window for {:?}", self.0))
             .log_if_err();
     }
 }

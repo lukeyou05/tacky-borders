@@ -453,7 +453,12 @@ impl Drop for ConfigWatcher {
         // Cancel all pending I/O operations on the handle. This should make the worker thread
         // automatically exit.
         unsafe { CancelIoEx(self.dir_handle.0, None) }
-            .context("could not cancel config watcher I/O operation")
+            .with_context(|| {
+                format!(
+                    "could not cancel i/o operations on {:?} for config watcher",
+                    self.dir_handle.0
+                )
+            })
             .log_if_err();
     }
 }

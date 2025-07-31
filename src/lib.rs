@@ -305,7 +305,10 @@ impl Drop for DisplayAdaptersWatcher {
                 }
                 None => error!("could not take display adapters watcher thread handle"),
             },
-            Err(err) => error!("could not signal stop event for display adapters watcher: {err}"),
+            Err(err) => error!(
+                "could not signal stop event on {:?} for display adapters watcher: {err}",
+                self.stop_event
+            ),
         }
     }
 }
