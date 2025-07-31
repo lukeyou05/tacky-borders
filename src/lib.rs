@@ -18,11 +18,10 @@ pub mod window_border;
 
 use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
-use core::time;
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
@@ -31,12 +30,12 @@ use utils::{
     LogIfErr, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER, WindowsCompatibleResult,
     WindowsContext, create_border_for_window, get_foreground_window, get_last_error,
     get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible,
-    post_message_w, send_message_w,
+    post_message_w, send_notify_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
-    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED, WAIT_FAILED,
-    WPARAM,
+    CloseHandle, ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED,
+    WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
@@ -55,12 +54,15 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
-use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+    CreateEventW, INFINITE, OpenThread, THREAD_SYNCHRONIZE, WaitForMultipleObjects,
+    WaitForSingleObject,
+};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_MAX, EVENT_MIN, EnumWindows, IDC_ARROW, LoadCursorW, MB_ICONERROR, MB_OK,
-    MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW, RegisterClassExW, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
+    EVENT_MAX, EVENT_MIN, EnumWindows, GetWindowThreadProcessId, IDC_ARROW, LoadCursorW,
+    MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW, RegisterClassExW,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
 use windows::core::{BOOL, Interface, PCWSTR, w};
 
@@ -463,35 +465,70 @@ pub fn create_borders_for_existing_windows() -> WindowsCompatibleResult<()> {
 }
 
 pub fn destroy_borders() {
-    const MAX_ATTEMPTS: u32 = 3;
+    // Copy the hashmap's values to prevent mutex deadlocks
+    let border_hwnds: Vec<HWND> = APP_STATE
+        .borders
+        .lock()
+        .unwrap()
+        .values()
+        .map(|hwnd_isize| HWND(*hwnd_isize as _))
+        .collect();
 
-    for i in 0..MAX_ATTEMPTS {
-        // Copy the hashmap's values to prevent mutex deadlocks
-        let border_hwnds: Vec<HWND> = APP_STATE
-            .borders
-            .lock()
-            .unwrap()
-            .values()
-            .map(|hwnd_isize| HWND(*hwnd_isize as _))
-            .collect();
+    let thread_ids: HashSet<u32> = border_hwnds
+        .iter()
+        .filter_map(|hwnd| {
+            let thread_id = unsafe { GetWindowThreadProcessId(*hwnd, None) };
+            if thread_id != 0 {
+                Some(thread_id)
+            } else {
+                error!(
+                    "could not get thread id from {:?}: {:?}",
+                    hwnd,
+                    get_last_error()
+                );
+                None
+            }
+        })
+        .collect();
 
-        for hwnd in border_hwnds {
-            let _ = send_message_w(hwnd, WM_NCDESTROY, None, None);
-        }
+    let thread_handles: Vec<HANDLE> = thread_ids
+        .into_iter()
+        .filter_map(
+            |thread_id| match unsafe { OpenThread(THREAD_SYNCHRONIZE, false, thread_id) } {
+                Ok(handle) => Some(handle),
+                Err(err) => {
+                    error!("could not get thread handle from thread id {thread_id}: {err}");
+                    None
+                }
+            },
+        )
+        .collect();
 
-        // SendMessageW ensures that the border windows have processed their messages, but it
-        // does not guarantee that the thread has exited, so we still must wait a few ms
-        thread::sleep(time::Duration::from_millis(5));
+    // Tell the border windows to destroy themselves
+    for hwnd in border_hwnds.into_iter() {
+        send_notify_message_w(hwnd, WM_NCDESTROY, WPARAM::default(), LPARAM::default())
+            .with_context(|| format!("could not send notify WM_NCDESTROY to {hwnd:?}"))
+            .log_if_err();
+    }
 
-        let remaining_borders = APP_STATE.borders.lock().unwrap();
-        if remaining_borders.is_empty() {
-            break;
-        } else if i == MAX_ATTEMPTS - 1 {
-            error!(
-                "could not successfully destroy all borders (still remaining: {:?})",
-                *remaining_borders
-            );
-        }
+    let timeout_ms = 1000;
+    let wait_event = unsafe { WaitForMultipleObjects(&thread_handles, true, timeout_ms) };
+
+    let wait_object_start = WAIT_OBJECT_0.0;
+    let wait_object_end = WAIT_OBJECT_0.0 + (thread_handles.len() as u32) - 1;
+    let wait_object_range = wait_object_start..=wait_object_end;
+
+    if !wait_object_range.contains(&wait_event.0) {
+        error!(
+            "failed to wait for all border threads to exit: {:?}",
+            get_last_error()
+        );
+    }
+
+    for handle in thread_handles.into_iter() {
+        unsafe { CloseHandle(handle) }
+            .with_context(|| format!("could not close {handle:?}"))
+            .log_if_err();
     }
 
     // NOTE: we will rely on each border thread to remove themselves from the hashmap, so we won't
