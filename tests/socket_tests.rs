@@ -25,7 +25,7 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     let port = CompletionPort::new(2)?;
 
     // Bind to the socket (synchronous)
-    let mut listener = UnixListener::bind(&socket_path)?;
+    let listener = UnixListener::bind(&socket_path)?;
     port.associate_handle(listener.socket.to_handle(), listener.token())?;
 
     // Queue up an accept operation (asynchronous)

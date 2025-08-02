@@ -5,8 +5,8 @@ use std::{io, mem, ptr};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
     ADDRESS_FAMILY, AF_UNIX, AcceptEx, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR,
-    SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSARecv, WSASend, WSASocketW, bind,
-    closesocket, connect, listen,
+    SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSAGetLastError, WSARecv, WSASend,
+    WSASocketW, bind, closesocket, connect, listen,
 };
 use windows::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx, OVERLAPPED,
@@ -28,7 +28,6 @@ pub struct UnixListener {
 }
 
 unsafe impl Send for UnixListener {}
-unsafe impl Sync for UnixListener {}
 
 #[allow(unused)]
 impl UnixListener {
@@ -45,21 +44,21 @@ impl UnixListener {
         })
     }
 
-    pub fn accept(&mut self) -> anyhow::Result<UnixStream> {
+    pub fn accept(&self) -> anyhow::Result<UnixStream> {
         // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
         // in AcceptEx (double I assume because there's both the local and remote addresses)
-        let mut client_stream = UnixStream {
-            socket: UnixDomainSocket::default(),
-            buffer: vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize],
-            overlapped: Box::new(OVERLAPPED::default()),
-            flags: 0,
-        };
-
-        client_stream.socket = self
+        let mut client_buffer = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
+        let mut client_overlapped = Box::new(OVERLAPPED::default());
+        let client_socket = self
             .socket
-            .accept(&mut client_stream.buffer, client_stream.overlapped.as_mut())?;
+            .accept(&mut client_buffer, client_overlapped.as_mut())?;
 
-        Ok(client_stream)
+        Ok(UnixStream {
+            socket: client_socket,
+            buffer: client_buffer,
+            overlapped: client_overlapped,
+            flags: 0,
+        })
     }
 
     pub fn token(&self) -> usize {
@@ -68,12 +67,6 @@ impl UnixListener {
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
         mem::take(&mut self.buffer)
-    }
-}
-
-impl Drop for UnixListener {
-    fn drop(&mut self) {
-        unsafe { closesocket(self.socket.0) };
     }
 }
 
@@ -87,7 +80,6 @@ pub struct UnixStream {
 }
 
 unsafe impl Send for UnixStream {}
-unsafe impl Sync for UnixStream {}
 
 #[allow(unused)]
 impl UnixStream {
@@ -128,17 +120,8 @@ impl UnixStream {
     }
 }
 
-impl Drop for UnixStream {
-    fn drop(&mut self) {
-        unsafe { closesocket(self.socket.0) };
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct UnixDomainSocket(pub SOCKET);
-
-unsafe impl Send for UnixDomainSocket {}
-unsafe impl Sync for UnixDomainSocket {}
+#[derive(Debug)]
+pub struct UnixDomainSocket(SOCKET);
 
 impl UnixDomainSocket {
     pub fn new() -> anyhow::Result<Self> {
@@ -168,7 +151,6 @@ impl UnixDomainSocket {
         };
         if iresult == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not bind socket: {:?}", last_error));
         }
 
@@ -187,7 +169,6 @@ impl UnixDomainSocket {
         } == SOCKET_ERROR
         {
             let last_error = io::Error::last_os_error();
-            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not connect to socket: {:?}", last_error));
         }
 
@@ -197,7 +178,6 @@ impl UnixDomainSocket {
     pub fn listen(&self, backlog: i32) -> anyhow::Result<()> {
         if unsafe { listen(self.0, backlog) } == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not listen to socket: {:?}", last_error));
         }
 
@@ -205,7 +185,7 @@ impl UnixDomainSocket {
     }
 
     pub fn accept(
-        &mut self,
+        &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
     ) -> anyhow::Result<UnixDomainSocket> {
@@ -230,9 +210,6 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                unsafe {
-                    closesocket(self.0);
-                }
                 return Err(anyhow!(
                     "could not accept client socket connection: {:?}",
                     last_error
@@ -244,7 +221,7 @@ impl UnixDomainSocket {
     }
 
     pub fn read(
-        &mut self,
+        &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
         lpflags: &mut u32,
@@ -269,7 +246,6 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                unsafe { closesocket(self.0) };
                 return Err(anyhow!("could not receive data: {:?}", last_error));
             }
         }
@@ -278,7 +254,7 @@ impl UnixDomainSocket {
     }
 
     pub fn write(
-        &mut self,
+        &self,
         lpinputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
         lpflags: u32,
@@ -303,7 +279,6 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                unsafe { closesocket(self.0) };
                 return Err(anyhow!("could not write data: {:?}", last_error));
             }
         }
@@ -316,9 +291,16 @@ impl UnixDomainSocket {
     }
 }
 
-impl From<UnixDomainSocket> for HANDLE {
-    fn from(value: UnixDomainSocket) -> Self {
-        Self(value.0.0 as _)
+impl Drop for UnixDomainSocket {
+    fn drop(&mut self) {
+        let iresult = unsafe { closesocket(self.0) };
+        if iresult != 0 {
+            error!(
+                "could not close unix domain socket {:?}: {:?}",
+                self.0,
+                unsafe { WSAGetLastError() }
+            )
+        }
     }
 }
 
@@ -340,13 +322,10 @@ fn sockaddr_un(path: &Path) -> anyhow::Result<SOCKADDR_UN> {
     })
 }
 
-#[derive(Debug, Default)]
-pub struct CompletionPort {
-    iocp_handle: HANDLE,
-}
+#[derive(Debug)]
+pub struct CompletionPort(HANDLE);
 
 unsafe impl Send for CompletionPort {}
-unsafe impl Sync for CompletionPort {}
 
 #[allow(unused)]
 impl CompletionPort {
@@ -359,12 +338,12 @@ impl CompletionPort {
                 }
             };
 
-        Ok(Self { iocp_handle })
+        Ok(Self(iocp_handle))
     }
 
     pub fn associate_handle(&self, handle: HANDLE, token: usize) -> anyhow::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.iocp_handle), token, 0) }
+        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }
             .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
 
         Ok(())
@@ -384,9 +363,10 @@ impl CompletionPort {
             None => INFINITE,
         };
 
+        // TODO: Replace context() with with_context()
         unsafe {
             GetQueuedCompletionStatus(
-                self.iocp_handle,
+                self.0,
                 &mut bytes_transferred,
                 &mut completion_key,
                 &mut lpoverlapped,
@@ -422,7 +402,7 @@ impl CompletionPort {
 
         unsafe {
             GetQueuedCompletionStatusEx(
-                self.iocp_handle,
+                self.0,
                 entries,
                 &mut num_entries_removed,
                 timeout_ms,
@@ -440,6 +420,29 @@ impl CompletionPort {
 
 impl Drop for CompletionPort {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.iocp_handle) }.log_if_err();
+        unsafe { CloseHandle(self.0) }
+            .with_context(|| format!("could not close i/o completion port {:?}", self.0))
+            .log_if_err();
+    }
+}
+
+// Like AsRawHandle, but specifically for windows-rs' HANDLE type
+pub trait AsWin32Handle {
+    fn as_win32_handle(&self) -> HANDLE;
+}
+
+impl AsWin32Handle for CompletionPort {
+    fn as_win32_handle(&self) -> HANDLE {
+        self.0
+    }
+}
+
+pub trait AsWin32Socket {
+    fn as_win32_socket(&self) -> SOCKET;
+}
+
+impl AsWin32Socket for UnixDomainSocket {
+    fn as_win32_socket(&self) -> SOCKET {
+        self.0
     }
 }

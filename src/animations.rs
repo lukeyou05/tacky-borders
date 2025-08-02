@@ -47,7 +47,7 @@ impl AnimationsConfig {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct Animations {
     pub active: Vec<AnimParams>,
     pub inactive: Vec<AnimParams>,
@@ -177,17 +177,14 @@ impl Animations {
     ) {
         if self.timer.is_none() && (!self.active.is_empty() || !self.inactive.is_empty()) {
             let timer_duration = (1000.0 / self.fps as f32) as u64;
-            self.timer = Some(AnimationTimer::start(border_window, timer_duration));
+            self.timer = Some(AnimationTimer::new(border_window, timer_duration));
 
             *last_anim_time = Some(time::Instant::now());
         }
     }
 
     pub fn destroy_timer(&mut self) {
-        if let Some(anim_timer) = self.timer.as_mut() {
-            anim_timer.stop();
-            self.timer = None;
-        }
+        self.timer = None;
     }
 
     pub fn update_fade_progress(&mut self, window_state: WindowState) {

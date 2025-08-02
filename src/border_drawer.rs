@@ -23,7 +23,7 @@ use crate::utils::{
 };
 use crate::window_border::WindowState;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct BorderDrawer {
     pub border_width: i32,
     pub border_offset: i32,
