@@ -3,7 +3,7 @@ use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
 use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
-use crate::utils::{LogIfErr, OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
+use crate::utils::{OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
 use crate::{
     APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
     reload_borders,
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::thread::JoinHandle;
 use std::{env, iter, ptr, slice, thread, time};
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Dwm::{
@@ -341,6 +342,7 @@ impl Config {
 #[derive(Debug)]
 pub struct ConfigWatcher {
     dir_handle: OwnedHANDLE,
+    thread_handle: Option<JoinHandle<()>>,
 }
 
 impl ConfigWatcher {
@@ -383,7 +385,7 @@ impl ConfigWatcher {
             .into_string()
             .map_err(|_| anyhow!("could not convert config name for config watcher"))?;
 
-        let _ = thread::spawn(move || unsafe {
+        let thread_handle = thread::spawn(move || unsafe {
             debug!("entering config watcher thread");
 
             // Reconvert isize back to HANDLE
@@ -418,7 +420,10 @@ impl ConfigWatcher {
             debug!("exiting config watcher thread");
         });
 
-        Ok(Self { dir_handle })
+        Ok(Self {
+            dir_handle,
+            thread_handle: Some(thread_handle),
+        })
     }
 
     pub fn process_dir_change_notifs(
@@ -458,14 +463,22 @@ impl Drop for ConfigWatcher {
     fn drop(&mut self) {
         // Cancel all pending I/O operations on the handle. This should make the worker thread
         // automatically exit.
-        unsafe { CancelIoEx(self.dir_handle.0, None) }
-            .with_context(|| {
-                format!(
-                    "could not cancel i/o operations on {:?} for config watcher",
-                    self.dir_handle.0
-                )
-            })
-            .log_if_err();
+        let cancel_res = unsafe { CancelIoEx(self.dir_handle.0, None) };
+
+        match cancel_res {
+            Ok(()) => match self.thread_handle.take() {
+                Some(handle) => {
+                    if let Err(err) = handle.join() {
+                        error!("could not join config watcher thread handle: {err:?}");
+                    }
+                }
+                None => error!("could not take config watcher thread handle"),
+            },
+            Err(err) => error!(
+                "could not cancel i/o operations on {:?} for config watcher: {err}",
+                self.dir_handle.0
+            ),
+        }
     }
 }
 
