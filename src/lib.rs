@@ -551,10 +551,12 @@ pub fn destroy_borders() {
     let wait_event = unsafe { WaitForMultipleObjects(&thread_handles, true, timeout_ms) };
 
     let wait_object_start = WAIT_OBJECT_0.0;
-    let wait_object_end = WAIT_OBJECT_0.0 + (thread_handles.len() as u32) - 1;
-    let wait_object_range = wait_object_start..=wait_object_end;
+    let wait_object_end = WAIT_OBJECT_0.0 + (thread_handles.len() as u32);
+    let wait_object_range = wait_object_start..wait_object_end;
 
-    if !wait_object_range.contains(&wait_event.0) {
+    // If thread_handles is empty, WaitForMultipleObjects returns WAIT_FAILED since there's nothing
+    // to wait on. This is expected and safely ignored by the is_empty() check below.
+    if !thread_handles.is_empty() && !wait_object_range.contains(&wait_event.0) {
         error!(
             "failed to wait for all border threads to exit: {:?}",
             get_last_error()
