@@ -360,19 +360,21 @@ impl ConfigWatcher {
             .chain(iter::once(0))
             .collect();
 
-        let handle = unsafe {
-            CreateFileW(
-                PCWSTR(config_dir_vec.as_ptr()),
-                FILE_LIST_DIRECTORY.0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS,
-                None,
-            )
-        }
-        .context("could not create dir handle for config watcher")?;
-        let dir_handle = OwnedHANDLE(handle);
+        let dir_handle = {
+            let handle = unsafe {
+                CreateFileW(
+                    PCWSTR(config_dir_vec.as_ptr()),
+                    FILE_LIST_DIRECTORY.0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS,
+                    None,
+                )
+            }
+            .context("could not create dir handle for config watcher")?;
+            OwnedHANDLE(handle)
+        };
 
         // Convert HANDLE to isize so we can move it into the new thread
         let dir_handle_isize = dir_handle.0.0 as isize;
