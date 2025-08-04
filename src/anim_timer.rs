@@ -6,13 +6,13 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use crate::post_message_w;
 use crate::utils::WM_APP_ANIMATE;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AnimationTimer {
     stop_flag: Arc<Mutex<bool>>,
 }
 
 impl AnimationTimer {
-    pub fn start(hwnd: HWND, interval_ms: u64) -> Self {
+    pub fn new(hwnd: HWND, interval_ms: u64) -> Self {
         let stop_flag = Arc::new(Mutex::new(false));
         let stop_flag_clone = stop_flag.clone();
 
@@ -35,8 +35,10 @@ impl AnimationTimer {
 
         Self { stop_flag }
     }
+}
 
-    pub fn stop(&mut self) {
+impl Drop for AnimationTimer {
+    fn drop(&mut self) {
         if let Ok(mut stop_flag) = self.stop_flag.lock() {
             *stop_flag = true;
         }

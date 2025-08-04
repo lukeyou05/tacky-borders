@@ -55,41 +55,21 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
         }
         // Close
         "2" => {
-            // Convert hwineventhook_isize back into HWINEVENTHOOK
-            let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
-
             destroy_borders();
 
-            let event_unhook_res = unsafe { UnhookWinEvent(hwineventhook) }.ok();
-            let config_stop_res = APP_STATE.config_watcher.lock().unwrap().stop();
-            let komorebi_stop_res = APP_STATE.komorebi_integration.lock().unwrap().stop();
-            let adapters_stop_res = {
-                let mut watcher_opt = APP_STATE.display_adapters_watcher.lock().unwrap();
-                match watcher_opt.as_mut() {
-                    Some(watcher) => watcher.stop(),
-                    None => Ok(()),
-                }
-            };
+            // Convert hwineventhook_isize back into HWINEVENTHOOK, and unhook it
+            let hwineventhook = HWINEVENTHOOK(hwineventhook_isize as _);
+            unsafe { UnhookWinEvent(hwineventhook) }
+                .ok()
+                .context("could not unhook win event")
+                .log_if_err();
 
-            if event_unhook_res.is_ok()
-                && config_stop_res.is_ok()
-                && komorebi_stop_res.is_ok()
-                && adapters_stop_res.is_ok()
-            {
-                unsafe { PostQuitMessage(0) };
-            } else {
-                let results = [
-                    format!("attempt to unhook win event: {event_unhook_res:?}"),
-                    format!("attempt to stop config watcher: {config_stop_res:?}"),
-                    format!("attempt to stop komorebi integration: {komorebi_stop_res:?}"),
-                    format!("attempt to stop display adapters watcher: {adapters_stop_res:?}"),
-                ];
-                // TODO: display an error box as well
-                error!(
-                    "one or more errors encountered when cleaning up resources upon application exit: \n{}",
-                    results.join("\n")
-                );
-            }
+            // Set to None to call their Drop impls
+            *APP_STATE.config_watcher.lock().unwrap() = None;
+            *APP_STATE.komorebi_integration.lock().unwrap() = None;
+            *APP_STATE.display_adapters_watcher.lock().unwrap() = None;
+
+            unsafe { PostQuitMessage(0) };
         }
         _ => {}
     }));

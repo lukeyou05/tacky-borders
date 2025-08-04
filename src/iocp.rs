@@ -1,16 +1,18 @@
 use anyhow::{Context, anyhow};
-use core::time;
+use std::collections::VecDeque;
 use std::path::Path;
+use std::thread::{self, JoinHandle};
+use std::time;
 use std::{io, mem, ptr};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
-    ADDRESS_FAMILY, AF_UNIX, AcceptEx, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR,
-    SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSARecv, WSASend, WSASocketW, bind,
-    closesocket, connect, listen,
+    ADDRESS_FAMILY, AF_UNIX, AcceptEx, INVALID_SOCKET, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET,
+    SOCKET_ERROR, SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSACleanup, WSADATA,
+    WSAGetLastError, WSARecv, WSASend, WSASocketW, WSAStartup, bind, closesocket, connect, listen,
 };
 use windows::Win32::System::IO::{
-    CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx, OVERLAPPED,
-    OVERLAPPED_ENTRY,
+    CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx,
+    OVERLAPPED, OVERLAPPED_ENTRY, PostQueuedCompletionStatus,
 };
 use windows::Win32::System::Threading::INFINITE;
 use windows::core::PSTR;
@@ -28,7 +30,6 @@ pub struct UnixListener {
 }
 
 unsafe impl Send for UnixListener {}
-unsafe impl Sync for UnixListener {}
 
 #[allow(unused)]
 impl UnixListener {
@@ -45,21 +46,21 @@ impl UnixListener {
         })
     }
 
-    pub fn accept(&mut self) -> anyhow::Result<UnixStream> {
+    pub fn accept(&self) -> anyhow::Result<UnixStream> {
         // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
         // in AcceptEx (double I assume because there's both the local and remote addresses)
-        let mut client_stream = UnixStream {
-            socket: UnixDomainSocket::default(),
-            buffer: vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize],
-            overlapped: Box::new(OVERLAPPED::default()),
-            flags: 0,
-        };
-
-        client_stream.socket = self
+        let mut client_buffer = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
+        let mut client_overlapped = Box::new(OVERLAPPED::default());
+        let client_socket = self
             .socket
-            .accept(&mut client_stream.buffer, client_stream.overlapped.as_mut())?;
+            .accept(&mut client_buffer, client_overlapped.as_mut())?;
 
-        Ok(client_stream)
+        Ok(UnixStream {
+            socket: client_socket,
+            buffer: client_buffer,
+            overlapped: client_overlapped,
+            flags: 0,
+        })
     }
 
     pub fn token(&self) -> usize {
@@ -68,12 +69,6 @@ impl UnixListener {
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
         mem::take(&mut self.buffer)
-    }
-}
-
-impl Drop for UnixListener {
-    fn drop(&mut self) {
-        unsafe { closesocket(self.socket.0) };
     }
 }
 
@@ -87,7 +82,6 @@ pub struct UnixStream {
 }
 
 unsafe impl Send for UnixStream {}
-unsafe impl Sync for UnixStream {}
 
 #[allow(unused)]
 impl UnixStream {
@@ -128,17 +122,8 @@ impl UnixStream {
     }
 }
 
-impl Drop for UnixStream {
-    fn drop(&mut self) {
-        unsafe { closesocket(self.socket.0) };
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct UnixDomainSocket(pub SOCKET);
-
-unsafe impl Send for UnixDomainSocket {}
-unsafe impl Sync for UnixDomainSocket {}
+#[derive(Debug)]
+pub struct UnixDomainSocket(SOCKET);
 
 impl UnixDomainSocket {
     pub fn new() -> anyhow::Result<Self> {
@@ -168,7 +153,6 @@ impl UnixDomainSocket {
         };
         if iresult == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not bind socket: {:?}", last_error));
         }
 
@@ -187,7 +171,6 @@ impl UnixDomainSocket {
         } == SOCKET_ERROR
         {
             let last_error = io::Error::last_os_error();
-            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not connect to socket: {:?}", last_error));
         }
 
@@ -197,7 +180,6 @@ impl UnixDomainSocket {
     pub fn listen(&self, backlog: i32) -> anyhow::Result<()> {
         if unsafe { listen(self.0, backlog) } == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            unsafe { closesocket(self.0) };
             return Err(anyhow!("could not listen to socket: {:?}", last_error));
         }
 
@@ -205,7 +187,7 @@ impl UnixDomainSocket {
     }
 
     pub fn accept(
-        &mut self,
+        &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
     ) -> anyhow::Result<UnixDomainSocket> {
@@ -230,9 +212,6 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                unsafe {
-                    closesocket(self.0);
-                }
                 return Err(anyhow!(
                     "could not accept client socket connection: {:?}",
                     last_error
@@ -244,7 +223,7 @@ impl UnixDomainSocket {
     }
 
     pub fn read(
-        &mut self,
+        &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
         lpflags: &mut u32,
@@ -269,7 +248,6 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                unsafe { closesocket(self.0) };
                 return Err(anyhow!("could not receive data: {:?}", last_error));
             }
         }
@@ -278,7 +256,7 @@ impl UnixDomainSocket {
     }
 
     pub fn write(
-        &mut self,
+        &self,
         lpinputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
         lpflags: u32,
@@ -303,7 +281,6 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                unsafe { closesocket(self.0) };
                 return Err(anyhow!("could not write data: {:?}", last_error));
             }
         }
@@ -316,9 +293,16 @@ impl UnixDomainSocket {
     }
 }
 
-impl From<UnixDomainSocket> for HANDLE {
-    fn from(value: UnixDomainSocket) -> Self {
-        Self(value.0.0 as _)
+impl Drop for UnixDomainSocket {
+    fn drop(&mut self) {
+        let iresult = unsafe { closesocket(self.0) };
+        if iresult != 0 {
+            error!(
+                "could not close unix domain socket {:?}: {:?}",
+                self.0,
+                unsafe { WSAGetLastError() }
+            )
+        }
     }
 }
 
@@ -340,13 +324,10 @@ fn sockaddr_un(path: &Path) -> anyhow::Result<SOCKADDR_UN> {
     })
 }
 
-#[derive(Debug, Default)]
-pub struct CompletionPort {
-    iocp_handle: HANDLE,
-}
+#[derive(Debug)]
+pub struct CompletionPort(HANDLE);
 
 unsafe impl Send for CompletionPort {}
-unsafe impl Sync for CompletionPort {}
 
 #[allow(unused)]
 impl CompletionPort {
@@ -359,12 +340,12 @@ impl CompletionPort {
                 }
             };
 
-        Ok(Self { iocp_handle })
+        Ok(Self(iocp_handle))
     }
 
     pub fn associate_handle(&self, handle: HANDLE, token: usize) -> anyhow::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.iocp_handle), token, 0) }
+        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }
             .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
 
         Ok(())
@@ -384,9 +365,10 @@ impl CompletionPort {
             None => INFINITE,
         };
 
+        // TODO: Replace context() with with_context()
         unsafe {
             GetQueuedCompletionStatus(
-                self.iocp_handle,
+                self.0,
                 &mut bytes_transferred,
                 &mut completion_key,
                 &mut lpoverlapped,
@@ -422,7 +404,7 @@ impl CompletionPort {
 
         unsafe {
             GetQueuedCompletionStatusEx(
-                self.iocp_handle,
+                self.0,
                 entries,
                 &mut num_entries_removed,
                 timeout_ms,
@@ -440,6 +422,215 @@ impl CompletionPort {
 
 impl Drop for CompletionPort {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.iocp_handle) }.log_if_err();
+        unsafe { CloseHandle(self.0) }
+            .with_context(|| format!("could not close i/o completion port {:?}", self.0))
+            .log_if_err();
+    }
+}
+
+// Like AsRawHandle, but specifically for windows-rs' HANDLE type
+pub trait AsWin32Handle {
+    fn as_win32_handle(&self) -> HANDLE;
+}
+
+impl AsWin32Handle for CompletionPort {
+    fn as_win32_handle(&self) -> HANDLE {
+        self.0
+    }
+}
+
+pub trait AsWin32Socket {
+    fn as_win32_socket(&self) -> SOCKET;
+}
+
+impl AsWin32Socket for UnixDomainSocket {
+    fn as_win32_socket(&self) -> SOCKET {
+        self.0
+    }
+}
+
+pub struct UnixStreamSink {
+    iocp_handle: HANDLE,
+    thread_handle: Option<JoinHandle<()>>,
+}
+
+impl UnixStreamSink {
+    const MAX_COMPLETION_EVENTS: usize = 8;
+    const BUFFER_POOL_PRUNE_INTERVAL: time::Duration = time::Duration::from_secs(600);
+    const BUFFER_SIZE: usize = 32768;
+
+    // Currently, tokens/keys are just the values of the corresponding SOCKETs, which is why the value
+    // below (INVALID_SOCKET) should work as a special key that won't interfere with others.
+    const STOP_PACKET_KEY: usize = INVALID_SOCKET.0;
+
+    pub fn new(
+        socket_path: &Path,
+        mut callback: impl FnMut(&[u8], u32) + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        // Start the WinSock service
+        let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
+        if iresult != 0 {
+            return Err(anyhow!("WSAStartup failure: {iresult}"));
+        }
+
+        let listener = UnixListener::bind(socket_path)?;
+        let listener_key = listener.token();
+
+        let port = CompletionPort::new(2)?;
+        port.associate_handle(listener.socket.to_handle(), listener_key)?;
+
+        let iocp_handle = port.as_win32_handle();
+
+        let thread_handle = thread::spawn(move || {
+            debug!("entering unix stream sink thread");
+
+            move || -> anyhow::Result<()> {
+                let mut entries = vec![OVERLAPPED_ENTRY::default(); Self::MAX_COMPLETION_EVENTS];
+                let mut buffer_pool = VecDeque::<Vec<u8>>::new();
+                let mut streams_queue = VecDeque::<(usize, Box<UnixStream>)>::new();
+                let mut last_buffer_pool_prune = time::Instant::now();
+
+                // Queue up our first accept I/O operation.
+                let stream = Box::new(listener.accept()?);
+                port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                streams_queue.push_back((stream.token(), stream));
+
+                let mut should_cleanup = false;
+
+                loop {
+                    if last_buffer_pool_prune.elapsed() > Self::BUFFER_POOL_PRUNE_INTERVAL {
+                        debug!("pruning buffer pool for unix stream sink");
+                        buffer_pool.truncate(1);
+                        last_buffer_pool_prune = time::Instant::now();
+                    }
+
+                    // This will block until an I/O operation has completed
+                    let num_removed = port.poll_many(None, &mut entries)?;
+
+                    for entry in entries[..num_removed as usize].iter() {
+                        if entry.lpCompletionKey == listener_key {
+                            // Stream has been accepted; ready to read
+                            let stream =
+                                &mut streams_queue.back_mut().context("could not get stream")?.1;
+
+                            // Attempt to retrieve a buffer from the bufferpool
+                            let outputbuffer = buffer_pool.pop_front().unwrap_or_else(|| {
+                                debug!("creating new buffer for unix stream sink");
+                                vec![0u8; Self::BUFFER_SIZE]
+                            });
+                            stream.read(outputbuffer)?;
+
+                            // Queue up a new accept I/O operation.
+                            let stream = Box::new(listener.accept()?);
+                            port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                            streams_queue.push_back((stream.token(), stream));
+                        } else if entry.lpCompletionKey != Self::STOP_PACKET_KEY {
+                            // Stream has been read; ready to process
+                            let position = streams_queue
+                                .iter()
+                                .position(|(token, _)| *token == entry.lpCompletionKey)
+                                .context("could not find stream")?;
+                            let mut stream = streams_queue
+                                .remove(position)
+                                .context("could not remove stream from queue")?
+                                .1;
+
+                            callback(&stream.buffer, entry.dwNumberOfBytesTransferred);
+
+                            // We don't need this stream anymore, so place its buffer into the pool
+                            buffer_pool.push_back(stream.take_buffer());
+                        } else {
+                            // Stop packet has been sent; cleanup and exit the thread
+                            should_cleanup = true;
+                        }
+                    }
+
+                    if should_cleanup {
+                        Self::cleanup(listener, listener_key, port, entries, streams_queue)?;
+                        break;
+                    }
+                }
+
+                Ok(())
+            }()
+            .log_if_err();
+
+            debug!("exiting unix stream sink thread");
+        });
+
+        Ok(Self {
+            iocp_handle,
+            thread_handle: Some(thread_handle),
+        })
+    }
+
+    fn cleanup(
+        listener: UnixListener,
+        listener_key: usize,
+        port: CompletionPort,
+        mut entries: Vec<OVERLAPPED_ENTRY>,
+        mut streams_queue: VecDeque<(usize, Box<UnixStream>)>,
+    ) -> anyhow::Result<()> {
+        // Cancel any pending I/O operations on the listener
+        let listener_handle = listener.socket.to_handle();
+        unsafe { CancelIoEx(listener_handle, None) }
+            .with_context(|| format!("could not cancel i/o for listener {listener_handle:?}"))
+            .log_if_err();
+
+        // Cancel any pending I/O operations on each stream
+        // NOTE: A stream may not have any pending I/O operations if it is still in
+        // the accept stage, and CancelIoEx will return an error in those cases.
+        for (_, stream) in streams_queue.iter() {
+            let stream_handle = stream.socket.to_handle();
+            unsafe { CancelIoEx(stream_handle, None) }
+                .with_context(|| format!("could not cancel i/o for stream {stream_handle:?}"))
+                .log_if_err();
+        }
+
+        // MSDN states that we must wait for I/O operations to complete (even if canceled)
+        // before dropping OVERLAPPED structs to avoid use-after-free, so we'll wait below.
+        while !streams_queue.is_empty() {
+            // NOTE: poll_many() should return an error after the timeout.
+            let timeout = time::Duration::from_secs(1);
+            let num_removed = port.poll_many(Some(timeout), &mut entries)?;
+
+            for entry in entries[..num_removed as usize].iter() {
+                if entry.lpCompletionKey == listener_key {
+                    let _ = streams_queue.pop_back();
+                } else {
+                    let position = streams_queue
+                        .iter()
+                        .position(|(token, _)| *token == entry.lpCompletionKey)
+                        .context("could not find completion key")?;
+                    let _ = streams_queue.remove(position);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for UnixStreamSink {
+    fn drop(&mut self) {
+        let post_res =
+            unsafe { PostQueuedCompletionStatus(self.iocp_handle, 0, Self::STOP_PACKET_KEY, None) };
+
+        match post_res {
+            Ok(()) => match self.thread_handle.take() {
+                Some(handle) => {
+                    if let Err(err) = handle.join() {
+                        error!("could not join unix stream sink thread handle: {err:?}");
+                    }
+                }
+                None => error!("could not take unix stream sink thread handle"),
+            },
+            Err(err) => error!(
+                "could not post stop packet to iocp {:?} for unix stream sink: {err}",
+                self.iocp_handle
+            ),
+        }
+
+        unsafe { WSACleanup() };
     }
 }

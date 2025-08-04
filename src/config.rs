@@ -1,18 +1,22 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
-use crate::komorebi::KomorebiColorsConfig;
+use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
-use crate::utils::{LogIfErr, get_adjusted_radius, get_window_corner_preference};
-use crate::{APP_STATE, DirectXDevices, IS_WINDOWS_11, display_error_box, reload_borders};
+use crate::utils::{OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
+use crate::{
+    APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
+    reload_borders,
+};
 use anyhow::{Context, anyhow};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::thread::JoinHandle;
 use std::{env, iter, ptr, slice, thread, time};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
+use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Dwm::{
     DWMWCP_DEFAULT, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
 };
@@ -258,26 +262,33 @@ impl Config {
         let new_config = match Self::create() {
             Ok(config) => {
                 {
-                    let mut config_watcher = APP_STATE.config_watcher.lock().unwrap();
+                    let mut config_watcher_opt = APP_STATE.config_watcher.lock().unwrap();
 
-                    if config_watcher.is_enabled(&config) && !config_watcher.is_running() {
-                        config_watcher.start().log_if_err();
-                    } else if !config_watcher.is_enabled(&config) && config_watcher.is_running() {
-                        config_watcher.stop().log_if_err();
+                    if config.is_config_watcher_enabled() && config_watcher_opt.is_none() {
+                        *config_watcher_opt = create_config_watcher()
+                            .inspect_err(|err| error!("could not start config watcher: {err}"))
+                            .ok();
+                    } else if !config.is_config_watcher_enabled() && config_watcher_opt.is_some() {
+                        *config_watcher_opt = None;
                     }
                 }
 
                 {
-                    let mut komorebi_integration = APP_STATE.komorebi_integration.lock().unwrap();
+                    let mut komorebi_integration_opt =
+                        APP_STATE.komorebi_integration.lock().unwrap();
 
-                    if komorebi_integration.is_enabled(&config)
-                        && !komorebi_integration.is_running()
+                    if config.is_komorebi_integration_enabled()
+                        && komorebi_integration_opt.is_none()
                     {
-                        komorebi_integration.start().log_if_err();
-                    } else if !komorebi_integration.is_enabled(&config)
-                        && komorebi_integration.is_running()
+                        *komorebi_integration_opt = KomorebiIntegration::new()
+                            .inspect_err(|err| {
+                                error!("could not start komorebi integration: {err}")
+                            })
+                            .ok();
+                    } else if !config.is_komorebi_integration_enabled()
+                        && komorebi_integration_opt.is_some()
                     {
-                        komorebi_integration.stop().log_if_err();
+                        *komorebi_integration_opt = None;
                     }
                 }
 
@@ -312,39 +323,35 @@ impl Config {
         };
         *APP_STATE.config.write().unwrap() = new_config;
     }
+
+    pub fn is_config_watcher_enabled(&self) -> bool {
+        self.watch_config_changes
+    }
+
+    pub fn is_komorebi_integration_enabled(&self) -> bool {
+        self.global.komorebi_colors.enabled
+            || self.window_rules.iter().any(|rule| {
+                rule.komorebi_colors
+                    .as_ref()
+                    .map(|komocolors| komocolors.enabled)
+                    .unwrap_or(false)
+            })
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConfigWatcher {
-    config_path: PathBuf,
-    debounce_time: time::Duration,
-    callback_fn: fn(),
-    config_dir_handle: Option<isize>,
+    dir_handle: OwnedHANDLE,
+    thread_handle: Option<JoinHandle<()>>,
 }
 
 impl ConfigWatcher {
-    pub fn new(config_path: PathBuf, debounce_time: u64, callback_fn: fn()) -> Self {
-        Self {
-            config_path,
-            debounce_time: time::Duration::from_millis(debounce_time),
-            callback_fn,
-            config_dir_handle: None,
-        }
-    }
-
-    pub fn is_enabled(&mut self, config: &Config) -> bool {
-        config.watch_config_changes
-    }
-
-    pub fn start(&mut self) -> anyhow::Result<()> {
-        debug!("starting config watcher");
-
-        if self.is_running() {
-            return Err(anyhow!("config watcher is already running"));
-        }
-
-        let config_dir = self
-            .config_path
+    pub fn new(
+        config_path: PathBuf,
+        debounce_time: u64,
+        callback_fn: fn(),
+    ) -> anyhow::Result<Self> {
+        let config_dir = config_path
             .parent()
             .context("could not get parent dir for config watcher")?;
         let config_dir_vec: Vec<u16> = config_dir
@@ -353,35 +360,36 @@ impl ConfigWatcher {
             .chain(iter::once(0))
             .collect();
 
-        let dir_handle = unsafe {
-            CreateFileW(
-                PCWSTR(config_dir_vec.as_ptr()),
-                FILE_LIST_DIRECTORY.0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS,
-                None,
-            )
-            .context("could not create dir handle for config watcher")?
+        let dir_handle = {
+            let handle = unsafe {
+                CreateFileW(
+                    PCWSTR(config_dir_vec.as_ptr()),
+                    FILE_LIST_DIRECTORY.0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS,
+                    None,
+                )
+            }
+            .context("could not create dir handle for config watcher")?;
+            OwnedHANDLE(handle)
         };
 
         // Convert HANDLE to isize so we can move it into the new thread
-        let dir_handle_isize = dir_handle.0 as isize;
-        self.config_dir_handle = Some(dir_handle_isize);
+        let dir_handle_isize = dir_handle.0.0 as isize;
 
         // Also initialize these variables so we move them into the new thread
-        let config_name = self
-            .config_path
+        let config_name = config_path
             .file_name()
             .context("could not get config name for config watcher")?
             .to_owned()
             .into_string()
             .map_err(|_| anyhow!("could not convert config name for config watcher"))?;
-        let debounce_time = self.debounce_time;
-        let callback_fn = self.callback_fn;
 
-        let _ = thread::spawn(move || unsafe {
+        let thread_handle = thread::spawn(move || unsafe {
+            debug!("entering config watcher thread");
+
             // Reconvert isize back to HANDLE
             let dir_handle = HANDLE(dir_handle_isize as _);
 
@@ -408,13 +416,16 @@ impl ConfigWatcher {
                 // Prevent too many directory checks in quick succession
                 // NOTE: if any dir changes are made while the thread is asleep, the OS will hold
                 // the operations in queue, so we can immediately check them again after looping
-                thread::sleep(debounce_time);
+                thread::sleep(time::Duration::from_millis(debounce_time));
             }
 
             debug!("exiting config watcher thread");
         });
 
-        Ok(())
+        Ok(Self {
+            dir_handle,
+            thread_handle: Some(thread_handle),
+        })
     }
 
     pub fn process_dir_change_notifs(
@@ -448,37 +459,28 @@ impl ConfigWatcher {
             }
         }
     }
+}
 
-    pub fn stop(&mut self) -> anyhow::Result<()> {
-        debug!("stopping config watcher");
+impl Drop for ConfigWatcher {
+    fn drop(&mut self) {
+        // Cancel all pending I/O operations on the handle. This should make the worker thread
+        // automatically exit.
+        let cancel_res = unsafe { CancelIoEx(self.dir_handle.0, None) };
 
-        if let Some(dir_handle_isize) = self.config_dir_handle {
-            let dir_handle = HANDLE(dir_handle_isize as _);
-
-            // Cancel all pending I/O operations on the handle
-            unsafe { CancelIoEx(dir_handle, None) }
-                .context("could not cancel config watcher I/O operation")
-                .log_if_err();
-
-            // Close the handle for cleanup. This should automatically exit the watcher thread.
-            let res =
-                unsafe { CloseHandle(dir_handle) }.context("could not close config watcher handle");
-
-            // Reset the config dir handle if we successfully closed it
-            if res.is_ok() {
-                self.config_dir_handle = None;
-            }
-
-            res
-        } else {
-            debug!("config watcher is not running; skipping cleanup");
-
-            Ok(())
+        match cancel_res {
+            Ok(()) => match self.thread_handle.take() {
+                Some(handle) => {
+                    if let Err(err) = handle.join() {
+                        error!("could not join config watcher thread handle: {err:?}");
+                    }
+                }
+                None => error!("could not take config watcher thread handle"),
+            },
+            Err(err) => error!(
+                "could not cancel i/o operations on {:?} for config watcher: {err}",
+                self.dir_handle.0
+            ),
         }
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.config_dir_handle.is_some()
     }
 }
 

@@ -22,19 +22,18 @@ use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use utils::{
-    LogIfErr, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER, WindowsCompatibleResult,
-    WindowsContext, create_border_for_window, get_foreground_window, get_last_error,
-    get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level, is_window_visible,
-    post_message_w, send_notify_message_w,
+    LogIfErr, OwnedHANDLE, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
+    WindowsCompatibleResult, WindowsContext, create_border_for_window, get_foreground_window,
+    get_last_error, get_window_rule, has_filtered_style, is_window_cloaked, is_window_top_level,
+    is_window_visible, post_message_w, send_notify_message_w,
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED,
+    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED_0, WAIT_EVENT,
     WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::{
@@ -55,8 +54,7 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
-    CreateEventW, INFINITE, OpenThread, THREAD_SYNCHRONIZE, WaitForMultipleObjects,
-    WaitForSingleObject,
+    CreateEventW, INFINITE, OpenThread, SetEvent, THREAD_SYNCHRONIZE, WaitForMultipleObjects,
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -90,10 +88,10 @@ pub struct AppState {
     active_window: Mutex<isize>,
     is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
-    config_watcher: Mutex<ConfigWatcher>,
+    config_watcher: Mutex<Option<ConfigWatcher>>,
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
-    komorebi_integration: Mutex<KomorebiIntegration>,
+    komorebi_integration: Mutex<Option<KomorebiIntegration>>,
     display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
 }
 
@@ -104,18 +102,8 @@ impl AppState {
     fn new() -> Self {
         let active_window = get_foreground_window().0 as isize;
 
-        let mut config_watcher = ConfigWatcher::new(
-            Config::get_dir()
-                .map(|dir| dir.join("config.yaml"))
-                .unwrap_or_else(|err| {
-                    error!("could not get path for config watcher: {err}");
-                    PathBuf::default()
-                }),
-            500,
-            config_watcher_callback,
-        );
-
-        let mut komorebi_integration = KomorebiIntegration::new();
+        let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
+        let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
 
         let config = match Config::create() {
             Ok(config) => {
@@ -125,12 +113,16 @@ impl AppState {
                     };
                 }
 
-                if config_watcher.is_enabled(&config) {
-                    config_watcher.start().log_if_err();
+                if config.is_config_watcher_enabled() {
+                    *config_watcher.lock().unwrap() = create_config_watcher()
+                        .inspect_err(|err| error!("could not start config watcher: {err}"))
+                        .ok()
                 }
 
-                if komorebi_integration.is_enabled(&config) {
-                    komorebi_integration.start().log_if_err();
+                if config.is_komorebi_integration_enabled() {
+                    *komorebi_integration.lock().unwrap() = KomorebiIntegration::new()
+                        .inspect_err(|err| error!("could not start komorebi integration: {err}"))
+                        .ok();
                 }
 
                 config
@@ -143,22 +135,17 @@ impl AppState {
             }
         };
 
+        let display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>> = Mutex::new(
+            DisplayAdaptersWatcher::new()
+                .inspect_err(|err| error!("could not start display adapters watcher: {err}"))
+                .ok(),
+        );
+
         let render_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
                 error!("could not create ID2D1Factory: {err}");
                 panic!()
             })
-        };
-
-        let display_adapters_watcher_opt = match DisplayAdaptersWatcher::new() {
-            Ok(mut watcher) => {
-                watcher.start().log_if_err();
-                Some(watcher)
-            }
-            Err(err) => {
-                error!("could not create display_adapters_watcher: {err}");
-                None
-            }
         };
 
         let directx_devices_opt = match config.render_backend {
@@ -180,11 +167,11 @@ impl AppState {
             active_window: Mutex::new(active_window),
             is_polling_active_window: AtomicBool::new(false),
             config: RwLock::new(config),
-            config_watcher: Mutex::new(config_watcher),
+            config_watcher,
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
-            komorebi_integration: Mutex::new(komorebi_integration),
-            display_adapters_watcher: Mutex::new(display_adapters_watcher_opt),
+            komorebi_integration,
+            display_adapters_watcher,
         }
     }
 
@@ -210,9 +197,13 @@ impl AppState {
     }
 }
 
+#[allow(unused)]
 struct DisplayAdaptersWatcher {
     dxgi_factory: IDXGIFactory7,
-    event_cookie: Option<u32>,
+    changed_event: OwnedHANDLE,
+    changed_cookie: u32,
+    stop_event: OwnedHANDLE,
+    thread_handle: Option<JoinHandle<()>>,
 }
 
 impl DisplayAdaptersWatcher {
@@ -221,44 +212,57 @@ impl DisplayAdaptersWatcher {
             unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }
                 .context("could not create dxgi_factory to watch for display adapter changes; issues may occur due to an inability to update DirectX devices accordingly")?;
 
-        Ok(Self {
-            dxgi_factory,
-            event_cookie: None,
-        })
-    }
+        let changed_event = {
+            let handle = unsafe { CreateEventW(None, false, false, None)? };
+            OwnedHANDLE(handle)
+        };
+        let changed_cookie = unsafe { dxgi_factory.RegisterAdaptersChangedEvent(changed_event.0) }?;
 
-    fn start(&mut self) -> anyhow::Result<()> {
-        let handle = unsafe { CreateEventW(None, false, false, None) }?;
-        let cookie = unsafe { self.dxgi_factory.RegisterAdaptersChangedEvent(handle) }?;
+        let stop_event = {
+            let handle = unsafe { CreateEventW(None, true, false, None)? };
+            OwnedHANDLE(handle)
+        };
 
-        self.event_cookie = Some(cookie);
+        // Convert the HANDLEs to isize so we can pass them into the thread below
+        let changed_handle_isize = changed_event.0.0 as isize;
+        let stop_handle_isize = stop_event.0.0 as isize;
 
-        // Convert the HANDLE to an isize so we can pass it into the thread below
-        let handle_isize = handle.0 as isize;
+        let thread_handle = thread::spawn(move || {
+            debug!("entering display adapters watcher thread");
 
-        let _ = thread::spawn(move || {
-            debug!("starting display adapters watcher");
+            let events = [
+                HANDLE(changed_handle_isize as _),
+                HANDLE(stop_handle_isize as _),
+            ];
+
+            const WAIT_OBJECT_1: WAIT_EVENT = WAIT_EVENT(WAIT_OBJECT_0.0 + 1);
+            const WAIT_ABANDONED_1: WAIT_EVENT = WAIT_EVENT(WAIT_ABANDONED_0.0 + 1);
 
             loop {
-                // This function will block until an adapters changed event or an error has occurred.
-                let wait_event =
-                    unsafe { WaitForSingleObject(HANDLE(handle_isize as _), INFINITE) };
+                // This function will block until an event or error has been signaled.
+                let wait_event = unsafe { WaitForMultipleObjects(&events, false, INFINITE) };
+
+                // If the stop event has been signaled, exit the loop
+                if wait_event == WAIT_OBJECT_1 {
+                    break;
+                }
 
                 // If an error has occurred, log it and exit the thread.
-                if wait_event == WAIT_ABANDONED || wait_event == WAIT_FAILED {
+                if wait_event == WAIT_ABANDONED_0
+                    || wait_event == WAIT_ABANDONED_1
+                    || wait_event == WAIT_FAILED
+                {
                     let last_error = get_last_error();
-                    error!(
-                        "could not check for display adapter changes: {last_error:?}; exiting thread"
-                    );
+                    error!("could not check for display adapter changes: {last_error:?}");
 
-                    return;
+                    break;
                 }
 
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
                     && let Err(err) = directx_devices.recreate_if_needed()
                 {
                     error!("could not recreate directx devices if needed: {err}");
-                    return;
+                    break;
                 }
 
                 for hwnd_isize in APP_STATE.borders.lock().unwrap().values() {
@@ -273,21 +277,45 @@ impl DisplayAdaptersWatcher {
                     .log_if_err();
                 }
             }
+
+            debug!("exiting display adapters watcher thread");
         });
 
-        Ok(())
+        Ok(Self {
+            dxgi_factory,
+            changed_event,
+            changed_cookie,
+            stop_event,
+            thread_handle: Some(thread_handle),
+        })
     }
+}
 
-    fn stop(&mut self) -> anyhow::Result<()> {
-        let cookie = self
-            .event_cookie
-            .context("could not get adapters changed event cookie; perhaps the event was never registered in the first place")?;
-        unsafe { self.dxgi_factory.UnregisterAdaptersChangedEvent(cookie) }
-            .context("UnregisterAdaptersChangedEvent()")?;
+impl Drop for DisplayAdaptersWatcher {
+    fn drop(&mut self) {
+        unsafe {
+            self.dxgi_factory
+                .UnregisterAdaptersChangedEvent(self.changed_cookie)
+        }
+        .context("could not unregister adapters changed event")
+        .log_if_err();
 
-        self.event_cookie = None;
+        let set_res = unsafe { SetEvent(self.stop_event.0) };
 
-        Ok(())
+        match set_res {
+            Ok(()) => match self.thread_handle.take() {
+                Some(handle) => {
+                    if let Err(err) = handle.join() {
+                        error!("could not join display adapters watcher thread handle: {err:?}");
+                    }
+                }
+                None => error!("could not take display adapters watcher thread handle"),
+            },
+            Err(err) => error!(
+                "could not signal stop event on {:?} for display adapters watcher: {err}",
+                self.stop_event
+            ),
+        }
     }
 }
 
@@ -383,6 +411,14 @@ impl DirectXDevices {
 
         Ok(())
     }
+}
+
+fn create_config_watcher() -> anyhow::Result<ConfigWatcher> {
+    let config_path = Config::get_dir()
+        .map(|dir| dir.join("config.yaml"))
+        .context("could not get dir for config watcher")?;
+    ConfigWatcher::new(config_path, 500, config_watcher_callback)
+        .context("could not create config watcher")
 }
 
 pub fn create_logger() -> anyhow::Result<()> {
@@ -527,11 +563,8 @@ pub fn destroy_borders() {
         );
     }
 
-    for handle in thread_handles.into_iter() {
-        unsafe { CloseHandle(handle) }
-            .with_context(|| format!("could not close {handle:?}"))
-            .log_if_err();
-    }
+    // Convert HANDLEs to OwnedHANDLEs so they automatically close when dropped
+    let _owned_handles: Vec<OwnedHANDLE> = thread_handles.into_iter().map(OwnedHANDLE).collect();
 
     // NOTE: we will rely on each border thread to remove themselves from the hashmap, so we won't
     // do any manual cleanup here

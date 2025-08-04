@@ -5,7 +5,7 @@ use tacky_borders::effects::Effects;
 use tacky_borders::render_backend::{RenderBackend, RenderBackendConfig};
 use tacky_borders::window_border::{WindowBorder, WindowState};
 use tacky_borders::{APP_STATE, DirectXDevices, register_border_window_class};
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U;
 
 fn prepare_v2_render_backend() -> anyhow::Result<()> {
@@ -18,9 +18,9 @@ fn prepare_v2_render_backend() -> anyhow::Result<()> {
 
 #[test]
 fn test_render_backend_v2_with_extra_bitmaps() -> anyhow::Result<()> {
-    let mut border_window = WindowBorder::default();
     register_border_window_class()?;
-    let hwnd = border_window.create_window()?;
+    let border = WindowBorder::new(HWND::default())?;
+    let hwnd = border.border_window.0;
     prepare_v2_render_backend()?;
 
     let render_backend = RenderBackendConfig::V2.to_render_backend(1920, 1080, hwnd, true)?;
@@ -43,9 +43,9 @@ fn test_render_backend_v2_with_extra_bitmaps() -> anyhow::Result<()> {
 
 #[test]
 fn test_render_backend_v2_without_extra_bitmaps() -> anyhow::Result<()> {
-    let mut border_window = WindowBorder::default();
     register_border_window_class()?;
-    let hwnd = border_window.create_window()?;
+    let border = WindowBorder::new(HWND::default())?;
+    let hwnd = border.border_window.0;
     prepare_v2_render_backend()?;
 
     let render_backend = RenderBackendConfig::V2.to_render_backend(1920, 1080, hwnd, false)?;
@@ -68,13 +68,12 @@ fn test_render_backend_v2_without_extra_bitmaps() -> anyhow::Result<()> {
 
 #[test]
 fn test_border_drawer_update() -> anyhow::Result<()> {
-    let mut border_window = WindowBorder::default();
-    let mut border_drawer = BorderDrawer::default();
-
     register_border_window_class()?;
-    let hwnd = border_window.create_window()?;
+    let border = WindowBorder::new(HWND::default())?;
+    let hwnd = border.border_window.0;
     prepare_v2_render_backend()?;
 
+    let mut border_drawer = BorderDrawer::default();
     border_drawer.configure_appearance(
         4,
         -1,
