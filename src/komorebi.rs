@@ -1,20 +1,20 @@
-use anyhow::{Context, anyhow};
-use dirs::home_dir;
-use serde::Deserialize;
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::{fs, time};
+use std::thread::{self, JoinHandle};
+use std::time;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
 use crate::config::serde_default_bool;
-use crate::iocp::UnixStreamSink;
-use crate::utils::{LogIfErr, WM_APP_KOMOREBI, get_foreground_window, is_window, post_message_w};
+use crate::iocp::{UnixStreamSink, write_to_unix_socket};
+use crate::utils::{
+    LogIfErr, WM_APP_KOMOREBI, get_foreground_window, is_window, post_message_w,
+    remove_file_if_exists,
+};
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +35,13 @@ pub enum WindowKind {
     Floating,
 }
 
+// Minimal version of a komorebi enum of the same name
+#[derive(Serialize)]
+#[serde(tag = "type", content = "content")]
+enum SocketMessage {
+    AddSubscriberSocket(String),
+}
+
 pub struct KomorebiIntegration {
     // NOTE: in komorebi it's <Border HWND, WindowKind>, but here it's <Tracking HWND, WindowKind>
     pub focus_state: Arc<Mutex<HashMap<isize, WindowKind>>>,
@@ -42,70 +49,90 @@ pub struct KomorebiIntegration {
 }
 
 impl KomorebiIntegration {
+    const TACKY_SOCKET: &str = "tacky-borders.sock";
+    const KOMOREBI_SOCKET: &str = "komorebi.sock";
     const FOCUS_STATE_PRUNE_INTERVAL: time::Duration = time::Duration::from_secs(600);
+    const SUBSCRIBE_RETRY_INTERVAL: time::Duration = time::Duration::from_secs(15);
 
     pub fn new() -> anyhow::Result<Self> {
-        let socket_path =
-            Self::get_komorebic_socket_path().context("could not get komorebic socket path")?;
-        let socket_file = socket_path
-            .file_name()
-            .and_then(|file| file.to_str())
-            .context("could not get komorebic socket name")?;
+        let komorebi_data_dir =
+            Self::get_komorebi_data_dir().context("could not get komorebi data dir")?;
+        let tacky_socket_path = komorebi_data_dir.join(Self::TACKY_SOCKET);
+        let komorebi_socket_path = komorebi_data_dir.join(Self::KOMOREBI_SOCKET);
 
-        // If the socket file already exists, we cannot bind to it, so we must delete it first
-        if fs::exists(&socket_path).context("could not check if komorebic socket exists")? {
-            fs::remove_file(&socket_path)?;
-        }
+        remove_file_if_exists(&tacky_socket_path)
+            .context("could not remove tacky-borders socket if it exists")?;
 
         let focus_state = Arc::new(Mutex::new(HashMap::new()));
         let focus_state_clone = focus_state.clone();
+
+        let stream_sink =
+            Self::spawn_komorebi_notification_handler(focus_state_clone, &tacky_socket_path)
+                .context("could not spawn komorebi notification handler")?;
+
+        let _ = Self::spawn_komorebi_subscribe_thread(komorebi_socket_path)
+            .context("could not spawn komorebi subscribe thread")?;
+
+        Ok(Self {
+            focus_state,
+            _stream_sink: stream_sink,
+        })
+    }
+
+    fn spawn_komorebi_notification_handler(
+        focus_state: Arc<Mutex<HashMap<isize, WindowKind>>>,
+        tacky_socket_path: &Path,
+    ) -> anyhow::Result<UnixStreamSink> {
         let mut last_focus_state_prune = time::Instant::now();
 
         let callback = move |buffer: &[u8], bytes_received: u32| {
             if last_focus_state_prune.elapsed() > Self::FOCUS_STATE_PRUNE_INTERVAL {
                 debug!("pruning focus state for komorebi integration");
-                focus_state_clone
+                focus_state
                     .lock()
                     .unwrap()
                     .retain(|&hwnd_isize, _| is_window(Some(HWND(hwnd_isize as _))));
                 last_focus_state_prune = time::Instant::now();
             }
 
-            Self::process_komorebi_notification(&focus_state_clone, buffer, bytes_received);
+            Self::process_komorebi_notification(&focus_state, buffer, bytes_received);
         };
 
-        let _stream_sink = UnixStreamSink::new(&socket_path, callback)?;
+        let stream_sink = UnixStreamSink::new(tacky_socket_path, callback)?;
 
-        // Attempt to subscribe to komorebic
-        if !Command::new("komorebic")
-            .arg("subscribe-socket")
-            .arg(socket_file)
-            .creation_flags(CREATE_NO_WINDOW.0)
-            .status()
-            .context("could not get komorebic subscribe-socket exit status")?
-            .success()
-        {
-            return Err(anyhow!("could not subscribe to komorebic socket"));
-        }
-
-        Ok(Self {
-            focus_state,
-            _stream_sink,
-        })
+        Ok(stream_sink)
     }
 
-    pub fn get_komorebic_socket_path() -> anyhow::Result<PathBuf> {
-        let home_dir = home_dir().context("could not get home dir")?;
+    fn spawn_komorebi_subscribe_thread(
+        komorebi_socket_path: PathBuf,
+    ) -> anyhow::Result<JoinHandle<()>> {
+        let mut subscribe_message = {
+            let enum_variant = SocketMessage::AddSubscriberSocket(Self::TACKY_SOCKET.to_string());
+            serde_json::to_string(&enum_variant)?
+        };
 
-        Ok(home_dir
-            .join("AppData")
-            .join("Local")
-            .join("komorebi")
-            .join("tacky-borders.sock"))
+        let join_handle = thread::spawn(move || {
+            let subscribe_bytes = unsafe { subscribe_message.as_bytes_mut() };
+
+            while let Err(err) = write_to_unix_socket(&komorebi_socket_path, subscribe_bytes) {
+                // The write fails when komorebi isn't running which isn't a real issue, so we'll
+                // use debug instead of logging it as a full error
+                debug!("could not send subscribe-socket message to komorebi: {err}");
+                thread::sleep(Self::SUBSCRIBE_RETRY_INTERVAL);
+            }
+        });
+
+        Ok(join_handle)
+    }
+
+    fn get_komorebi_data_dir() -> anyhow::Result<PathBuf> {
+        Ok(dirs::data_local_dir()
+            .context("could not get data local dir")?
+            .join("komorebi"))
     }
 
     // Largely adapted from komorebi's own border implementation. Thanks @LGUG2Z
-    pub fn process_komorebi_notification(
+    fn process_komorebi_notification(
         focus_state_mutex: &Arc<Mutex<HashMap<isize, WindowKind>>>,
         buffer: &[u8],
         bytes_received: u32,

@@ -634,3 +634,26 @@ impl Drop for UnixStreamSink {
         unsafe { WSACleanup() };
     }
 }
+
+// Synchronous write
+// TODO: Support synchronous operations inside UnixDomainSocket
+pub fn write_to_unix_socket(socket_path: &Path, message: &mut [u8]) -> anyhow::Result<()> {
+    let mut stream = UnixStream::connect(socket_path)?;
+
+    let port = CompletionPort::new(1)?;
+    port.associate_handle(stream.socket.to_handle(), stream.token())?;
+
+    stream.write(message)?;
+
+    let mut entry = OVERLAPPED_ENTRY::default();
+    port.poll_single(None, &mut entry)?;
+
+    if entry.dwNumberOfBytesTransferred as usize != message.len() {
+        return Err(anyhow!(
+            "could not write all bytes to {:?}",
+            stream.socket.0
+        ));
+    }
+
+    Ok(())
+}

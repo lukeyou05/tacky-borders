@@ -5,8 +5,8 @@ use std::cell::Cell;
 use std::error::Error;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use std::path::PathBuf;
-use std::{ptr, thread};
+use std::path::{Path, PathBuf};
+use std::{fs, ptr, thread};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, GetLastError,
     HANDLE, HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
@@ -854,6 +854,14 @@ pub fn hide_border_for_window(hwnd: HWND) {
 
 pub fn get_last_error() -> WIN32_ERROR {
     unsafe { GetLastError() }
+}
+
+pub fn remove_file_if_exists(file_path: &Path) -> anyhow::Result<()> {
+    if fs::exists(file_path).context("could not check if file exists")? {
+        fs::remove_file(file_path).context("could not remove file")?;
+    }
+
+    Ok(())
 }
 
 // Bezier curve algorithm together with @0xJWLabs
