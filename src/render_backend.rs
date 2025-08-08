@@ -121,9 +121,9 @@ impl RenderBackend {
             RenderBackend::V2(backend) => {
                 backend.resize(width, height, create_extra_bitmaps)?;
             }
-            // TODO: We already update/resize the buffers of the Legacy renderer within
-            // BorderDrawer::render(), but I might want to move it here instead?
-            RenderBackend::Legacy(_) => return Ok(()),
+            RenderBackend::Legacy(backend) => {
+                backend.resize(width, height)?;
+            }
             RenderBackend::None => {
                 return Err(WindowsCompatibleError::Standalone(
                     StandaloneWindowsError::new(T_E_UNINIT, "render backend is None"),
@@ -369,7 +369,7 @@ impl Drop for V2RenderBackend {
 }
 
 impl LegacyRenderBackend {
-    fn new(border_window: HWND) -> WindowsCompatibleResult<Self> {
+    pub fn new(border_window: HWND) -> WindowsCompatibleResult<Self> {
         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -396,5 +396,13 @@ impl LegacyRenderBackend {
 
             Ok(Self { render_target })
         }
+    }
+
+    pub fn resize(&self, width: u32, height: u32) -> WindowsCompatibleResult<()> {
+        let pixel_size = D2D_SIZE_U { width, height };
+        unsafe { self.render_target.Resize(&pixel_size) }
+            .windows_context("could not resize render_target")?;
+
+        Ok(())
     }
 }

@@ -781,14 +781,6 @@ pub fn get_monitor_info(hmonitor: HMONITOR) -> windows::core::Result<MONITORINFO
     Ok(mi)
 }
 
-pub fn get_monitor_resolution(hmonitor: HMONITOR) -> WindowsCompatibleResult<(u32, u32)> {
-    let m_info = get_monitor_info(hmonitor).windows_context("could not get m_info")?;
-    let screen_width = (m_info.rcMonitor.right - m_info.rcMonitor.left) as u32;
-    let screen_height = (m_info.rcMonitor.bottom - m_info.rcMonitor.top) as u32;
-
-    Ok((screen_width, screen_height))
-}
-
 pub fn destroy_border_for_window(tracking_window: HWND) {
     if let Some(&border_isize) = APP_STATE
         .borders

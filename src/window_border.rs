@@ -41,9 +41,9 @@ use crate::utils::{
     WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
     WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
     WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
-    get_dpi_for_monitor, get_monitor_resolution, get_window_rule, get_window_title,
-    has_native_border, is_window_arranged, is_window_cloaked, is_window_minimized,
-    is_window_visible, loword, monitor_from_window, post_message_w,
+    get_dpi_for_monitor, get_monitor_info, get_window_rule, get_window_title, has_native_border,
+    is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible, loword,
+    monitor_from_window, post_message_w,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -75,6 +75,7 @@ pub struct WindowBorder {
     current_dpi: u32,
     border_drawer: BorderDrawer,
     // ---- cached config values ----
+    render_backend_config: RenderBackendConfig,
     radius_config: RadiusConfig,
     border_z_order: ZOrderMode,
     follow_native_border: bool,
@@ -97,6 +98,7 @@ impl WindowBorder {
             current_monitor: Default::default(),
             current_dpi: Default::default(),
             border_drawer: Default::default(),
+            render_backend_config: Default::default(),
             radius_config: Default::default(),
             border_z_order: Default::default(),
             follow_native_border: Default::default(),
@@ -170,9 +172,7 @@ impl WindowBorder {
             SetLayeredWindowAttributes(self.border_window.0, COLORREF(0x00000000), 255, LWA_ALPHA)
                 .context("could not set LWA_ALPHA")?;
 
-            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .windows_context("could not get monitor resolution")?;
-            self.init_drawer(screen_width, screen_height)
+            self.init_drawer()
                 .context("could not initialize border drawer in init()")?;
             self.init_border()
                 .context("could not initialize border in init()")?;
@@ -240,6 +240,8 @@ impl WindowBorder {
         Ok(())
     }
 
+    // TODO: Bake this into WindowBorder::new() somehow to make the code more maintanable
+    // (so I don't forget to add a line here when a new struct field is added)
     pub fn load_from_config(&mut self, window_rule: WindowRule, dpi: u32) -> anyhow::Result<()> {
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
@@ -264,6 +266,7 @@ impl WindowBorder {
             .unwrap_or(&global.animations);
         let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
 
+        self.render_backend_config = config.render_backend;
         self.radius_config = *radius_config;
 
         // Adjust the border parameters based on the window/monitor dpi
@@ -368,29 +371,45 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn compute_proper_renderer_size(
-        screen_width: u32,
-        screen_height: u32,
-        border_width: i32,
-        window_padding: i32,
-    ) -> D2D_SIZE_U {
+    // The V2 renderer uses DirectComposition which makes it easy to create a large persistent
+    // graphics buffer and let the compositor handle the positioning of the graphics content.
+    fn calculate_target_v2_renderer_size(&self) -> WindowsCompatibleResult<D2D_SIZE_U> {
+        let monitor_info =
+            get_monitor_info(self.current_monitor).windows_context("could not get monitor info")?;
+        let monitor_width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+        let monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+
+        let border_width = self.border_drawer.border_width;
+        let window_padding = self.window_padding;
+
+        Ok(D2D_SIZE_U {
+            width: (monitor_width as i32 + ((border_width + window_padding) * 2)) as u32,
+            height: (monitor_height as i32 + ((border_width + window_padding) * 2)) as u32,
+        })
+    }
+
+    // The legacy renderer uses an ID2D1HwndRenderTarget which scales the graphics buffer and its
+    // content to fit inside the window rect. To avoid unwanted scaling, it's easiest to make the
+    // buffer the same size as the window.
+    fn calculate_target_legacy_renderer_size(&self) -> D2D_SIZE_U {
         D2D_SIZE_U {
-            width: (screen_width as i32 + ((border_width + window_padding) * 2)) as u32,
-            height: (screen_height as i32 + ((border_width + window_padding) * 2)) as u32,
+            width: (self.window_rect.right - self.window_rect.left) as u32,
+            height: (self.window_rect.bottom - self.window_rect.top) as u32,
         }
     }
 
-    fn raw_init_drawer(
-        &mut self,
-        screen_width: u32,
-        screen_height: u32,
-    ) -> WindowsCompatibleResult<()> {
-        let renderer_size = Self::compute_proper_renderer_size(
-            screen_width,
-            screen_height,
-            self.border_drawer.border_width,
-            self.window_padding,
-        );
+    fn calculate_target_renderer_size(&self) -> WindowsCompatibleResult<D2D_SIZE_U> {
+        match self.render_backend_config {
+            RenderBackendConfig::V2 => self.calculate_target_v2_renderer_size(),
+            RenderBackendConfig::Legacy => Ok(self.calculate_target_legacy_renderer_size()),
+        }
+    }
+
+    fn raw_init_drawer(&mut self) -> WindowsCompatibleResult<()> {
+        let renderer_size = self
+            .calculate_target_renderer_size()
+            .windows_context("could not calculate target renderer size")?;
+
         self.border_drawer
             .init(
                 renderer_size.width,
@@ -404,15 +423,11 @@ impl WindowBorder {
         Ok(())
     }
 
-    fn init_drawer(
-        &mut self,
-        screen_width: u32,
-        screen_height: u32,
-    ) -> WindowsCompatibleResult<()> {
-        self.raw_init_drawer(screen_width, screen_height)
+    fn init_drawer(&mut self) -> WindowsCompatibleResult<()> {
+        self.raw_init_drawer()
             .or_else(|err| {
                 self.handle_directx_errors(err)?;
-                self.raw_init_drawer(screen_width, screen_height)
+                self.raw_init_drawer()
             })
             .inspect_err(|err| {
                 if err.code() != T_E_REENTRANCY {
@@ -457,9 +472,7 @@ impl WindowBorder {
             .needs_drawer_recreation()
             .windows_context("could not check if border drawer needs to be recreated")?
         {
-            let (screen_width, screen_height) = get_monitor_resolution(self.current_monitor)
-                .windows_context("could not get monitor resolution")?;
-            self.init_drawer(screen_width, screen_height)
+            self.init_drawer()
                 .windows_context("could not recreate border drawer")?;
             self.update_color(None);
             self.render().windows_context("could not render")?;
@@ -627,6 +640,12 @@ impl WindowBorder {
     }
 
     fn raw_render(&mut self) -> WindowsCompatibleResult<()> {
+        // The legacy renderer's size requires an update everytime self.window_rect updates
+        if let RenderBackend::Legacy(ref backend) = self.border_drawer.render_backend {
+            let renderer_size = self.calculate_target_legacy_renderer_size();
+            backend.resize(renderer_size.width, renderer_size.height)?;
+        }
+
         self.border_drawer
             .render(&self.window_rect, self.window_padding, self.window_state)
     }
@@ -670,13 +689,10 @@ impl WindowBorder {
             .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
     }
 
-    fn needs_renderer_resize(&self, screen_width: u32, screen_height: u32) -> anyhow::Result<bool> {
-        let correct_renderer_size = Self::compute_proper_renderer_size(
-            screen_width,
-            screen_height,
-            self.border_drawer.border_width,
-            self.window_padding,
-        );
+    fn needs_renderer_resize(&self) -> anyhow::Result<bool> {
+        let correct_renderer_size = self
+            .calculate_target_renderer_size()
+            .context("could not calculate target renderer size")?;
         let actual_renderer_size = self
             .border_drawer
             .render_backend
@@ -686,31 +702,20 @@ impl WindowBorder {
         Ok(correct_renderer_size != actual_renderer_size)
     }
 
-    fn raw_resize_renderer(
-        &mut self,
-        screen_width: u32,
-        screen_height: u32,
-    ) -> WindowsCompatibleResult<()> {
-        let renderer_size = Self::compute_proper_renderer_size(
-            screen_width,
-            screen_height,
-            self.border_drawer.border_width,
-            self.window_padding,
-        );
+    fn raw_resize_renderer(&mut self) -> WindowsCompatibleResult<()> {
+        let renderer_size = self
+            .calculate_target_renderer_size()
+            .windows_context("could not calculate target renderer size")?;
         self.border_drawer
             .resize_renderer(renderer_size.width, renderer_size.height)
             .windows_context("could not update renderer")
     }
 
-    fn resize_renderer(
-        &mut self,
-        screen_width: u32,
-        screen_height: u32,
-    ) -> WindowsCompatibleResult<()> {
-        self.raw_resize_renderer(screen_width, screen_height)
+    fn resize_renderer(&mut self) -> WindowsCompatibleResult<()> {
+        self.raw_resize_renderer()
             .or_else(|err| {
                 self.handle_directx_errors(err)?;
-                self.raw_resize_renderer(screen_width, screen_height)
+                self.raw_resize_renderer()
             })
             .inspect_err(|err| {
                 if err.code() != T_E_REENTRANCY {
@@ -735,14 +740,11 @@ impl WindowBorder {
             self.rescale_border(new_dpi);
         }
 
-        let (screen_width, screen_height) =
-            get_monitor_resolution(new_monitor).context("could not get monitor resolution")?;
-
         if self
-            .needs_renderer_resize(screen_width, screen_height)
+            .needs_renderer_resize()
             .context("could not check if renderer needs resizing")?
         {
-            self.resize_renderer(screen_width, screen_height)?;
+            self.resize_renderer()?;
             is_updated = true;
         }
 
@@ -1115,18 +1117,7 @@ impl WindowBorder {
                     debug!("dpi has changed! new dpi: {new_dpi}");
 
                     self.rescale_border(new_dpi);
-
-                    let (screen_width, screen_height) =
-                        match get_monitor_resolution(self.current_monitor) {
-                            Ok(resolution) => resolution,
-                            Err(err) => {
-                                error!("could not get monitor resolution: {err}");
-                                return LRESULT(0);
-                            }
-                        };
-
-                    self.resize_renderer(screen_width, screen_height)
-                        .log_if_err();
+                    self.resize_renderer().log_if_err();
                     self.render().log_if_err();
                 }
             }
@@ -1166,18 +1157,7 @@ impl WindowBorder {
                     if matches!(self.border_drawer.render_backend, RenderBackend::None) =>
                 {
                     debug!("system is resuming; reinitializing border drawer");
-                    let (screen_width, screen_height) =
-                        match get_monitor_resolution(self.current_monitor) {
-                            Ok(resolution) => resolution,
-                            Err(err) => {
-                                error!(
-                                    "could not get monitor resolution in WM_POWERBROADCAST: {err}"
-                                );
-                                self.cleanup_and_queue_exit();
-                                return LRESULT(0);
-                            }
-                        };
-                    if let Err(err) = self.init_drawer(screen_width, screen_height) {
+                    if let Err(err) = self.init_drawer() {
                         error!("could not initialize border drawer in WM_POWERBROADCAST: {err}");
                         self.cleanup_and_queue_exit();
                         return LRESULT(0);

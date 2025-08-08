@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::time;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
+    D2D_RECT_F, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BRUSH_PROPERTIES, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT, ID2D1Brush,
@@ -197,14 +197,7 @@ impl BorderDrawer {
         };
         let render_target = &backend.render_target;
 
-        let pixel_size = D2D_SIZE_U {
-            width: (window_rect.right - window_rect.left) as u32,
-            height: (window_rect.bottom - window_rect.top) as u32,
-        };
-
         unsafe {
-            render_target.Resize(&pixel_size)?;
-
             // Determine which color should be drawn on top (for color fade animation)
             let (bottom_color, top_color) = match window_state {
                 WindowState::Active => (&self.inactive_color, &self.active_color),
