@@ -99,6 +99,9 @@ impl UnixStream {
 
     /// NOTE: This takes ownership of the input buffer to avoid race conditions
     pub fn read(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<u32> {
+        // Reset flags between I/O operations
+        self.flags = 0;
+
         // Here is where we take ownership of the buffer
         self.buffer = outputbuffer;
 
@@ -112,6 +115,9 @@ impl UnixStream {
     }
 
     pub fn write(&mut self, inputbuffer: &[u8]) -> anyhow::Result<u32> {
+        // Reset flags between I/O operations
+        self.flags = 0;
+
         if let Some(overlapped) = self.overlapped.as_mut() {
             self.socket
                 .write_overlapped(inputbuffer, overlapped.as_mut(), self.flags)
@@ -216,6 +222,12 @@ impl UnixDomainSocket {
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
     ) -> anyhow::Result<UnixDomainSocket> {
+        // Zero out unused OVERLAPPED struct fields (as per MSDN recommendation)
+        *lpoverlapped = OVERLAPPED {
+            hEvent: lpoverlapped.hEvent,
+            ..Default::default()
+        };
+
         let client_socket = UnixDomainSocket::new()?;
         let mut bytes_received = 0u32;
 
@@ -264,6 +276,12 @@ impl UnixDomainSocket {
         lpoverlapped: &mut OVERLAPPED,
         lpflags: &mut u32,
     ) -> anyhow::Result<u32> {
+        // Zero out unused OVERLAPPED struct fields (as per MSDN recommendation)
+        *lpoverlapped = OVERLAPPED {
+            hEvent: lpoverlapped.hEvent,
+            ..Default::default()
+        };
+
         let lpbuffers = WSABUF {
             len: lpoutputbuffer.len() as u32,
             buf: PSTR(lpoutputbuffer.as_mut_ptr()),
@@ -312,6 +330,12 @@ impl UnixDomainSocket {
         lpoverlapped: &mut OVERLAPPED,
         lpflags: u32,
     ) -> anyhow::Result<u32> {
+        // Zero out unused OVERLAPPED struct fields (as per MSDN recommendation)
+        *lpoverlapped = OVERLAPPED {
+            hEvent: lpoverlapped.hEvent,
+            ..Default::default()
+        };
+
         // WSABUF requires a mut ptr to the buffer, but WSASend shouldn't mutate anything.
         // It should be safe to cast a const ptr to a mut ptr as a workaround.
         let lpbuffers = WSABUF {
