@@ -2,7 +2,7 @@ use std::{fs, thread};
 
 use anyhow::{Context, anyhow};
 use tacky_borders::config::Config;
-use tacky_borders::iocp::{CompletionPort, OverlappedMode, UnixListener, UnixStream};
+use tacky_borders::iocp::{CompletionPort, UnixListener, UnixStream};
 use tacky_borders::utils::remove_file_if_exists;
 use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup};
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
@@ -24,12 +24,11 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
     let port = CompletionPort::new(2)?;
 
     // Bind to the socket (synchronous)
-    let mut listener = UnixListener::bind(&socket_path)?;
-    unsafe { listener.set_overlapped(true) };
+    let listener = UnixListener::bind(&socket_path)?;
     port.associate_handle(listener.socket.to_handle(), listener.token())?;
 
     // Queue up an accept operation (asynchronous)
-    let mut read_stream = listener.accept()?;
+    let mut read_stream = unsafe { listener.accept_overlapped() }?;
     port.associate_handle(read_stream.socket.to_handle(), read_stream.token())?;
 
     let mut text = "Hello World!".to_string();
@@ -39,11 +38,10 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
         let port_2 = CompletionPort::new(1)?;
 
         let mut write_stream = UnixStream::connect(&socket_path_clone)?;
-        unsafe { write_stream.set_overlapped(true) };
         port_2.associate_handle(write_stream.socket.to_handle(), write_stream.token())?;
 
         let input_buffer = unsafe { text_clone.as_bytes_mut() };
-        write_stream.write(input_buffer)?;
+        unsafe { write_stream.write_overlapped(input_buffer) }?;
 
         let mut entry = OVERLAPPED_ENTRY::default();
         port_2.poll_single(None, &mut entry)?;
@@ -57,14 +55,17 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
 
     // Then, queue up a read operation and wait for that to asynchronously finish
     let output_buffer = vec![0u8; text.len()];
-    read_stream.read(output_buffer)?;
+    unsafe { read_stream.read_overlapped(output_buffer) }?;
     port.poll_single(None, &mut entry)?;
 
     fs::remove_file(&socket_path)?;
     unsafe { WSACleanup() };
 
+    let output_buffer = read_stream
+        .take_buffer()
+        .context("read_stream's buffer is None")?;
     let correct_output = unsafe { text.as_bytes_mut() };
-    assert!(read_stream.buffer == correct_output);
+    assert!(output_buffer == correct_output);
     assert!(join_handle.is_finished());
 
     Ok(())
@@ -100,14 +101,14 @@ fn test_socket_write_read() -> anyhow::Result<()> {
 
     let mut read_stream = listener.accept()?;
 
-    let output_buffer = vec![0u8; text.len()];
-    read_stream.read(output_buffer)?;
+    let mut output_buffer = vec![0u8; text.len()];
+    read_stream.read(&mut output_buffer)?;
 
     fs::remove_file(&socket_path)?;
     unsafe { WSACleanup() };
 
     let correct_output = unsafe { text.as_bytes_mut() };
-    assert!(read_stream.buffer == correct_output);
+    assert!(output_buffer == correct_output);
     assert!(join_handle.is_finished());
 
     Ok(())

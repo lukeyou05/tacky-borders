@@ -24,7 +24,7 @@ const UNIX_ADDR_LEN: u32 = mem::size_of::<SOCKADDR_UN>() as u32;
 
 pub struct UnixListener {
     pub socket: UnixDomainSocket,
-    pub overlapped: Option<Box<OVERLAPPED>>,
+    pub overlapped: Box<OVERLAPPED>,
 }
 
 unsafe impl Send for UnixListener {}
@@ -37,37 +37,50 @@ impl UnixListener {
 
         Ok(Self {
             socket: server_socket,
-            overlapped: None,
+            overlapped: Box::new(OVERLAPPED::default()),
         })
     }
 
-    /// NOTE: The returned `UnixStream` inherits the overlapped mode of this `UnixListener`
+    /// # Safety
+    ///
+    /// Performs an asynchronous I/O operation using an `OVERLAPPED` struct owned by the
+    /// `UnixListener` or `UnixStream`. To uphold memory safety, ensure the following:
+    ///
+    /// - Only one overlapped operation should be in flight at a time per struct. Running
+    ///   concurrent operations on the same struct is undefined behavior.
+    /// - This struct must not be dropped until the operation has completed. Dropping it early may
+    ///   lead to use-after-free errors.
+    ///
+    /// Upon completion, the local and remote addresses will be written into the `buffer` field of
+    /// the returned `UnixStream`.
+    ///
+    /// TODO: Somehow communicate the number of bytes transferred
+    pub unsafe fn accept_overlapped(&self) -> anyhow::Result<UnixStream> {
+        // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
+        // in AcceptEx (double I assume because there's both the local and remote addresses)
+        let mut socket_addr = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
+        let mut client_overlapped = Box::new(OVERLAPPED::default());
+        let client_socket = self
+            .socket
+            .accept_overlapped(&mut socket_addr, client_overlapped.as_mut())?;
+
+        Ok(UnixStream {
+            socket: client_socket,
+            buffer: Some(socket_addr),
+            overlapped: client_overlapped,
+            flags: 0,
+        })
+    }
+
     pub fn accept(&self) -> anyhow::Result<UnixStream> {
-        if self.overlapped.is_some() {
-            // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
-            // in AcceptEx (double I assume because there's both the local and remote addresses)
-            let mut client_buffer = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
-            let mut client_overlapped = Box::new(OVERLAPPED::default());
-            let client_socket = self
-                .socket
-                .accept_overlapped(&mut client_buffer, client_overlapped.as_mut())?;
+        let client_socket = self.socket.accept(None, None)?;
 
-            Ok(UnixStream {
-                socket: client_socket,
-                buffer: client_buffer,
-                overlapped: Some(client_overlapped),
-                flags: 0,
-            })
-        } else {
-            let client_socket = self.socket.accept(None, None)?;
-
-            Ok(UnixStream {
-                socket: client_socket,
-                buffer: Vec::new(),
-                overlapped: None,
-                flags: 0,
-            })
-        }
+        Ok(UnixStream {
+            socket: client_socket,
+            buffer: None,
+            overlapped: Box::new(OVERLAPPED::default()),
+            flags: 0,
+        })
     }
 
     pub fn token(&self) -> usize {
@@ -77,8 +90,8 @@ impl UnixListener {
 
 pub struct UnixStream {
     pub socket: UnixDomainSocket,
-    pub buffer: Vec<u8>,
-    pub overlapped: Option<Box<OVERLAPPED>>,
+    pub buffer: Option<Vec<u8>>,
+    pub overlapped: Box<OVERLAPPED>,
     pub flags: u32,
 }
 
@@ -91,48 +104,76 @@ impl UnixStream {
 
         Ok(Self {
             socket: client_socket,
-            buffer: Vec::new(),
-            overlapped: None,
+            buffer: None,
+            overlapped: Box::new(OVERLAPPED::default()),
             flags: 0,
         })
     }
 
+    /// # Safety
+    ///
+    /// Performs an asynchronous I/O operation using an `OVERLAPPED` struct owned by the
+    /// `UnixListener` or `UnixStream`. To uphold memory safety, ensure the following:
+    ///
+    /// - Only one overlapped operation should be in flight at a time per struct. Running
+    ///   concurrent operations on the same struct is undefined behavior.
+    /// - This struct must not be dropped until the operation has completed. Dropping it early may
+    ///   lead to use-after-free errors.
+    ///
     /// NOTE: This takes ownership of the input buffer to avoid race conditions
-    pub fn read(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<u32> {
+    pub unsafe fn read_overlapped(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<u32> {
         // Reset flags between I/O operations
         self.flags = 0;
 
         // Here is where we take ownership of the buffer
-        self.buffer = outputbuffer;
+        self.buffer = Some(outputbuffer);
 
-        if let Some(overlapped) = self.overlapped.as_mut() {
-            self.socket
-                .read_overlapped(&mut self.buffer, overlapped.as_mut(), &mut self.flags)
-        } else {
-            self.socket
-                .read(&mut self.buffer, SEND_RECV_FLAGS(self.flags as i32))
-        }
+        self.socket.read_overlapped(
+            self.buffer.as_mut().unwrap(),
+            self.overlapped.as_mut(),
+            &mut self.flags,
+        )
+    }
+
+    pub fn read(&mut self, outputbuffer: &mut [u8]) -> anyhow::Result<u32> {
+        // Reset flags between I/O operations
+        self.flags = 0;
+
+        self.socket
+            .read(outputbuffer, SEND_RECV_FLAGS(self.flags as i32))
+    }
+
+    /// # Safety
+    ///
+    /// Performs an asynchronous I/O operation using an `OVERLAPPED` struct owned by the
+    /// `UnixListener` or `UnixStream`. To uphold memory safety, ensure the following:
+    ///
+    /// - Only one overlapped operation should be in flight at a time per struct. Running
+    ///   concurrent operations on the same struct is undefined behavior.
+    /// - This struct must not be dropped until the operation has completed. Dropping it early may
+    ///   lead to use-after-free errors.
+    pub unsafe fn write_overlapped(&mut self, inputbuffer: &[u8]) -> anyhow::Result<u32> {
+        // Reset flags between I/O operations
+        self.flags = 0;
+
+        self.socket
+            .write_overlapped(inputbuffer, self.overlapped.as_mut(), self.flags)
     }
 
     pub fn write(&mut self, inputbuffer: &[u8]) -> anyhow::Result<u32> {
         // Reset flags between I/O operations
         self.flags = 0;
 
-        if let Some(overlapped) = self.overlapped.as_mut() {
-            self.socket
-                .write_overlapped(inputbuffer, overlapped.as_mut(), self.flags)
-        } else {
-            self.socket
-                .write(inputbuffer, SEND_RECV_FLAGS(self.flags as i32))
-        }
+        self.socket
+            .write(inputbuffer, SEND_RECV_FLAGS(self.flags as i32))
     }
 
     pub fn token(&self) -> usize {
         self.socket.0.0
     }
 
-    pub fn take_buffer(&mut self) -> Vec<u8> {
-        mem::take(&mut self.buffer)
+    pub fn take_buffer(&mut self) -> Option<Vec<u8>> {
+        self.buffer.take()
     }
 }
 
@@ -202,17 +243,11 @@ impl UnixDomainSocket {
 
     pub fn accept(
         &self,
-        addr: Option<&mut SOCKADDR>,
+        addr: Option<*mut SOCKADDR>,
         addrlen: Option<&mut i32>,
     ) -> anyhow::Result<UnixDomainSocket> {
-        let socket = unsafe {
-            accept(
-                self.0,
-                addr.map(|mut_ref| mut_ref as *mut _),
-                addrlen.map(|mut_ref| mut_ref as *mut _),
-            )
-        }
-        .context("could not accept a client socket")?;
+        let socket = unsafe { accept(self.0, addr, addrlen.map(|mut_ref| mut_ref as *mut _)) }
+            .context("could not accept a client socket")?;
 
         Ok(UnixDomainSocket(socket))
     }
@@ -371,40 +406,6 @@ impl UnixDomainSocket {
 
     pub fn to_handle(&self) -> HANDLE {
         HANDLE(self.0.0 as _)
-    }
-}
-
-pub trait OverlappedMode {
-    /// # Safety
-    ///
-    /// Calling this function is not inherently unsafe, but enabling overlapped (asynchronous) I/O
-    /// may have additional safety requirements depending on the design of the trait implementor:
-    ///
-    /// - Each I/O operation requires a separate `OVERLAPPED` struct. If a trait implementor owns
-    ///   one or more `OVERLAPPED` structs (e.g. `UnixStream` and `UnixListener`), it must never
-    ///   run more concurrent operations than the number of `OVERLAPPED` structs it owns.
-    /// - An `OVERLAPPED` struct should not be dropped until its corresponding I/O operation has
-    ///   completed. Dropping it early can lead to use-after-free errors.
-    unsafe fn set_overlapped(&mut self, enabled: bool);
-}
-
-impl OverlappedMode for UnixListener {
-    unsafe fn set_overlapped(&mut self, enabled: bool) {
-        if enabled && self.overlapped.is_none() {
-            self.overlapped = Some(Box::new(OVERLAPPED::default()));
-        } else {
-            self.overlapped = None;
-        }
-    }
-}
-
-impl OverlappedMode for UnixStream {
-    unsafe fn set_overlapped(&mut self, enabled: bool) {
-        if enabled && self.overlapped.is_none() {
-            self.overlapped = Some(Box::new(OVERLAPPED::default()));
-        } else {
-            self.overlapped = None;
-        }
     }
 }
 
@@ -588,8 +589,7 @@ impl UnixStreamSink {
             return Err(anyhow!("WSAStartup failure: {iresult}"));
         }
 
-        let mut listener = UnixListener::bind(socket_path)?;
-        unsafe { listener.set_overlapped(true) };
+        let listener = UnixListener::bind(socket_path)?;
         let listener_key = listener.token();
 
         let port = CompletionPort::new(2)?;
@@ -607,7 +607,7 @@ impl UnixStreamSink {
                 let mut last_buffer_pool_prune = time::Instant::now();
 
                 // Queue up our first accept I/O operation.
-                let stream = Box::new(listener.accept()?);
+                let stream = Box::new(unsafe { listener.accept_overlapped() }?);
                 port.associate_handle(stream.socket.to_handle(), stream.token())?;
                 streams_queue.push_back((stream.token(), stream));
 
@@ -634,10 +634,10 @@ impl UnixStreamSink {
                                 debug!("creating new buffer for unix stream sink");
                                 vec![0u8; Self::BUFFER_SIZE]
                             });
-                            stream.read(outputbuffer)?;
+                            unsafe { stream.read_overlapped(outputbuffer) }?;
 
                             // Queue up a new accept I/O operation.
-                            let stream = Box::new(listener.accept()?);
+                            let stream = Box::new(unsafe { listener.accept_overlapped() }?);
                             port.associate_handle(stream.socket.to_handle(), stream.token())?;
                             streams_queue.push_back((stream.token(), stream));
                         } else if entry.lpCompletionKey != Self::STOP_PACKET_KEY {
@@ -650,11 +650,14 @@ impl UnixStreamSink {
                                 .remove(position)
                                 .context("could not remove stream from queue")?
                                 .1;
+                            let outputbuffer = stream
+                                .take_buffer()
+                                .context("unix stream's buffer is None")?;
 
-                            callback(&stream.buffer, entry.dwNumberOfBytesTransferred);
+                            callback(&outputbuffer, entry.dwNumberOfBytesTransferred);
 
                             // We don't need this stream anymore, so place its buffer into the pool
-                            buffer_pool.push_back(stream.take_buffer());
+                            buffer_pool.push_back(outputbuffer);
                         } else {
                             // Stop packet has been sent; cleanup and exit the thread
                             should_cleanup = true;
