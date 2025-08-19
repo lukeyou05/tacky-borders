@@ -12,7 +12,8 @@ use std::sync::LazyLock;
 use tacky_borders::sys_tray_icon::create_tray_icon;
 use tacky_borders::utils::{LogIfErr, imm_disable_ime, set_process_dpi_awareness_context};
 use tacky_borders::{
-    APP_STATE, create_borders_for_existing_windows, register_border_window_class, set_event_hook,
+    APP_STATE, create_borders_for_existing_windows, is_unwanted_instance,
+    register_border_window_class, set_event_hook,
 };
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -20,6 +21,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
+    if is_unwanted_instance() {
+        return;
+    }
+
     // Force initialization of our app state
     let _ = LazyLock::force(&APP_STATE);
 
@@ -37,7 +42,7 @@ fn main() {
 
     let hwineventhook = set_event_hook();
 
-    // This is responsible for the tray icon window, so it must be kept in scope
+    // This owns the tray icon window, so it must be kept in scope
     let tray_icon_res = create_tray_icon(hwineventhook);
     if let Err(err) = tray_icon_res {
         error!("could not create tray icon: {err}");

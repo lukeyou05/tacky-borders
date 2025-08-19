@@ -23,7 +23,7 @@ use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, RwLock, RwLockWriteGuard};
+use std::sync::{LazyLock, Mutex, OnceLock, RwLock, RwLockWriteGuard};
 use std::thread::{self, JoinHandle};
 use utils::{
     LogIfErr, OwnedHANDLE, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
@@ -33,8 +33,8 @@ use utils::{
 };
 use windows::Wdk::System::SystemServices::RtlGetVersion;
 use windows::Win32::Foundation::{
-    ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE, WAIT_ABANDONED_0, WAIT_EVENT,
-    WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
+    ERROR_ALREADY_EXISTS, ERROR_CLASS_ALREADY_EXISTS, HANDLE, HMODULE, HWND, LPARAM, TRUE,
+    WAIT_ABANDONED_0, WAIT_EVENT, WAIT_FAILED, WAIT_OBJECT_0, WPARAM,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1CreateFactory, ID2D1Device, ID2D1Factory1,
@@ -54,13 +54,15 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
-    CreateEventW, INFINITE, OpenThread, SetEvent, THREAD_SYNCHRONIZE, WaitForMultipleObjects,
+    CreateEventW, CreateMutexW, INFINITE, OpenThread, SetEvent, THREAD_SYNCHRONIZE,
+    WaitForMultipleObjects,
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_MAX, EVENT_MIN, EnumWindows, GetWindowThreadProcessId, IDC_ARROW, LoadCursorW,
-    MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW, RegisterClassExW,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
+    EVENT_MAX, EVENT_MIN, EnumWindows, GetWindowThreadProcessId, IDC_ARROW, IDNO, LoadCursorW,
+    MB_DEFBUTTON2, MB_ICONERROR, MB_ICONQUESTION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO,
+    MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW, RegisterClassExW, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_NCDESTROY, WNDCLASSEXW,
 };
 use windows::core::{BOOL, Interface, PCWSTR, w};
 
@@ -576,6 +578,7 @@ pub fn reload_borders() {
     create_borders_for_existing_windows().log_if_err();
 }
 
+// TODO: Edit this function to keep consistency with display_question_box
 pub fn display_error_box<T: std::fmt::Display>(err: T) {
     let error_vec: Vec<u16> = err
         .to_string()
@@ -593,6 +596,56 @@ pub fn display_error_box<T: std::fmt::Display>(err: T) {
             )
         };
     });
+}
+
+pub fn display_question_box<T: std::fmt::Display>(
+    question: T,
+    extra_styles: Option<MESSAGEBOX_STYLE>,
+) -> MESSAGEBOX_RESULT {
+    let question_vec: Vec<u16> = question
+        .to_string()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(question_vec.as_ptr()),
+            w!("tacky-borders"),
+            MB_YESNO
+                | MB_ICONQUESTION
+                | MB_SETFOREGROUND
+                | MB_TOPMOST
+                | extra_styles.unwrap_or_default(),
+        )
+    }
+}
+
+pub fn is_unwanted_instance() -> bool {
+    static IS_UNWANTED: OnceLock<bool> = OnceLock::new();
+
+    *IS_UNWANTED.get_or_init(|| {
+        const MUTEX_NAME: PCWSTR = w!("Local\\tacky-borders-a6b83a75-bebb-46ac-b29f-ea9aa0855fa2");
+
+        // Note that this creates a raw handle that gets leaked when it goes out of scope. This is
+        // intentional. We want this Mutex to remain alive for the duration of the program. And,
+        // MSDN says the handle is automatically closed upon application exit, so leaking is fine.
+        let mutex_res = unsafe { CreateMutexW(None, false, MUTEX_NAME) };
+
+        // Note that in the case of ERROR_ALREADY_EXISTS, CreateMutexW still returns Ok with a handle
+        // to the existing Mutex, so we need to check the error separately with GetLastError.
+        if mutex_res.is_err() || get_last_error() == ERROR_ALREADY_EXISTS {
+            let yes_no_decision = display_question_box(
+                "an instance of tacky-borders is already running; continue anyways?",
+                Some(MB_DEFBUTTON2),
+            );
+
+            return yes_no_decision == IDNO;
+        }
+
+        false
+    })
 }
 
 unsafe extern "system" fn create_borders_callback(_hwnd: HWND, _lparam: LPARAM) -> BOOL {
