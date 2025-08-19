@@ -131,7 +131,9 @@ impl AppState {
             }
             Err(err) => {
                 error!("could not read config: {err:#}");
-                display_error_box(format!("could not read config: {err:#}"));
+                thread::spawn(move || {
+                    display_error_box(format!("could not read config: {err:#}"), None);
+                });
 
                 Config::default()
             }
@@ -578,24 +580,24 @@ pub fn reload_borders() {
     create_borders_for_existing_windows().log_if_err();
 }
 
-// TODO: Edit this function to keep consistency with display_question_box
-pub fn display_error_box<T: std::fmt::Display>(err: T) {
-    let error_vec: Vec<u16> = err
+pub fn display_error_box<T: std::fmt::Display>(
+    error: T,
+    extra_styles: Option<MESSAGEBOX_STYLE>,
+) -> MESSAGEBOX_RESULT {
+    let error_vec: Vec<u16> = error
         .to_string()
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
 
-    let _ = thread::spawn(move || {
-        let _ = unsafe {
-            MessageBoxW(
-                None,
-                PCWSTR(error_vec.as_ptr()),
-                w!("Error!"),
-                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
-            )
-        };
-    });
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(error_vec.as_ptr()),
+            w!("tacky-borders"),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST | extra_styles.unwrap_or_default(),
+        )
+    }
 }
 
 pub fn display_question_box<T: std::fmt::Display>(

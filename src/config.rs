@@ -316,7 +316,9 @@ impl Config {
             }
             Err(err) => {
                 error!("could not reload config: {err:#}");
-                display_error_box(format!("could not reload config: {err:#}"));
+                thread::spawn(move || {
+                    display_error_box(format!("could not reload config: {err:#}"), None);
+                });
 
                 Config::default()
             }
