@@ -34,7 +34,7 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
     let mut text = "Hello World!".to_string();
     let mut text_clone = text.clone();
 
-    let join_handle = thread::spawn(move || -> anyhow::Result<()> {
+    let join_handle = thread::spawn(move || -> anyhow::Result<u32> {
         let port_2 = CompletionPort::new(1)?;
 
         let mut write_stream = UnixStream::connect(&socket_path_clone)?;
@@ -46,7 +46,7 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
         let mut entry = OVERLAPPED_ENTRY::default();
         port_2.poll_single(None, &mut entry)?;
 
-        Ok(())
+        Ok(entry.dwNumberOfBytesTransferred)
     });
 
     // Wait for the listener to asynchronously accept the connection
@@ -61,13 +61,20 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
     fs::remove_file(&socket_path)?;
     unsafe { WSACleanup() };
 
+    assert!(join_handle.is_finished());
+
+    let bytes_written = join_handle
+        .join()
+        .expect("could not join write_stream's thread")?;
+    let bytes_read = entry.dwNumberOfBytesTransferred;
     let output_buffer = read_stream
         .take_overlapped_buffer()
         .context("read_stream's buffer is None")?;
     let correct_output = unsafe { text.as_bytes_mut() };
 
+    assert!(bytes_written as usize == correct_output.len());
+    assert!(bytes_read as usize == correct_output.len());
     assert!(output_buffer == correct_output);
-    assert!(join_handle.is_finished());
 
     Ok(())
 }
@@ -91,27 +98,33 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     let mut text = "Hello World!".to_string();
     let mut text_clone = text.clone();
 
-    let join_handle = thread::spawn(move || -> anyhow::Result<()> {
+    let join_handle = thread::spawn(move || -> anyhow::Result<u32> {
         let write_stream = UnixStream::connect(&socket_path_clone)?;
 
         let input_buffer = unsafe { text_clone.as_bytes_mut() };
-        write_stream.write(input_buffer)?;
+        let bytes_written = write_stream.write(input_buffer)?;
 
-        Ok(())
+        Ok(bytes_written)
     });
 
     let read_stream = listener.accept()?;
 
     let mut output_buffer = vec![0u8; text.len()];
-    read_stream.read(&mut output_buffer)?;
+    let bytes_read = read_stream.read(&mut output_buffer)?;
 
     fs::remove_file(&socket_path)?;
     unsafe { WSACleanup() };
 
+    assert!(join_handle.is_finished());
+
+    let bytes_written = join_handle
+        .join()
+        .expect("could not join write_stream's thread")?;
     let correct_output = unsafe { text.as_bytes_mut() };
 
+    assert!(bytes_written as usize == correct_output.len());
+    assert!(bytes_read as usize == correct_output.len());
     assert!(output_buffer == correct_output);
-    assert!(join_handle.is_finished());
 
     Ok(())
 }
