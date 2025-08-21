@@ -62,9 +62,10 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
     unsafe { WSACleanup() };
 
     let output_buffer = read_stream
-        .take_buffer()
+        .take_overlapped_buffer()
         .context("read_stream's buffer is None")?;
     let correct_output = unsafe { text.as_bytes_mut() };
+
     assert!(output_buffer == correct_output);
     assert!(join_handle.is_finished());
 
@@ -91,7 +92,7 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     let mut text_clone = text.clone();
 
     let join_handle = thread::spawn(move || -> anyhow::Result<()> {
-        let mut write_stream = UnixStream::connect(&socket_path_clone)?;
+        let write_stream = UnixStream::connect(&socket_path_clone)?;
 
         let input_buffer = unsafe { text_clone.as_bytes_mut() };
         write_stream.write(input_buffer)?;
@@ -99,7 +100,7 @@ fn test_socket_write_read() -> anyhow::Result<()> {
         Ok(())
     });
 
-    let mut read_stream = listener.accept()?;
+    let read_stream = listener.accept()?;
 
     let mut output_buffer = vec![0u8; text.len()];
     read_stream.read(&mut output_buffer)?;
@@ -108,6 +109,7 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     unsafe { WSACleanup() };
 
     let correct_output = unsafe { text.as_bytes_mut() };
+
     assert!(output_buffer == correct_output);
     assert!(join_handle.is_finished());
 
