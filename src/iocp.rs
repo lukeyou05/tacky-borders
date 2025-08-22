@@ -535,22 +535,16 @@ pub struct CompletionPort(HANDLE);
 unsafe impl Send for CompletionPort {}
 
 impl CompletionPort {
-    pub fn new(threads: u32) -> anyhow::Result<Self> {
+    pub fn new(threads: u32) -> io::Result<Self> {
         let iocp_handle =
-            match unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, threads) } {
-                Ok(handle) => handle,
-                Err(err) => {
-                    return Err(anyhow!("could not create iocp: {err}"));
-                }
-            };
+            unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, threads) }?;
 
         Ok(Self(iocp_handle))
     }
 
-    pub fn associate_handle(&self, handle: HANDLE, token: usize) -> anyhow::Result<()> {
+    pub fn associate_handle(&self, handle: HANDLE, token: usize) -> io::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }
-            .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
+        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }?;
 
         Ok(())
     }
@@ -559,7 +553,7 @@ impl CompletionPort {
         &self,
         timeout: Option<time::Duration>,
         entry: &mut OVERLAPPED_ENTRY,
-    ) -> anyhow::Result<()> {
+    ) -> io::Result<()> {
         let mut bytes_transferred = 0u32;
         let mut completion_key = 0usize;
         let mut lpoverlapped: *mut OVERLAPPED = ptr::null_mut();
@@ -569,7 +563,6 @@ impl CompletionPort {
             None => INFINITE,
         };
 
-        // TODO: Replace context() with with_context()
         unsafe {
             GetQueuedCompletionStatus(
                 self.0,
@@ -578,11 +571,7 @@ impl CompletionPort {
                 &mut lpoverlapped,
                 timeout_ms,
             )
-        }
-        .context(format!(
-            "could not get queued completion status: {}",
-            io::Error::last_os_error(),
-        ))?;
+        }?;
 
         *entry = OVERLAPPED_ENTRY {
             lpCompletionKey: completion_key,
@@ -598,7 +587,7 @@ impl CompletionPort {
         &self,
         timeout: Option<time::Duration>,
         entries: &mut [OVERLAPPED_ENTRY],
-    ) -> anyhow::Result<u32> {
+    ) -> io::Result<u32> {
         let mut num_entries_removed = 0u32;
 
         let timeout_ms = match timeout {
@@ -614,11 +603,7 @@ impl CompletionPort {
                 timeout_ms,
                 false,
             )
-        }
-        .context(format!(
-            "could not get queued completion status: {}",
-            io::Error::last_os_error(),
-        ))?;
+        }?;
 
         Ok(num_entries_removed)
     }
