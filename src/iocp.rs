@@ -8,8 +8,8 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
     ADDRESS_FAMILY, AF_UNIX, AcceptEx, INVALID_SOCKET, SEND_RECV_FLAGS, SOCK_STREAM, SOCKADDR,
     SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF,
-    WSACleanup, WSADATA, WSAGetLastError, WSARecv, WSASend, WSASocketW, WSAStartup, accept, bind,
-    closesocket, connect, listen, recv, send,
+    WSAGetLastError, WSARecv, WSASend, WSASocketW, accept, bind, closesocket, connect, listen,
+    recv, send,
 };
 use windows::Win32::System::IO::{
     CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx,
@@ -21,6 +21,50 @@ use windows::core::PSTR;
 use crate::utils::LogIfErr;
 
 const UNIX_ADDR_LEN: u32 = mem::size_of::<SOCKADDR_UN>() as u32;
+
+// Adapted from Rust's standard library (std::sys::net::connection::socket::windows, commit 6ba0ce4)
+mod winsock {
+    use std::mem;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering::{AcqRel, Relaxed};
+
+    use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup};
+
+    static WSA_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+    /// Checks whether the Windows socket interface has been started already, and
+    /// if not, starts it.
+    #[inline]
+    pub fn init() {
+        if !WSA_INITIALIZED.load(Relaxed) {
+            wsa_startup();
+        }
+    }
+
+    #[cold]
+    fn wsa_startup() {
+        unsafe {
+            let mut data: WSADATA = mem::zeroed();
+            let ret = WSAStartup(
+                0x202, // version 2.2
+                &mut data,
+            );
+            assert_eq!(ret, 0);
+            if WSA_INITIALIZED.swap(true, AcqRel) {
+                // If another thread raced with us and called WSAStartup first then call
+                // WSACleanup so it's as though WSAStartup was only called once.
+                WSACleanup();
+            }
+        }
+    }
+
+    #[allow(unused)]
+    pub fn cleanup() {
+        // We don't need to call WSACleanup here because exiting the process will cause
+        // the OS to clean everything for us, which is faster than doing it manually.
+        // See #141799.
+    }
+}
 
 pub struct OverlappedContext {
     pub overlapped: Box<OVERLAPPED>,
@@ -36,6 +80,8 @@ unsafe impl Send for UnixListener {}
 
 impl UnixListener {
     pub fn bind(socket_path: &Path) -> anyhow::Result<Self> {
+        winsock::init();
+
         let server_socket = UnixDomainSocket::new()?;
         server_socket.bind(socket_path)?;
         server_socket.listen(SOMAXCONN as i32)?;
@@ -104,6 +150,8 @@ unsafe impl Send for UnixStream {}
 
 impl UnixStream {
     pub fn connect(path: &Path) -> anyhow::Result<Self> {
+        winsock::init();
+
         let client_socket = UnixDomainSocket::new()?;
         client_socket.connect(path)?;
 
@@ -595,13 +643,6 @@ impl UnixStreamSink {
         socket_path: &Path,
         mut callback: impl FnMut(&[u8], u32) + Send + 'static,
     ) -> anyhow::Result<Self> {
-        // Start the WinSock service
-        // TODO: Use std::sync::Once to get this startup to run only once
-        let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
-        if iresult != 0 {
-            return Err(anyhow!("WSAStartup failure: {iresult}"));
-        }
-
         let listener = UnixListener::bind(socket_path)?;
         let listener_key = listener.token();
 
@@ -762,8 +803,6 @@ impl Drop for UnixStreamSink {
                 self.iocp_handle
             ),
         }
-
-        unsafe { WSACleanup() };
     }
 }
 

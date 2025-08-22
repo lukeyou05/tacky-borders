@@ -1,20 +1,13 @@
 use std::{fs, thread};
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use tacky_borders::config::Config;
 use tacky_borders::iocp::{CompletionPort, UnixListener, UnixStream};
 use tacky_borders::utils::remove_file_if_exists;
-use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup};
 use windows::Win32::System::IO::OVERLAPPED_ENTRY;
 
 #[test]
 fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
-    // Start up the WinSock Service
-    let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
-    if iresult != 0 {
-        return Err(anyhow!("WSAStartup failure: {iresult}"));
-    }
-
     let socket_path = Config::get_dir()?.join("test_overlapped.sock");
     let socket_path_clone = socket_path.clone();
 
@@ -59,7 +52,6 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
     port.poll_single(None, &mut entry)?;
 
     fs::remove_file(&socket_path)?;
-    unsafe { WSACleanup() };
 
     assert!(join_handle.is_finished());
 
@@ -81,12 +73,6 @@ fn test_socket_write_read_overlapped() -> anyhow::Result<()> {
 
 #[test]
 fn test_socket_write_read() -> anyhow::Result<()> {
-    // Start up the WinSock Service
-    let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
-    if iresult != 0 {
-        return Err(anyhow!("WSAStartup failure: {iresult}"));
-    }
-
     let socket_path = Config::get_dir()?.join("test.sock");
     let socket_path_clone = socket_path.clone();
 
@@ -113,7 +99,6 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     let bytes_read = read_stream.read(&mut output_buffer)?;
 
     fs::remove_file(&socket_path)?;
-    unsafe { WSACleanup() };
 
     assert!(join_handle.is_finished());
 
