@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::{fs, thread};
 
 use anyhow::Context;
@@ -84,16 +85,16 @@ fn test_socket_write_read() -> anyhow::Result<()> {
     let mut text = "Hello World!".to_string();
     let mut text_clone = text.clone();
 
-    let join_handle = thread::spawn(move || -> anyhow::Result<u32> {
-        let write_stream = UnixStream::connect(&socket_path_clone)?;
+    let join_handle = thread::spawn(move || -> anyhow::Result<()> {
+        let mut write_stream = UnixStream::connect(&socket_path_clone)?;
 
         let input_buffer = unsafe { text_clone.as_bytes_mut() };
-        let bytes_written = write_stream.write(input_buffer)?;
+        write_stream.write_all(input_buffer)?;
 
-        Ok(bytes_written)
+        Ok(())
     });
 
-    let read_stream = listener.accept()?;
+    let mut read_stream = listener.accept()?;
 
     let mut output_buffer = vec![0u8; text.len()];
     let bytes_read = read_stream.read(&mut output_buffer)?;
@@ -102,13 +103,9 @@ fn test_socket_write_read() -> anyhow::Result<()> {
 
     assert!(join_handle.is_finished());
 
-    let bytes_written = join_handle
-        .join()
-        .expect("could not join write_stream's thread")?;
     let correct_output = unsafe { text.as_bytes_mut() };
 
-    assert!(bytes_written as usize == correct_output.len());
-    assert!(bytes_read as usize == correct_output.len());
+    assert!(bytes_read == correct_output.len());
     assert!(output_buffer == correct_output);
 
     Ok(())
