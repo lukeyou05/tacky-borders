@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::Path;
@@ -79,7 +79,7 @@ pub struct UnixListener {
 unsafe impl Send for UnixListener {}
 
 impl UnixListener {
-    pub fn bind(socket_path: &Path) -> anyhow::Result<Self> {
+    pub fn bind(socket_path: &Path) -> io::Result<Self> {
         winsock::init();
 
         let server_socket = UnixDomainSocket::new()?;
@@ -104,7 +104,7 @@ impl UnixListener {
     /// Upon completion, the local and remote addresses are written into the `buffer` of the
     /// returned `UnixStream`'s `overlapped_context`. The layout of this buffer is determined by
     /// AcceptEx; use GetAcceptExSockaddrs to parse the addresses.
-    pub unsafe fn accept_overlapped(&self) -> anyhow::Result<UnixStream> {
+    pub unsafe fn accept_overlapped(&self) -> io::Result<UnixStream> {
         // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
         // in AcceptEx (double I assume because there's both the local and remote addresses)
         let mut socket_addr = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
@@ -123,7 +123,7 @@ impl UnixListener {
         })
     }
 
-    pub fn accept(&self) -> anyhow::Result<UnixStream> {
+    pub fn accept(&self) -> io::Result<UnixStream> {
         let client_socket = self.socket.accept(None, None)?;
 
         Ok(UnixStream {
@@ -149,7 +149,7 @@ pub struct UnixStream {
 unsafe impl Send for UnixStream {}
 
 impl UnixStream {
-    pub fn connect(path: &Path) -> anyhow::Result<Self> {
+    pub fn connect(path: &Path) -> io::Result<Self> {
         winsock::init();
 
         let client_socket = UnixDomainSocket::new()?;
@@ -288,7 +288,7 @@ impl UnixDomainSocket {
         Ok(Self(socket))
     }
 
-    pub fn bind(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn bind(&self, path: &Path) -> io::Result<()> {
         let sockaddr_un = sockaddr_un(path)?;
 
         let iresult = unsafe {
@@ -300,13 +300,13 @@ impl UnixDomainSocket {
         };
         if iresult == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            return Err(anyhow!("could not bind socket: {:?}", last_error));
+            return Err(last_error);
         }
 
         Ok(())
     }
 
-    pub fn connect(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn connect(&self, path: &Path) -> io::Result<()> {
         let sockaddr_un = sockaddr_un(path)?;
 
         if unsafe {
@@ -318,16 +318,16 @@ impl UnixDomainSocket {
         } == SOCKET_ERROR
         {
             let last_error = io::Error::last_os_error();
-            return Err(anyhow!("could not connect to socket: {:?}", last_error));
+            return Err(last_error);
         }
 
         Ok(())
     }
 
-    pub fn listen(&self, backlog: i32) -> anyhow::Result<()> {
+    pub fn listen(&self, backlog: i32) -> io::Result<()> {
         if unsafe { listen(self.0, backlog) } == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            return Err(anyhow!("could not listen to socket: {:?}", last_error));
+            return Err(last_error);
         }
 
         Ok(())
@@ -337,9 +337,8 @@ impl UnixDomainSocket {
         &self,
         addr: Option<*mut SOCKADDR>,
         addrlen: Option<&mut i32>,
-    ) -> anyhow::Result<UnixDomainSocket> {
-        let socket = unsafe { accept(self.0, addr, addrlen.map(|mut_ref| mut_ref as *mut _)) }
-            .context("could not accept a client socket")?;
+    ) -> io::Result<UnixDomainSocket> {
+        let socket = unsafe { accept(self.0, addr, addrlen.map(|mut_ref| mut_ref as *mut _)) }?;
 
         Ok(UnixDomainSocket(socket))
     }
@@ -511,12 +510,15 @@ impl Drop for UnixDomainSocket {
     }
 }
 
-fn sockaddr_un(path: &Path) -> anyhow::Result<SOCKADDR_UN> {
+fn sockaddr_un(path: &Path) -> io::Result<SOCKADDR_UN> {
     let mut sun_path = [0i8; 108];
     let path_bytes = path.as_os_str().as_encoded_bytes();
 
     if path_bytes.len() > sun_path.len() {
-        return Err(anyhow!("socket path is too long"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "socket path is too long",
+        ));
     }
 
     for (i, byte) in path_bytes.iter().enumerate() {
