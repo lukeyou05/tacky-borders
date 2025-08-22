@@ -656,11 +656,12 @@ impl UnixStreamSink {
         socket_path: &Path,
         mut callback: impl FnMut(&[u8], u32) + Send + 'static,
     ) -> anyhow::Result<Self> {
-        let listener = UnixListener::bind(socket_path)?;
+        let listener = UnixListener::bind(socket_path).context("could not bind listener")?;
         let listener_key = listener.token();
 
-        let port = CompletionPort::new(2)?;
-        port.associate_handle(listener.socket.to_handle(), listener_key)?;
+        let port = CompletionPort::new(2).context("could not create iocp")?;
+        port.associate_handle(listener.socket.to_handle(), listener_key)
+            .context("could not associate listener with iocp")?;
 
         let iocp_handle = port.as_win32_handle();
 
@@ -674,8 +675,11 @@ impl UnixStreamSink {
                 let mut last_buffer_pool_prune = time::Instant::now();
 
                 // Queue up our first accept I/O operation.
-                let stream = Box::new(unsafe { listener.accept_overlapped() }?);
-                port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                let stream = Box::new(
+                    unsafe { listener.accept_overlapped() }.context("could not accept stream")?,
+                );
+                port.associate_handle(stream.socket.to_handle(), stream.token())
+                    .context("could not associate stream with iocp")?;
                 streams_queue.push_back((stream.token(), stream));
 
                 let mut should_cleanup = false;
@@ -688,7 +692,9 @@ impl UnixStreamSink {
                     }
 
                     // This will block until an I/O operation has completed
-                    let num_removed = port.poll_many(None, &mut entries)?;
+                    let num_removed = port
+                        .poll_many(None, &mut entries)
+                        .context("could not poll with iocp")?;
 
                     for entry in entries[..num_removed as usize].iter() {
                         if entry.lpCompletionKey == listener_key {
@@ -701,11 +707,16 @@ impl UnixStreamSink {
                                 debug!("creating new buffer for unix stream sink");
                                 vec![0u8; Self::BUFFER_SIZE]
                             });
-                            unsafe { stream.read_overlapped(outputbuffer) }?;
+                            unsafe { stream.read_overlapped(outputbuffer) }
+                                .context("could not read with stream")?;
 
                             // Queue up a new accept I/O operation.
-                            let stream = Box::new(unsafe { listener.accept_overlapped() }?);
-                            port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                            let stream = Box::new(
+                                unsafe { listener.accept_overlapped() }
+                                    .context("could not accept stream")?,
+                            );
+                            port.associate_handle(stream.socket.to_handle(), stream.token())
+                                .context("could not associate stream with iocp")?;
                             streams_queue.push_back((stream.token(), stream));
                         } else if entry.lpCompletionKey != Self::STOP_PACKET_KEY {
                             // Stream has been read; ready to process
@@ -778,7 +789,9 @@ impl UnixStreamSink {
         while !streams_queue.is_empty() {
             // NOTE: poll_many() should return an error after the timeout.
             let timeout = time::Duration::from_secs(1);
-            let num_removed = port.poll_many(Some(timeout), &mut entries)?;
+            let num_removed = port
+                .poll_many(Some(timeout), &mut entries)
+                .context("could not poll with iocp")?;
 
             for entry in entries[..num_removed as usize].iter() {
                 if entry.lpCompletionKey == listener_key {
@@ -820,8 +833,10 @@ impl Drop for UnixStreamSink {
 }
 
 pub fn write_to_unix_socket(socket_path: &Path, message: &mut [u8]) -> anyhow::Result<()> {
-    let mut stream = UnixStream::connect(socket_path)?;
-    stream.write_all(message)?;
+    let mut stream = UnixStream::connect(socket_path).context("could not connect stream")?;
+    stream
+        .write_all(message)
+        .context("could not write all with stream")?;
 
     Ok(())
 }
