@@ -109,9 +109,10 @@ impl UnixListener {
         // in AcceptEx (double I assume because there's both the local and remote addresses)
         let mut socket_addr = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
         let mut overlapped = Box::new(OVERLAPPED::default());
-        let client_socket = self
-            .socket
-            .accept_overlapped(&mut socket_addr, &mut overlapped)?;
+        let client_socket = unsafe {
+            self.socket
+                .accept_overlapped(&mut socket_addr, &mut overlapped)
+        }?;
 
         Ok(UnixStream {
             socket: client_socket,
@@ -190,11 +191,13 @@ impl UnixStream {
         // Here is where we take ownership of the buffer
         context.buffer = Some(outputbuffer);
 
-        self.socket.read_overlapped(
-            context.buffer.as_mut().unwrap(),
-            &mut context.overlapped,
-            &mut context.flags,
-        )
+        unsafe {
+            self.socket.read_overlapped(
+                context.buffer.as_mut().unwrap(),
+                &mut context.overlapped,
+                &mut context.flags,
+            )
+        }
     }
 
     /// # Safety
@@ -217,8 +220,10 @@ impl UnixStream {
         // Reset flags between I/O operations
         *context.flags = 0;
 
-        self.socket
-            .write_overlapped(inputbuffer, &mut context.overlapped, *context.flags)
+        unsafe {
+            self.socket
+                .write_overlapped(inputbuffer, &mut context.overlapped, *context.flags)
+        }
     }
 
     pub fn token(&self) -> usize {
@@ -343,7 +348,14 @@ impl UnixDomainSocket {
         Ok(UnixDomainSocket(socket))
     }
 
-    pub fn accept_overlapped(
+    /// Performs an overlapped (asynchronous) I/O operation. Completion must be handled via
+    /// external mechanisms such as an I/O completion port.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all references passed to this function remain valid and are not
+    /// not reused until the operation completes. Refer to MSDN for more details on overlapped I/O.
+    pub unsafe fn accept_overlapped(
         &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
@@ -393,7 +405,14 @@ impl UnixDomainSocket {
         Ok(bytes_transferred as u32)
     }
 
-    pub fn read_overlapped(
+    /// Performs an overlapped (asynchronous) I/O operation. Completion must be handled via
+    /// external mechanisms such as an I/O completion port.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all references passed to this function remain valid and are not
+    /// not reused until the operation completes. Refer to MSDN for more details on overlapped I/O.
+    pub unsafe fn read_overlapped(
         &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
@@ -447,7 +466,14 @@ impl UnixDomainSocket {
         Ok(bytes_transferred as u32)
     }
 
-    pub fn write_overlapped(
+    /// Performs an overlapped (asynchronous) I/O operation. Completion must be handled via
+    /// external mechanisms such as an I/O completion port.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all references passed to this function remain valid and are not
+    /// not reused until the operation completes. Refer to MSDN for more details on overlapped I/O.
+    pub unsafe fn write_overlapped(
         &self,
         lpinputbuffer: &[u8],
         lpoverlapped: &mut OVERLAPPED,
