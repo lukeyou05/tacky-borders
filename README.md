@@ -120,11 +120,16 @@ global:
   # inactive_color: the color of the inactive window's border
   #
   # Supported color types:
-  #   - Solid: Use a hex code or "accent"
+  #   - Solid: Use a hex code, "accent", or hexa() format
   #       Example:
   #         active_color: "#ffffff"
   #         OR
   #         active_color: "accent"
+  #         OR
+  #         active_color: "hexa(accent,40%)"  # Windows accent color with 40% opacity
+  #         OR
+  #         active_color: "hexa(#ff0000,60%)" # Red color with 60% opacity
+  #       NOTE: Instead of using hex with alpha like "#cff70f3D", you can use "hexa(#cff70f,24%)"
   #   - Gradient: Define colors and direction
   #       Example:
   #         active_color:
