@@ -1,14 +1,15 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use std::collections::VecDeque;
+use std::io::Write;
 use std::path::Path;
 use std::thread::{self, JoinHandle};
 use std::time;
 use std::{io, mem, ptr};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Networking::WinSock::{
-    ADDRESS_FAMILY, AF_UNIX, AcceptEx, INVALID_SOCKET, SOCK_STREAM, SOCKADDR, SOCKADDR_UN, SOCKET,
-    SOCKET_ERROR, SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF, WSACleanup, WSADATA,
-    WSAGetLastError, WSARecv, WSASend, WSASocketW, WSAStartup, bind, closesocket, connect, listen,
+    ADDRESS_FAMILY, AF_UNIX, AcceptEx, INVALID_SOCKET, SEND_RECV_FLAGS, SOCK_STREAM, SOCKADDR,
+    SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOMAXCONN, WSA_FLAG_OVERLAPPED, WSA_IO_PENDING, WSABUF,
+    WSARecv, WSASend, WSASocketW, accept, bind, closesocket, connect, listen, recv, send,
 };
 use windows::Win32::System::IO::{
     CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, GetQueuedCompletionStatusEx,
@@ -21,104 +22,255 @@ use crate::utils::LogIfErr;
 
 const UNIX_ADDR_LEN: u32 = mem::size_of::<SOCKADDR_UN>() as u32;
 
-#[allow(unused)]
+// Adapted from Rust's standard library (std::sys::net::connection::socket::windows, commit 6ba0ce4)
+mod winsock {
+    use std::mem;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering::{AcqRel, Relaxed};
+
+    use windows::Win32::Networking::WinSock::{WSACleanup, WSADATA, WSAStartup};
+
+    static WSA_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+    /// Checks whether the Windows socket interface has been started already, and
+    /// if not, starts it.
+    #[inline]
+    pub fn init() {
+        if !WSA_INITIALIZED.load(Relaxed) {
+            wsa_startup();
+        }
+    }
+
+    #[cold]
+    fn wsa_startup() {
+        unsafe {
+            let mut data: WSADATA = mem::zeroed();
+            let ret = WSAStartup(
+                0x202, // version 2.2
+                &mut data,
+            );
+            assert_eq!(ret, 0);
+            if WSA_INITIALIZED.swap(true, AcqRel) {
+                // If another thread raced with us and called WSAStartup first then call
+                // WSACleanup so it's as though WSAStartup was only called once.
+                WSACleanup();
+            }
+        }
+    }
+
+    #[allow(unused)]
+    pub fn cleanup() {
+        // We don't need to call WSACleanup here because exiting the process will cause
+        // the OS to clean everything for us, which is faster than doing it manually.
+        // See #141799.
+    }
+}
+
+pub struct OverlappedContext {
+    pub overlapped: Box<OVERLAPPED>,
+    pub buffer: Option<Vec<u8>>,
+    pub flags: Box<u32>,
+}
+
 pub struct UnixListener {
     pub socket: UnixDomainSocket,
-    pub buffer: Vec<u8>,
-    pub overlapped: Box<OVERLAPPED>,
-    pub flags: u32,
 }
 
 unsafe impl Send for UnixListener {}
 
-#[allow(unused)]
 impl UnixListener {
-    pub fn bind(socket_path: &Path) -> anyhow::Result<Self> {
+    pub fn bind(socket_path: &Path) -> io::Result<Self> {
+        winsock::init();
+
         let server_socket = UnixDomainSocket::new()?;
         server_socket.bind(socket_path)?;
         server_socket.listen(SOMAXCONN as i32)?;
 
         Ok(Self {
             socket: server_socket,
-            buffer: Vec::new(),
-            overlapped: Box::new(OVERLAPPED::default()),
-            flags: 0,
         })
     }
 
-    pub fn accept(&self) -> anyhow::Result<UnixStream> {
+    /// # Safety
+    ///
+    /// Performs an asynchronous I/O operation using an `OVERLAPPED` struct owned by the
+    /// `UnixListener` or `UnixStream`. To uphold memory safety, ensure the following:
+    ///
+    /// - Only one overlapped operation should be in flight at a time per struct. Running
+    ///   concurrent operations on the same struct is undefined behavior.
+    /// - This struct must not be dropped until the operation has completed. Dropping it early may
+    ///   lead to use-after-free errors.
+    ///
+    /// Upon completion, the local and remote addresses are written into the `buffer` of the
+    /// returned `UnixStream`'s `overlapped_context`. The layout of this buffer is determined by
+    /// AcceptEx; use GetAcceptExSockaddrs to parse the addresses.
+    pub unsafe fn accept_overlapped(&self) -> io::Result<UnixStream> {
         // I'm not 100% sure why we need at least this Vec len, but it's just double the len used
         // in AcceptEx (double I assume because there's both the local and remote addresses)
-        let mut client_buffer = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
-        let mut client_overlapped = Box::new(OVERLAPPED::default());
-        let client_socket = self
-            .socket
-            .accept(&mut client_buffer, client_overlapped.as_mut())?;
+        let mut socket_addr = vec![0u8; ((UNIX_ADDR_LEN + 16) * 2) as usize];
+        let mut overlapped = Box::new(OVERLAPPED::default());
+        let client_socket = unsafe {
+            self.socket
+                .accept_overlapped(&mut socket_addr, &mut overlapped)
+        }?;
 
         Ok(UnixStream {
             socket: client_socket,
-            buffer: client_buffer,
-            overlapped: client_overlapped,
-            flags: 0,
+            overlapped_context: OverlappedContext {
+                overlapped,
+                buffer: Some(socket_addr),
+                flags: Box::new(0),
+            },
+        })
+    }
+
+    pub fn accept(&self) -> io::Result<UnixStream> {
+        let client_socket = self.socket.accept(None, None)?;
+
+        Ok(UnixStream {
+            socket: client_socket,
+            overlapped_context: OverlappedContext {
+                overlapped: Box::new(OVERLAPPED::default()),
+                buffer: None,
+                flags: Box::new(0),
+            },
         })
     }
 
     pub fn token(&self) -> usize {
         self.socket.0.0
-    }
-
-    pub fn take_buffer(&mut self) -> Vec<u8> {
-        mem::take(&mut self.buffer)
     }
 }
 
 pub struct UnixStream {
     pub socket: UnixDomainSocket,
-    pub buffer: Vec<u8>,
-    // I'm not sure if I need the Box, but I'll keep in just in case because I don't know if
-    // GetQueuedCompletionStatus can get the OVERLAPPED pointers if the structs move in memory.
-    pub overlapped: Box<OVERLAPPED>,
-    pub flags: u32,
+    pub overlapped_context: OverlappedContext,
 }
 
 unsafe impl Send for UnixStream {}
 
-#[allow(unused)]
 impl UnixStream {
-    pub fn connect(path: &Path) -> anyhow::Result<Self> {
+    pub fn connect(path: &Path) -> io::Result<Self> {
+        winsock::init();
+
         let client_socket = UnixDomainSocket::new()?;
         client_socket.connect(path)?;
 
         Ok(Self {
             socket: client_socket,
-            buffer: Vec::new(),
-            overlapped: Box::new(OVERLAPPED::default()),
-            flags: 0,
+            overlapped_context: OverlappedContext {
+                overlapped: Box::new(OVERLAPPED::default()),
+                buffer: None,
+                flags: Box::new(0),
+            },
         })
     }
 
-    // NOTE: This takes ownership of the input buffer to avoid race conditions
-    pub fn read(&mut self, outputbuffer: Vec<u8>) -> anyhow::Result<()> {
-        // Here is where we take ownership of the buffer
-        self.buffer = outputbuffer;
+    /// # Safety
+    ///
+    /// Performs an asynchronous I/O operation using an `OVERLAPPED` struct owned by the
+    /// `UnixListener` or `UnixStream`. To uphold memory safety, ensure the following:
+    ///
+    /// - Only one overlapped operation should be in flight at a time per struct. Running
+    ///   concurrent operations on the same struct is undefined behavior.
+    /// - This struct must not be dropped until the operation has completed. Dropping it early may
+    ///   lead to use-after-free errors.
+    ///
+    /// The return value indicates the immediate number of bytes transferred. A non-zero value
+    /// indicates synchronous completion. Otherwise, the operation is pending and will complete
+    /// asynchronously, and the number of bytes transferred must be retrieved via the completion
+    /// notification mechanism.
+    ///
+    /// NOTE: This takes ownership of the input buffer to avoid race conditions
+    pub unsafe fn read_overlapped(&mut self, outputbuffer: Vec<u8>) -> io::Result<u32> {
+        let context = &mut self.overlapped_context;
 
-        self.socket
-            .read(&mut self.buffer, self.overlapped.as_mut(), &mut self.flags)
+        // Reset flags between I/O operations
+        *context.flags = 0;
+
+        // Here is where we take ownership of the buffer
+        context.buffer = Some(outputbuffer);
+
+        unsafe {
+            self.socket.read_overlapped(
+                context.buffer.as_mut().unwrap(),
+                &mut context.overlapped,
+                &mut context.flags,
+            )
+        }
     }
 
-    // NOTE: The input buffer must be mutable because we put it in a WSABUF struct, which requires
-    // a mutable pointer. But as far as I'm aware, the buffer will not actually be modified.
-    pub fn write(&mut self, inputbuffer: &mut [u8]) -> anyhow::Result<()> {
-        self.socket
-            .write(inputbuffer, self.overlapped.as_mut(), self.flags)
+    /// # Safety
+    ///
+    /// Performs an asynchronous I/O operation using an `OVERLAPPED` struct owned by the
+    /// `UnixListener` or `UnixStream`. To uphold memory safety, ensure the following:
+    ///
+    /// - Only one overlapped operation should be in flight at a time per struct. Running
+    ///   concurrent operations on the same struct is undefined behavior.
+    /// - This struct must not be dropped until the operation has completed. Dropping it early may
+    ///   lead to use-after-free errors.
+    ///
+    /// The return value indicates the immediate number of bytes transferred. A non-zero value
+    /// indicates synchronous completion. Otherwise, the operation is pending and will complete
+    /// asynchronously, and the number of bytes transferred must be retrieved via the completion
+    /// notification mechanism.
+    pub unsafe fn write_overlapped(&mut self, inputbuffer: &[u8]) -> io::Result<u32> {
+        let context = &mut self.overlapped_context;
+
+        // Reset flags between I/O operations
+        *context.flags = 0;
+
+        unsafe {
+            self.socket
+                .write_overlapped(inputbuffer, &mut context.overlapped, *context.flags)
+        }
     }
 
     pub fn token(&self) -> usize {
         self.socket.0.0
     }
 
-    pub fn take_buffer(&mut self) -> Vec<u8> {
-        mem::take(&mut self.buffer)
+    pub fn take_overlapped_buffer(&mut self) -> Option<Vec<u8>> {
+        self.overlapped_context.buffer.take()
+    }
+}
+
+// These delegate to their respective methods for &UnixStream
+impl io::Read for UnixStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        io::Read::read(&mut &*self, buf)
+    }
+}
+
+impl io::Write for UnixStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        io::Write::write(&mut &*self, buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::Write::flush(&mut &*self)
+    }
+}
+
+// These allow use with non-mut references (mut isn't necessary for this type)
+impl io::Read for &UnixStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.socket
+            .read(buf, SEND_RECV_FLAGS::default())
+            .map(|bytes| bytes as usize)
+    }
+}
+
+impl io::Write for &UnixStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.socket
+            .write(buf, SEND_RECV_FLAGS::default())
+            .map(|bytes| bytes as usize)
+    }
+
+    // This is a no-op in Rust's standard library's UnixStream too
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -126,7 +278,7 @@ impl UnixStream {
 pub struct UnixDomainSocket(SOCKET);
 
 impl UnixDomainSocket {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> io::Result<Self> {
         let socket = unsafe {
             WSASocketW(
                 AF_UNIX as i32,
@@ -141,7 +293,7 @@ impl UnixDomainSocket {
         Ok(Self(socket))
     }
 
-    pub fn bind(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn bind(&self, path: &Path) -> io::Result<()> {
         let sockaddr_un = sockaddr_un(path)?;
 
         let iresult = unsafe {
@@ -153,13 +305,13 @@ impl UnixDomainSocket {
         };
         if iresult == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            return Err(anyhow!("could not bind socket: {:?}", last_error));
+            return Err(last_error);
         }
 
         Ok(())
     }
 
-    pub fn connect(&self, path: &Path) -> anyhow::Result<()> {
+    pub fn connect(&self, path: &Path) -> io::Result<()> {
         let sockaddr_un = sockaddr_un(path)?;
 
         if unsafe {
@@ -171,16 +323,16 @@ impl UnixDomainSocket {
         } == SOCKET_ERROR
         {
             let last_error = io::Error::last_os_error();
-            return Err(anyhow!("could not connect to socket: {:?}", last_error));
+            return Err(last_error);
         }
 
         Ok(())
     }
 
-    pub fn listen(&self, backlog: i32) -> anyhow::Result<()> {
+    pub fn listen(&self, backlog: i32) -> io::Result<()> {
         if unsafe { listen(self.0, backlog) } == SOCKET_ERROR {
             let last_error = io::Error::last_os_error();
-            return Err(anyhow!("could not listen to socket: {:?}", last_error));
+            return Err(last_error);
         }
 
         Ok(())
@@ -188,11 +340,34 @@ impl UnixDomainSocket {
 
     pub fn accept(
         &self,
+        addr: Option<*mut SOCKADDR>,
+        addrlen: Option<&mut i32>,
+    ) -> io::Result<UnixDomainSocket> {
+        let socket = unsafe { accept(self.0, addr, addrlen.map(|mut_ref| mut_ref as *mut _)) }?;
+
+        Ok(UnixDomainSocket(socket))
+    }
+
+    /// Performs an overlapped (asynchronous) I/O operation. Completion must be handled via
+    /// external mechanisms such as an I/O completion port.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all references passed to this function remain valid and are not
+    /// not reused until the operation completes. Refer to MSDN for more details on overlapped I/O.
+    pub unsafe fn accept_overlapped(
+        &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
-    ) -> anyhow::Result<UnixDomainSocket> {
+    ) -> io::Result<UnixDomainSocket> {
+        // Zero out unused OVERLAPPED struct fields (as per MSDN recommendation)
+        *lpoverlapped = OVERLAPPED {
+            hEvent: lpoverlapped.hEvent,
+            ..Default::default()
+        };
+
         let client_socket = UnixDomainSocket::new()?;
-        let mut bytes_received = 0u32;
+        let mut bytes_transferred = 0;
 
         if !unsafe {
             AcceptEx(
@@ -203,7 +378,7 @@ impl UnixDomainSocket {
                 // We add 16 to the address length because MSDN says so
                 UNIX_ADDR_LEN + 16,
                 UNIX_ADDR_LEN + 16,
-                &mut bytes_received,
+                &mut bytes_transferred,
                 lpoverlapped,
             )
         }
@@ -212,32 +387,57 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                return Err(anyhow!(
-                    "could not accept client socket connection: {:?}",
-                    last_error
-                ));
+                return Err(last_error);
             }
         };
 
         Ok(client_socket)
     }
 
-    pub fn read(
+    pub fn read(&self, buf: &mut [u8], flags: SEND_RECV_FLAGS) -> io::Result<u32> {
+        let bytes_transferred = unsafe { recv(self.0, buf, flags) };
+
+        if bytes_transferred == SOCKET_ERROR {
+            let last_error = io::Error::last_os_error();
+            return Err(last_error);
+        }
+
+        Ok(bytes_transferred as u32)
+    }
+
+    /// Performs an overlapped (asynchronous) I/O operation. Completion must be handled via
+    /// external mechanisms such as an I/O completion port.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all references passed to this function remain valid and are not
+    /// not reused until the operation completes. Refer to MSDN for more details on overlapped I/O.
+    pub unsafe fn read_overlapped(
         &self,
         lpoutputbuffer: &mut [u8],
         lpoverlapped: &mut OVERLAPPED,
         lpflags: &mut u32,
-    ) -> anyhow::Result<()> {
+    ) -> io::Result<u32> {
+        // Zero out unused OVERLAPPED struct fields (as per MSDN recommendation)
+        *lpoverlapped = OVERLAPPED {
+            hEvent: lpoverlapped.hEvent,
+            ..Default::default()
+        };
+
         let lpbuffers = WSABUF {
             len: lpoutputbuffer.len() as u32,
             buf: PSTR(lpoutputbuffer.as_mut_ptr()),
         };
+        let mut bytes_transferred = 0;
 
+        // Note that we set lpnumberofbytesrecvd to a non-null pointer even though MSDN recommends
+        // setting it to null when lpoverlapped is non-null. We do this anyways because the field
+        // is still updated if the operation completes immediately, allowing us to indicate so.
         let iresult = unsafe {
             WSARecv(
                 self.0,
                 &[lpbuffers],
-                None,
+                Some(&mut bytes_transferred),
                 lpflags,
                 Some(lpoverlapped),
                 None,
@@ -248,29 +448,59 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                return Err(anyhow!("could not receive data: {:?}", last_error));
+                return Err(last_error);
             }
         }
 
-        Ok(())
+        Ok(bytes_transferred)
     }
 
-    pub fn write(
+    pub fn write(&self, buf: &[u8], flags: SEND_RECV_FLAGS) -> io::Result<u32> {
+        let bytes_transferred = unsafe { send(self.0, buf, flags) };
+
+        if bytes_transferred == SOCKET_ERROR {
+            let last_error = io::Error::last_os_error();
+            return Err(last_error);
+        }
+
+        Ok(bytes_transferred as u32)
+    }
+
+    /// Performs an overlapped (asynchronous) I/O operation. Completion must be handled via
+    /// external mechanisms such as an I/O completion port.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all references passed to this function remain valid and are not
+    /// not reused until the operation completes. Refer to MSDN for more details on overlapped I/O.
+    pub unsafe fn write_overlapped(
         &self,
-        lpinputbuffer: &mut [u8],
+        lpinputbuffer: &[u8],
         lpoverlapped: &mut OVERLAPPED,
         lpflags: u32,
-    ) -> anyhow::Result<()> {
-        let lpbuffers = WSABUF {
-            len: lpinputbuffer.len() as u32,
-            buf: PSTR(lpinputbuffer.as_mut_ptr()),
+    ) -> io::Result<u32> {
+        // Zero out unused OVERLAPPED struct fields (as per MSDN recommendation)
+        *lpoverlapped = OVERLAPPED {
+            hEvent: lpoverlapped.hEvent,
+            ..Default::default()
         };
 
+        // WSABUF requires a mut ptr to the buffer, but WSASend shouldn't mutate anything.
+        // It should be safe to cast a const ptr to a mut ptr as a workaround.
+        let lpbuffers = WSABUF {
+            len: lpinputbuffer.len() as u32,
+            buf: PSTR(lpinputbuffer.as_ptr() as *mut _),
+        };
+        let mut bytes_transferred = 0;
+
+        // Note that we set lpnumberofbytessent to a non-null pointer even though MSDN recommends
+        // setting it to null when lpoverlapped is non-null. We do this anyways because the field
+        // is still updated if the operation completes immediately, allowing us to indicate so.
         let iresult = unsafe {
             WSASend(
                 self.0,
                 &[lpbuffers],
-                None,
+                Some(&mut bytes_transferred),
                 lpflags,
                 Some(lpoverlapped),
                 None,
@@ -281,11 +511,11 @@ impl UnixDomainSocket {
             let last_error = io::Error::last_os_error();
 
             if last_error.raw_os_error() != Some(WSA_IO_PENDING.0) {
-                return Err(anyhow!("could not write data: {:?}", last_error));
+                return Err(last_error);
             }
         }
 
-        Ok(())
+        Ok(bytes_transferred)
     }
 
     pub fn to_handle(&self) -> HANDLE {
@@ -298,20 +528,23 @@ impl Drop for UnixDomainSocket {
         let iresult = unsafe { closesocket(self.0) };
         if iresult != 0 {
             error!(
-                "could not close unix domain socket {:?}: {:?}",
+                "could not close unix domain socket {:?}: {}",
                 self.0,
-                unsafe { WSAGetLastError() }
+                io::Error::last_os_error()
             )
         }
     }
 }
 
-fn sockaddr_un(path: &Path) -> anyhow::Result<SOCKADDR_UN> {
+fn sockaddr_un(path: &Path) -> io::Result<SOCKADDR_UN> {
     let mut sun_path = [0i8; 108];
     let path_bytes = path.as_os_str().as_encoded_bytes();
 
     if path_bytes.len() > sun_path.len() {
-        return Err(anyhow!("socket path is too long"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "socket path is too long",
+        ));
     }
 
     for (i, byte) in path_bytes.iter().enumerate() {
@@ -329,24 +562,17 @@ pub struct CompletionPort(HANDLE);
 
 unsafe impl Send for CompletionPort {}
 
-#[allow(unused)]
 impl CompletionPort {
-    pub fn new(threads: u32) -> anyhow::Result<Self> {
+    pub fn new(threads: u32) -> io::Result<Self> {
         let iocp_handle =
-            match unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, threads) } {
-                Ok(handle) => handle,
-                Err(err) => {
-                    return Err(anyhow!("could not create iocp: {err}"));
-                }
-            };
+            unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, threads) }?;
 
         Ok(Self(iocp_handle))
     }
 
-    pub fn associate_handle(&self, handle: HANDLE, token: usize) -> anyhow::Result<()> {
+    pub fn associate_handle(&self, handle: HANDLE, token: usize) -> io::Result<()> {
         // This just returns the HANDLE of the existing iocp, so we can ignore the return value
-        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }
-            .map_err(|err| anyhow!("could not add handle to iocp: {err}"))?;
+        let _ = unsafe { CreateIoCompletionPort(handle, Some(self.0), token, 0) }?;
 
         Ok(())
     }
@@ -355,7 +581,7 @@ impl CompletionPort {
         &self,
         timeout: Option<time::Duration>,
         entry: &mut OVERLAPPED_ENTRY,
-    ) -> anyhow::Result<()> {
+    ) -> io::Result<()> {
         let mut bytes_transferred = 0u32;
         let mut completion_key = 0usize;
         let mut lpoverlapped: *mut OVERLAPPED = ptr::null_mut();
@@ -365,7 +591,6 @@ impl CompletionPort {
             None => INFINITE,
         };
 
-        // TODO: Replace context() with with_context()
         unsafe {
             GetQueuedCompletionStatus(
                 self.0,
@@ -374,11 +599,7 @@ impl CompletionPort {
                 &mut lpoverlapped,
                 timeout_ms,
             )
-        }
-        .context(format!(
-            "could not get queued completion status: {}",
-            io::Error::last_os_error(),
-        ))?;
+        }?;
 
         *entry = OVERLAPPED_ENTRY {
             lpCompletionKey: completion_key,
@@ -394,7 +615,7 @@ impl CompletionPort {
         &self,
         timeout: Option<time::Duration>,
         entries: &mut [OVERLAPPED_ENTRY],
-    ) -> anyhow::Result<u32> {
+    ) -> io::Result<u32> {
         let mut num_entries_removed = 0u32;
 
         let timeout_ms = match timeout {
@@ -410,11 +631,7 @@ impl CompletionPort {
                 timeout_ms,
                 false,
             )
-        }
-        .context(format!(
-            "could not get queued completion status: {}",
-            io::Error::last_os_error(),
-        ))?;
+        }?;
 
         Ok(num_entries_removed)
     }
@@ -467,17 +684,12 @@ impl UnixStreamSink {
         socket_path: &Path,
         mut callback: impl FnMut(&[u8], u32) + Send + 'static,
     ) -> anyhow::Result<Self> {
-        // Start the WinSock service
-        let iresult = unsafe { WSAStartup(0x202, &mut WSADATA::default()) };
-        if iresult != 0 {
-            return Err(anyhow!("WSAStartup failure: {iresult}"));
-        }
-
-        let listener = UnixListener::bind(socket_path)?;
+        let listener = UnixListener::bind(socket_path).context("could not bind listener")?;
         let listener_key = listener.token();
 
-        let port = CompletionPort::new(2)?;
-        port.associate_handle(listener.socket.to_handle(), listener_key)?;
+        let port = CompletionPort::new(2).context("could not create iocp")?;
+        port.associate_handle(listener.socket.to_handle(), listener_key)
+            .context("could not associate listener with iocp")?;
 
         let iocp_handle = port.as_win32_handle();
 
@@ -491,8 +703,11 @@ impl UnixStreamSink {
                 let mut last_buffer_pool_prune = time::Instant::now();
 
                 // Queue up our first accept I/O operation.
-                let stream = Box::new(listener.accept()?);
-                port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                let stream = Box::new(
+                    unsafe { listener.accept_overlapped() }.context("could not accept stream")?,
+                );
+                port.associate_handle(stream.socket.to_handle(), stream.token())
+                    .context("could not associate stream with iocp")?;
                 streams_queue.push_back((stream.token(), stream));
 
                 let mut should_cleanup = false;
@@ -505,7 +720,9 @@ impl UnixStreamSink {
                     }
 
                     // This will block until an I/O operation has completed
-                    let num_removed = port.poll_many(None, &mut entries)?;
+                    let num_removed = port
+                        .poll_many(None, &mut entries)
+                        .context("could not poll with iocp")?;
 
                     for entry in entries[..num_removed as usize].iter() {
                         if entry.lpCompletionKey == listener_key {
@@ -518,11 +735,16 @@ impl UnixStreamSink {
                                 debug!("creating new buffer for unix stream sink");
                                 vec![0u8; Self::BUFFER_SIZE]
                             });
-                            stream.read(outputbuffer)?;
+                            unsafe { stream.read_overlapped(outputbuffer) }
+                                .context("could not read with stream")?;
 
                             // Queue up a new accept I/O operation.
-                            let stream = Box::new(listener.accept()?);
-                            port.associate_handle(stream.socket.to_handle(), stream.token())?;
+                            let stream = Box::new(
+                                unsafe { listener.accept_overlapped() }
+                                    .context("could not accept stream")?,
+                            );
+                            port.associate_handle(stream.socket.to_handle(), stream.token())
+                                .context("could not associate stream with iocp")?;
                             streams_queue.push_back((stream.token(), stream));
                         } else if entry.lpCompletionKey != Self::STOP_PACKET_KEY {
                             // Stream has been read; ready to process
@@ -534,11 +756,14 @@ impl UnixStreamSink {
                                 .remove(position)
                                 .context("could not remove stream from queue")?
                                 .1;
+                            let outputbuffer = stream
+                                .take_overlapped_buffer()
+                                .context("unix stream's buffer is None")?;
 
-                            callback(&stream.buffer, entry.dwNumberOfBytesTransferred);
+                            callback(&outputbuffer, entry.dwNumberOfBytesTransferred);
 
                             // We don't need this stream anymore, so place its buffer into the pool
-                            buffer_pool.push_back(stream.take_buffer());
+                            buffer_pool.push_back(outputbuffer);
                         } else {
                             // Stop packet has been sent; cleanup and exit the thread
                             should_cleanup = true;
@@ -592,7 +817,9 @@ impl UnixStreamSink {
         while !streams_queue.is_empty() {
             // NOTE: poll_many() should return an error after the timeout.
             let timeout = time::Duration::from_secs(1);
-            let num_removed = port.poll_many(Some(timeout), &mut entries)?;
+            let num_removed = port
+                .poll_many(Some(timeout), &mut entries)
+                .context("could not poll with iocp")?;
 
             for entry in entries[..num_removed as usize].iter() {
                 if entry.lpCompletionKey == listener_key {
@@ -630,30 +857,14 @@ impl Drop for UnixStreamSink {
                 self.iocp_handle
             ),
         }
-
-        unsafe { WSACleanup() };
     }
 }
 
-// Synchronous write
-// TODO: Support synchronous operations inside UnixDomainSocket
 pub fn write_to_unix_socket(socket_path: &Path, message: &mut [u8]) -> anyhow::Result<()> {
-    let mut stream = UnixStream::connect(socket_path)?;
-
-    let port = CompletionPort::new(1)?;
-    port.associate_handle(stream.socket.to_handle(), stream.token())?;
-
-    stream.write(message)?;
-
-    let mut entry = OVERLAPPED_ENTRY::default();
-    port.poll_single(None, &mut entry)?;
-
-    if entry.dwNumberOfBytesTransferred as usize != message.len() {
-        return Err(anyhow!(
-            "could not write all bytes to {:?}",
-            stream.socket.0
-        ));
-    }
+    let mut stream = UnixStream::connect(socket_path).context("could not connect stream")?;
+    stream
+        .write_all(message)
+        .context("could not write all with stream")?;
 
     Ok(())
 }
