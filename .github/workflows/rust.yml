@@ -76,7 +76,7 @@ jobs:
           Remove-Item -Path "./artifacts/tacky-borders.exe"
 
       - name: Generate checksums
-        run: sha256sum "./artifacts/*" > "./artifacts/sha256sums.txt"
+        run: sha256sum ./artifacts/* > ./artifacts/sha256sums.txt
         shell: bash
 
       - name: Release
