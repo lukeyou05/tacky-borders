@@ -423,10 +423,10 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 }
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
-    // Check if the string is in hexa(color,X%) format
-    if let Some(hexa_content) = hex.strip_prefix("hexa(").and_then(|s| s.strip_suffix(")")) {
-        return parse_hexa(hexa_content).unwrap_or_else(|err| {
-            error!("could not parse hexa: {err}");
+    // Check if the string is in with_opacity(color,X%) format
+    if let Some(with_opacity_content) = hex.strip_prefix("with_opacity(").and_then(|s| s.strip_suffix(")")) {
+        return parse_with_opacity(with_opacity_content).unwrap_or_else(|err| {
+            error!("could not parse with_opacity: {err}");
             D2D1_COLOR_F::default()
         });
     }
@@ -438,11 +438,11 @@ fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     })
 }
 
-fn parse_hexa(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
+fn parse_with_opacity(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
     // Expected format: "color,X%" where color is "accent" or hex code, X is opacity percentage
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 2 {
-        return Err(anyhow!("invalid hexa format, expected 'color,X%': {s}"));
+        return Err(anyhow!("invalid with_opacity format, expected 'color,X%': {s}"));
     }
     
     // Extract opacity percentage
@@ -602,8 +602,8 @@ mod tests {
     }
     
     #[test]
-    fn test_hexa_accent() -> anyhow::Result<()> {
-        let color_brush_config = ColorBrushConfig::Solid("hexa(accent,40%)".to_string());
+    fn test_with_opacity_accent() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(accent,40%)".to_string());
         let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Solid(ref solid) = color_brush {
@@ -618,8 +618,8 @@ mod tests {
     }
     
     #[test]
-    fn test_hexa_hex_code() -> anyhow::Result<()> {
-        let color_brush_config = ColorBrushConfig::Solid("hexa(#ff0000,60%)".to_string());
+    fn test_with_opacity_hex_code() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(#ff0000,60%)".to_string());
         let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Solid(ref solid) = color_brush {
@@ -635,8 +635,8 @@ mod tests {
     }
     
     #[test]
-    fn test_hexa_hex_with_alpha_override() -> anyhow::Result<()> {
-        let color_brush_config = ColorBrushConfig::Solid("hexa(#ff000080,30%)".to_string());
+    fn test_with_opacity_hex_with_alpha_override() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(#ff000080,30%)".to_string());
         let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Solid(ref solid) = color_brush {
@@ -653,8 +653,8 @@ mod tests {
     }
     
     #[test]
-    fn test_hexa_without_hash() -> anyhow::Result<()> {
-        let color_brush_config = ColorBrushConfig::Solid("hexa(00ff00,50%)".to_string());
+    fn test_with_opacity_without_hash() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(00ff00,50%)".to_string());
         let color_brush = color_brush_config.to_color_brush(true);
 
         if let ColorBrush::Solid(ref solid) = color_brush {
