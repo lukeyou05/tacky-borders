@@ -16,7 +16,7 @@ log = "0.4.27"
 sp_log = "0.2.1"
 anyhow = "1.0.98"
 windows-numerics = "0.2.0"
-auto-launch = "0.5.0"
+winreg = "0.55.0"
 
 [dependencies.windows]
 version = "0.61.3"

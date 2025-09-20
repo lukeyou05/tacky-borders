@@ -1,11 +1,11 @@
 use anyhow::Context;
-use auto_launch::AutoLaunchBuilder;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
 use crate::config::Config;
+use crate::startup::{is_autostart_enabled, toggle_autostart};
 use crate::utils::LogIfErr;
 use crate::{APP_STATE, destroy_borders, reload_borders};
 
@@ -22,15 +22,7 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
         }
     };
 
-    let exe_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(|str| str.to_owned()))
-        .context("failed to get tackey-borders.exe path")?;
-    let auto = AutoLaunchBuilder::new()
-        .set_app_name("tacky-borders")
-        .set_app_path(&exe_path)
-        .build()?;
-    let auto_enabled = auto.is_enabled().is_ok_and(|e| e);
+    let auto_enabled = is_autostart_enabled()?;
 
     let tray_menu = Menu::new();
     tray_menu.append_items(&[
@@ -61,22 +53,11 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
             Err(err) => error!("{err}"),
         },
         // Auto Start
-        "1" => match auto.is_enabled() {
-            Ok(is_enabled) => {
-                let toggle_auto_start = || {
-                    if is_enabled {
-                        auto.disable()
-                    } else {
-                        auto.enable()
-                    }
-                };
-
-                if let Err(err) = toggle_auto_start() {
-                    error!("{err}")
-                }
+        "1" => {
+            if let Err(err) = toggle_autostart() {
+                error!("{err}")
             }
-            Err(err) => error!("{err}"),
-        },
+        }
         // Reload
         "2" => {
             Config::reload();
