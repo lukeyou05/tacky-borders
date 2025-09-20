@@ -5,7 +5,7 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
 use crate::config::Config;
-use crate::startup::{is_autostart_enabled, toggle_autostart};
+use crate::auto_start::{is_autostart_enabled, toggle_autostart};
 use crate::utils::LogIfErr;
 use crate::{APP_STATE, destroy_borders, reload_borders};
 

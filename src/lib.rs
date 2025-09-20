@@ -12,7 +12,7 @@ pub mod event_hook;
 pub mod iocp;
 pub mod komorebi;
 pub mod render_backend;
-pub mod startup;
+pub mod auto_start;
 pub mod sys_tray_icon;
 pub mod utils;
 pub mod window_border;
