@@ -31,22 +31,22 @@ pub fn is_autostart_enabled() -> Result<bool> {
     }
 }
 
-fn set_autostart(is_enabled: bool) -> Result<()> {
+fn set_autostart(enable: bool) -> Result<()> {
     let exe_path = EXE_PATH.as_str();
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (run_key, _disp) = hkcu.create_subkey(RUN_KEY)?;
 
-    if is_enabled {
+    if enable {
+        run_key
+            .set_value(APP_NAME, &exe_path)
+            .context("failed to set the autostart registry key")?;
+    } else {
         if let Err(e) = run_key.delete_value(APP_NAME) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(anyhow!("failed to delete the autostart registry key"));
             }
         }
-    } else {
-        run_key
-            .set_value(APP_NAME, &exe_path)
-            .context("failed to set the autostart registry key")?;
     }
 
     Ok(())
@@ -55,7 +55,7 @@ fn set_autostart(is_enabled: bool) -> Result<()> {
 pub fn toggle_autostart() -> Result<()> {
     let is_enabled = is_autostart_enabled()?;
 
-    set_autostart(is_enabled)?;
+    set_autostart(!is_enabled)?;
 
     Ok(())
 }
