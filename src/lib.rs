@@ -110,11 +110,11 @@ impl AppState {
 
         let config = match Config::create() {
             Ok(config) => {
-                if config.enable_logging {
-                    if let Err(err) = create_logger() {
-                        eprintln!("[ERROR] could not create logger: {err}");
-                    };
-                }
+                if config.enable_logging
+                    && let Err(err) = create_logger()
+                {
+                    eprintln!("[ERROR] could not create logger: {err}");
+                };
 
                 if config.is_config_watcher_enabled() {
                     *config_watcher.lock().unwrap() = create_config_watcher()
@@ -189,7 +189,7 @@ impl AppState {
     }
 
     // The following getter/setters are meant for use in testing
-    pub fn get_config_mut(&self) -> RwLockWriteGuard<Config> {
+    pub fn get_config_mut(&self) -> RwLockWriteGuard<'_, Config> {
         self.config.write().unwrap()
     }
 
@@ -197,7 +197,7 @@ impl AppState {
         &self.render_factory
     }
 
-    pub fn get_directx_devices_mut(&self) -> RwLockWriteGuard<Option<DirectXDevices>> {
+    pub fn get_directx_devices_mut(&self) -> RwLockWriteGuard<'_, Option<DirectXDevices>> {
         self.directx_devices.write().unwrap()
     }
 }
