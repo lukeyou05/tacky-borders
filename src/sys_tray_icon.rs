@@ -1,10 +1,11 @@
 use anyhow::Context;
-use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
 use crate::config::Config;
+use crate::auto_start::{is_autostart_enabled, toggle_autostart};
 use crate::utils::LogIfErr;
 use crate::{APP_STATE, destroy_borders, reload_borders};
 
@@ -21,14 +22,17 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
         }
     };
 
-    let tooltip = format!("{}{}", "tacky-borders v", env!("CARGO_PKG_VERSION"));
+    let auto_enabled = is_autostart_enabled()?;
 
     let tray_menu = Menu::new();
     tray_menu.append_items(&[
         &MenuItem::with_id("0", "Show Config", true, None),
-        &MenuItem::with_id("1", "Reload", true, None),
-        &MenuItem::with_id("2", "Close", true, None),
+        &CheckMenuItem::with_id("1", "Auto Start", true, auto_enabled, None),
+        &MenuItem::with_id("2", "Reload", true, None),
+        &MenuItem::with_id("3", "Close", true, None),
     ])?;
+
+    let tooltip = format!("{}{}", "tacky-borders v", env!("CARGO_PKG_VERSION"));
 
     let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
@@ -48,13 +52,19 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
             }
             Err(err) => error!("{err}"),
         },
-        // Reload
+        // Auto Start
         "1" => {
+            if let Err(err) = toggle_autostart() {
+                error!("{err}")
+            }
+        }
+        // Reload
+        "2" => {
             Config::reload();
             reload_borders();
         }
         // Close
-        "2" => {
+        "3" => {
             destroy_borders();
 
             // Convert hwineventhook_isize back into HWINEVENTHOOK, and unhook it
