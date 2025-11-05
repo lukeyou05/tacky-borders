@@ -3,6 +3,25 @@
 ![image](https://github.com/user-attachments/assets/37754479-2311-400e-b019-e0ad1db642a9)
 _tacky-borders_ lets you customize window borders on Windows 10 and 11.
 
+## landnthrn's forked description
+
+I've added 131 color presets to this forked repo from tacky-borders  
+If you don't want to build the feature use their Pre-Built Release and just download this repo for the color-presets folder
+
+Comes with simple implementation guide of course
+
+### Color Presets include  
+~ Clockwise Spirals 
+~ Counter Clockwise Spirals  
+~ Gradient Colors  
+~ One Sided Color Fade  
+~ Static Colors  
+
+Comes with two speed variations for the spiral animations — Default & Slower
+
+**Color Map.txt** ~ Displays all the hex codes used in the color variations  
+**How to Use + Info** ~ Simple guide on how to implement, built for noobs. 
+
 ## Installation
 
 ### Pre-built Release
