@@ -22,6 +22,13 @@ Comes with two speed variations for the spiral animations — Default & Slower
 **Color Map.txt** ~ Displays all the hex codes used in the color variations  
 **How to Use + Info** ~ Simple guide on how to implement, built for noobs. 
 
+I'm on Windows 10 and Tacky Borders works just fine on it, I fixed a couple bugs though, not sure if they were due to Windows 10 or not but, there was a border across each of my montiors, it was thinking my monitor screens were a window or some.  
+
+And being on a dual monitor setup whenever I fullscreened something on one window it would bleed over a little to other monitor.  
+(Probably shouldn't call this a bug cause it was just a matter of thickness)  
+
+Both are fixed for all the color presets.  
+
 ## Installation
 
 ### Pre-built Release
