@@ -8,12 +8,11 @@ _tacky-borders_ lets you customize window borders on Windows 10 and 11.
 I've added 131 color presets to this forked repo from [tacky-borders](https://github.com/lukeyou05/tacky-borders)  
 If you don't want to build the feature use their [Pre-Built Release](https://github.com/lukeyou05/tacky-borders/releases)  
 then just download this repo for the color-presets folder  
-or use [Download Repo Specifics](https://download-directory.github.io) to just download the `color-presets` folder  
-
+or use [Download Repo Specifics](https://download-directory.github.io) to just download the `color-presets` folder by link
 Comes with simple implementation guide of course
 
 ### Color Presets include  
-~ Clockwise Spirals 
+~ Clockwise Spirals  
 ~ Counter Clockwise Spirals  
 ~ Gradient Colors  
 ~ One Sided Color Fade  
