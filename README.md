@@ -17,7 +17,7 @@ Comes with simple implementation guide of course
 ~ Clockwise Spirals  
 ~ Counter Clockwise Spirals  
 ~ Gradient Colors  
-~ One Sided Color Fade  
+~ One Sided Color Fade *(Left & Right)*  
 ~ Static Colors  
 
 Comes with two speed variations for the spiral animations — Default & Slower
