@@ -1,5 +1,7 @@
 # tacky-borders
 
+### SOME COLOR PRESET EXAMPLES
+
 ![Spirals](https://github.com/user-attachments/assets/49d991d8-2e95-4104-8782-30142d12cbdc)
 <img width="960" height="720" alt="Gradients and Statics" src="https://github.com/user-attachments/assets/de697549-964d-4b1e-af1b-d10c6e0215f9" />
 
