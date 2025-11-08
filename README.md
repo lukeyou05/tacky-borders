@@ -11,22 +11,24 @@ Works on Windows 10 and 11.
 ## landnthrn's forked description
 
 I've added 131 color presets to this forked repo from [tacky-borders](https://github.com/lukeyou05/tacky-borders)  
-If you don't want to build the feature use their [Pre-Built Release](https://github.com/lukeyou05/tacky-borders/releases) for the .exe   
+If you don't want to build the feature use their [Pre-Built Release](https://github.com/lukeyou05/tacky-borders/releases) for the `.exe`   
 Then just [Download Here](https://download-directory.github.io/?url=https%3A%2F%2Fgithub.com%2Flandnthrn%2FTacky-Borders-With-Color-Presets%2Ftree%2Fmain%2Fcolor-presets) for the `color-presets` folder alone 
 
 Comes with simple implementation guide of course
 
 ### Color Presets include  
-~ Clockwise Spirals  
-~ Counter Clockwise Spirals  
-~ Gradient Colors  
-~ One Sided Color Fade *(Left & Right)*  
-~ Static Colors  
+- Clockwise Spirals  
+- Counter Clockwise Spirals  
+- Gradient Colors  
+- One Sided Color Fade *(Left & Right)*  
+- Static Colors  
 
 Comes with two speed variations for the spiral animations — Default & Slower
 
-**Color Map.txt** ~ Displays all the hex codes used in the color variations  
-**How to Use + Info** ~ Simple guide on how to implement, built for noobs. 
+`Color Map.txt` ~ Displays all the hex codes used in the color variations  
+`How to Use + Info` ~ Simple guide on how to implement, built for noobs. 
+
+### NOTE:
 
 I'm on Windows 10 and Tacky Borders works just fine on it, I fixed a couple bugs though, not sure if they were due to Windows 10 or not but, there was a border across each of my montiors, it was thinking my monitor screens were a window or some.  
 
