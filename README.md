@@ -5,7 +5,8 @@
 ![Spirals](https://github.com/user-attachments/assets/49d991d8-2e95-4104-8782-30142d12cbdc)
 <img width="960" height="720" alt="Gradients and Statics" src="https://github.com/user-attachments/assets/de697549-964d-4b1e-af1b-d10c6e0215f9" />
 
-_tacky-borders_ lets you customize window borders with color animations, gradients, one side color fades, and static colors.  
+_tacky-borders_ lets you customize window borders with  
+color animations, gradients, one side color fades, and static colors.  
 Works on Windows 10 and 11.
 
 ## landnthrn's forked description
