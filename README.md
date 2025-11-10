@@ -27,7 +27,7 @@ Comes with simple implementation guide of course
 Comes with two speed variations for the spiral animations — Default & Slower
 
 `Color Map.txt` ~ Displays all the hex codes used in the color variations  
-`How to Use + Info` ~ Simple guide on how to implement, built for noobs. 
+`How to Use + Info` ~ Simple guide on how to use 
 
 ### NOTE:
 
