@@ -15,7 +15,7 @@ I've added 135 color presets to this forked repo from [tacky-borders](https://gi
 If you don't want to build the feature use their [Pre-Built Release](https://github.com/lukeyou05/tacky-borders/releases) for the `.exe`   
 Then just [Download Here](https://download-directory.github.io/?url=https%3A%2F%2Fgithub.com%2Flandnthrn%2FTacky-Borders-With-Color-Presets%2Ftree%2Fmain%2Fcolor-presets) for the `color-presets` folder alone 
 
-Comes with simple implementation guide of course
+Comes with simple instructions guide of course
 
 ### Color Presets include  
 - Clockwise Spirals  
