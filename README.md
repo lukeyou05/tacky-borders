@@ -38,6 +38,8 @@ And being on a dual monitor setup whenever I fullscreened something on one windo
 
 Both are fixed for all the color presets.  
 
+---
+
 ## Installation
 
 ### Pre-built Release
