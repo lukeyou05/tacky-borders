@@ -1,0 +1,266 @@
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+\\Hex Codes\\
+https://coolors.co/e400a0-a50000-1010ff-00e10f-301a82
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                            STATIC COLORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Black                  #000000
+Blue                   #225DE9
+Dark Blue Violet       #301A82
+Dark Magenta           #620045
+Dark Violet            #301A82
+Green                  #00E10F
+Minty Green            #28E4AF
+Pink                   #E400A0
+Purple                 #7A53E6
+Red                    #D51229
+Turquoise              #18DADA
+White                  #FFFFFF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                      SPIRAL COLOR COMBINATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TWO-COLOR SPIRALS:
+
+Black & Blue Spiral
+  Active:    #000000, #225DE9
+  Inactive:  #000000, #1a47b0
+
+Black & Dark Blue Violet Spiral
+  Active:    #000000, #301A82
+  Inactive:  #000000, #241361
+
+Black & Green Spiral
+  Active:    #000000, #00E10F
+  Inactive:  #000000, #00B00B
+
+Black & Minty Green Spiral
+  Active:    #000000, #28E4AF
+  Inactive:  #000000, #1fac84
+
+Black & Pink Spiral
+  Active:    #000000, #FF00AA
+  Inactive:  #000000, #CC0088
+
+Black & Purple Spiral
+  Active:    #000000, #7A53E6
+  Inactive:  #000000, #5d3fb0
+
+Black & Red Spiral
+  Active:    #000000, #D51229
+  Inactive:  #000000, #a00e1f
+
+Black & Turquoise Spiral
+  Active:    #000000, #18DADA
+  Inactive:  #000000, #12a4a4
+
+Blue & Red Spiral
+  Active:    #1010FF, #D51229
+  Inactive:  #004CBF, #a00e1f
+
+Blue & Turquoise Spiral
+  Active:    #1010FF, #18DADA
+  Inactive:  #0C0CCF, #12a4a4
+
+Dark Violet & Red Spiral
+  Active:    #7A53E6, #DA0000
+  Inactive:  #5d3fb0, #A50000
+
+Pink & Green Spiral
+  Active:    #FF00AA, #00E10F
+  Inactive:  #CC0088, #00B00B
+
+Pink & Minty Green Spiral
+  Active:    #FF00AA, #28E4AF
+  Inactive:  #CC0088, #1fac84
+
+Purple & Green Spiral
+  Active:    #7A53E6, #00E10F
+  Inactive:  #5d3fb0, #00B00B
+
+Purple & Minty Green Spiral
+  Active:    #7A53E6, #00EBB4
+  Inactive:  #5d3fb0, #00B08A
+
+Purple & Pink Spiral
+  Active:    #7A53E6, #FF00AA
+  Inactive:  #5d3fb0, #CC0088
+
+Purple & Red Spiral
+  Active:    #7A53E6, #DA0000
+  Inactive:  #5d3fb0, #A50000
+
+Red & Dark Blue Violet Spiral
+  Active:    #A50000, #301A82
+  Inactive:  #7A0000, #241361
+
+Red & Pink Spiral
+  Active:    #D40000, #FF00AA
+  Inactive:  #A00000, #CC0088
+
+White & Black Spiral
+  Active:    #FFFFFF, #000000
+  Inactive:  #cccccc, #000000
+
+MULTI-COLOR SPIRALS:
+
+x Pink Purple Dark BlueViolet Red Spiral x
+  Active:    #E400A0, #7A53E6, #301A82, #D51229
+  Inactive:  #AB0079, #5d3fb0, #241361, #a00e1f
+
+x Rainbow Spiral x
+  Active:    #FF0000, #FF7F00, #FFFF00, #00FF00, #0000FF, #4B0082, #9400D3
+  Inactive:  #CC0000, #CC6600, #CCCC00, #00CC00, #0000CC, #3D0066, #7600A6
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                      GRADIENT COLOR COMBINATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TWO-COLOR GRADIENTS:
+
+Blue & Red Gradient
+  Active:    #1010FF, #D51229
+  Inactive:  #004CBF, #a00e1f
+
+Blue & Turquoise Gradient
+  Active:    #1010FF, #18DADA
+  Inactive:  #0C0CCF, #12a4a4
+
+Dark Violet & Red Gradient
+  Active:    #7A53E6, #DA0000
+  Inactive:  #5d3fb0, #A50000
+
+Pink & Green Gradient
+  Active:    #FF00AA, #00E10F
+  Inactive:  #CC0088, #00B00B
+
+Pink & Minty Green Gradient
+  Active:    #FF00AA, #28E4AF
+  Inactive:  #CC0088, #1fac84
+
+Purple & Green Gradient
+  Active:    #7A53E6, #00E10F
+  Inactive:  #5d3fb0, #00B00B
+
+Purple & Minty Green Gradient
+  Active:    #7A53E6, #00EBB4
+  Inactive:  #5d3fb0, #00B08A
+
+Purple & Pink Gradient
+  Active:    #7A53E6, #FF00AA
+  Inactive:  #5d3fb0, #CC0088
+
+Purple & Red Gradient
+  Active:    #7A53E6, #DA0000
+  Inactive:  #5d3fb0, #A50000
+
+Red & Dark Blue Violet Gradient
+  Active:    #A50000, #301A82
+  Inactive:  #7A0000, #241361
+
+Red & Pink Gradient
+  Active:    #D40000, #FF00AA
+  Inactive:  #A00000, #CC0088
+
+Red & Purple Gradient
+  Active:    #D40000, #7A53E6
+  Inactive:  #A00000, #5d3fb0
+
+MULTI-COLOR GRADIENTS:
+
+x Purple Dark BlueViolet Red Pink Gradient x
+  Active:    #7A53E6, #301A82, #D51229, #E400A0
+  Inactive:  #5d3fb0, #241361, #a00e1f, #AB0079
+
+x Rainbow Gradient x
+  Active:    #FF0000, #FF7F00, #FFFF00, #00FF00, #0000FF, #4B0082, #9400D3
+  Inactive:  #CC0000, #CC6600, #CCCC00, #00CC00, #0000CC, #3D0066, #7600A6
+
+All gradient combinations correspond to the presets under `Gradient Colors`.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    ONE-SIDED COLOR FADE GRADIENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+LEFT SIDE (Color on left, Black on right):
+
+Blue & Black Gradient (Left side)
+  Active:    #225DE9, #000000
+  Inactive:  #1a47b0, #000000
+
+Dark Blue Violet & Black Gradient (Left side)
+  Active:    #301A82, #000000
+  Inactive:  #241361, #000000
+
+Green & Black Gradient (Left side)
+  Active:    #00E10F, #000000
+  Inactive:  #00B00B, #000000
+
+Minty Green & Black Gradient (Left side)
+  Active:    #28E4AF, #000000
+  Inactive:  #1fac84, #000000
+
+Pink & Black Gradient (Left side)
+  Active:    #FF00AA, #000000
+  Inactive:  #CC0088, #000000
+
+Purple & Black Gradient (Left side)
+  Active:    #7A53E6, #000000
+  Inactive:  #5d3fb0, #000000
+
+Red & Black Gradient (Left side)
+  Active:    #D51229, #000000
+  Inactive:  #a00e1f, #000000
+
+Turquoise & Black Gradient (Left side)
+  Active:    #18DADA, #000000
+  Inactive:  #12a4a4, #000000
+
+White & Black Gradient (Left side)
+  Active:    #FFFFFF, #000000
+  Inactive:  #cccccc, #000000
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RIGHT SIDE (Black on left, Color on right):
+
+Black & Blue Gradient (Right side)
+  Active:    #000000, #225DE9
+  Inactive:  #000000, #1a47b0
+
+Black & Dark Blue Violet Gradient (Right side)
+  Active:    #000000, #301A82
+  Inactive:  #000000, #241361
+
+Black & Green Gradient (Right side)
+  Active:    #000000, #00E10F
+  Inactive:  #000000, #00B00B
+
+Black & Minty Green Gradient (Right side)
+  Active:    #000000, #28E4AF
+  Inactive:  #000000, #1fac84
+
+Black & Pink Gradient (Right side)
+  Active:    #000000, #FF00AA
+  Inactive:  #000000, #CC0088
+
+Black & Purple Gradient (Right side)
+  Active:    #000000, #7A53E6
+  Inactive:  #000000, #5d3fb0
+
+Black & Red Gradient (Right side)
+  Active:    #000000, #D51229
+  Inactive:  #000000, #a00e1f
+
+Black & Turquoise Gradient (Right side)
+  Active:    #000000, #18DADA
+  Inactive:  #000000, #12a4a4
+
+White & Black Gradient (Right side)
+  Active:    #000000, #FFFFFF
+  Inactive:  #000000, #cccccc
