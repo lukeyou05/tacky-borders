@@ -20,9 +20,9 @@ use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
     GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
-    LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PostQuitMessage,
-    SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW,
-    SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
+    HWND_TOPMOST, LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND,
+    PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE,
+    SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
     SetWindowLongPtrW, SetWindowPos, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED,
     WM_NCDESTROY, WM_PAINT, WM_POWERBROADCAST, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING,
     WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
@@ -527,6 +527,11 @@ impl WindowBorder {
                 | other_flags.unwrap_or_default();
 
             let hwndinsertafter = match self.border_z_order {
+                _ if *APP_STATE.active_window.lock().unwrap()
+                    == self.tracking_window.0 as isize =>
+                {
+                    HWND_TOPMOST
+                }
                 ZOrderMode::AboveWindow => {
                     // Get the hwnd above the tracking hwnd so we can place the border window in between
                     let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
