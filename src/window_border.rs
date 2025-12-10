@@ -132,7 +132,7 @@ impl WindowBorder {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                None,
+                Some(self.tracking_window),
                 None,
                 None,
                 Some(ptr::addr_of!(*self) as _),
