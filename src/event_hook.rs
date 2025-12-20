@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -29,6 +30,10 @@ pub extern "system" fn process_win_event(
 ) {
     // Ignore cursor events
     if _id_object == OBJID_CURSOR.0 {
+        return;
+    }
+
+    if APP_STATE.is_stopped.load(Ordering::SeqCst) {
         return;
     }
 

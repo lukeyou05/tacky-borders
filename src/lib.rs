@@ -4,6 +4,7 @@ extern crate sp_log;
 
 pub mod anim_timer;
 pub mod animations;
+pub mod auto_start;
 pub mod border_drawer;
 pub mod colors;
 pub mod config;
@@ -12,7 +13,6 @@ pub mod event_hook;
 pub mod iocp;
 pub mod komorebi;
 pub mod render_backend;
-pub mod auto_start;
 pub mod sys_tray_icon;
 pub mod utils;
 pub mod window_border;
@@ -67,6 +67,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, Interface, PCWSTR, w};
 
+use crate::utils::{StandaloneWindowsError, T_E_ERROR, WindowsCompatibleError};
+
 static IS_WINDOWS_11: LazyLock<bool> = LazyLock::new(|| {
     let mut version_info = OSVERSIONINFOW {
         dwOSVersionInfoSize: size_of::<OSVERSIONINFOW>() as u32,
@@ -90,6 +92,7 @@ pub struct AppState {
     initial_windows: Mutex<Vec<isize>>,
     active_window: Mutex<isize>,
     is_polling_active_window: AtomicBool,
+    is_stopped: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<Option<ConfigWatcher>>,
     render_factory: ID2D1Factory1,
@@ -171,6 +174,7 @@ impl AppState {
             initial_windows: Mutex::new(Vec::new()),
             active_window: Mutex::new(active_window),
             is_polling_active_window: AtomicBool::new(false),
+            is_stopped: AtomicBool::new(false),
             config: RwLock::new(config),
             config_watcher,
             render_factory,
@@ -499,10 +503,31 @@ pub fn set_event_hook() -> HWINEVENTHOOK {
 }
 
 pub fn create_borders_for_existing_windows() -> WindowsCompatibleResult<()> {
+    if APP_STATE.is_stopped.load(Ordering::SeqCst) {
+        return Err(WindowsCompatibleError::Standalone(
+            StandaloneWindowsError::new(T_E_ERROR, "app is stopped"),
+        ));
+    }
+
     unsafe { EnumWindows(Some(create_borders_callback), LPARAM::default()) }?;
     debug!("windows have been enumerated!");
 
     Ok(())
+}
+
+pub fn toggle_stop() {
+    APP_STATE.is_stopped.store(
+        !APP_STATE.is_stopped.load(Ordering::SeqCst),
+        Ordering::SeqCst,
+    );
+
+    if APP_STATE.is_stopped.load(Ordering::SeqCst) {
+        destroy_borders();
+    } else {
+        create_borders_for_existing_windows()
+            .context("could not create borders")
+            .log_if_err();
+    };
 }
 
 pub fn destroy_borders() {
@@ -578,7 +603,9 @@ pub fn destroy_borders() {
 pub fn reload_borders() {
     destroy_borders();
     APP_STATE.initial_windows.lock().unwrap().clear();
-    create_borders_for_existing_windows().log_if_err();
+    create_borders_for_existing_windows()
+        .context("could not create borders")
+        .log_if_err();
 }
 
 pub fn display_error_box<T: std::fmt::Display>(

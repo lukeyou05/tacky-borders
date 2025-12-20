@@ -48,8 +48,12 @@ fn main() {
         error!("could not create tray icon: {err}");
     }
 
-    register_border_window_class().log_if_err();
-    create_borders_for_existing_windows().log_if_err();
+    register_border_window_class()
+        .context("could not register window class")
+        .log_if_err();
+    create_borders_for_existing_windows()
+        .context("could not create borders")
+        .log_if_err();
 
     unsafe {
         let mut message = MSG::default();
