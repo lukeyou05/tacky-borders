@@ -720,7 +720,13 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
 }
 
 pub fn get_adjusted_radius(radius: f32, dpi: u32, border_width: i32) -> f32 {
-    radius * dpi as f32 / 96.0 + (border_width as f32 / 2.0)
+    const BASE_DPI: f32 = 96.0; // Standard DPI on Windows for 100% scaling
+
+    if radius == 0.0 {
+        0.0
+    } else {
+        radius * dpi as f32 / BASE_DPI + (border_width as f32 / 2.0)
+    }
 }
 
 pub fn get_window_corner_preference(
