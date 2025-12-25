@@ -1,0 +1,111 @@
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TACKY-BORDERS WITH 135 COLOR PRESETS
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+COLOR PRESETS INCLUDE  
+
+— Clockwise Spirals  
+— Counter Clockwise Spirals  
+— Gradient Colors  
+— One Sided Color Fade (Left & Right)  
+— Static Colors  
+
+Comes with two speed variations for the spiral animations — Default & Slower  
+
+Color Map.txt ~ Displays all the hex codes used in the color variations  
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+INSTALL TACKY BORDERS
+
+The easiest way to install Tacky Borders is to download a pre-built release from the releases page:  
+https://github.com/lukeyou05/tacky-borders/releases  
+
+When you run the .exe for the first time, tacky-borders will automatically generate a config file for you in:  
+%userprofile%/.config/tacky-borders/  
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+HOW TO IMPLEMENT THE COLOR PRESETS:
+
+It's super simple.  
+
+— Once you have Tacky Borders open it'll go to your system tray (the arrow on the bottom right of your taskbar).  
+
+— Right click on the icon in the tray > Show Config  
+
+— Recommend to place the files from this github repo in there so it's all in one place.  
+
+— Pick a color preference.  
+
+— Open the file with Notepad.  
+
+— Ctrl + A to select all contents, then copy it all.  
+
+— Open the legit config file in the folder that came up when you clicked Show Config.  
+
+— Ctrl + A to select all contents, then paste/replace the contents with your color preference.  
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+INFO:
+
+— If you just copy a config file from the variations and then  
+  replace the legit one with it while Tacky Borders is running it will error, so it’s best to do it the way explained.  
+
+— If you want to customize more colors to your liking, it's as simple as changing the color hex codes in the config files.  
+  They look like this (#301A82) and a great website for it is:  
+  https://coolors.co/df1a7c-29e3ab-225de9-d81027-301a82  
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If your Tacky Borders doesn't auto run on PC startup:
+
+— Create a shortcut for the Tacky Borders.exe  
+
+— Press Win + R  
+
+— Type shell:startup  
+
+— Paste the .exe shortcut there  
+
+— If you move the .exe to another location you'll have to reset the shortcut you put in shell:startup  
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Find more of my creations on Github:  
+https://github.com/landnthrn?tab=repositories  
+
+Support me on Buy Me a Coffee  
+https://buymeacoffee.com/landn.thrn  
+
+Paypal Donation:  
+https://www.paypal.com/donate/?hosted_button_id=K4PLHFVBH7X8C  
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
