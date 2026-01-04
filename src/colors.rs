@@ -423,11 +423,54 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 }
 
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
+    // Check if the string is in with_opacity(color,X%) format
+    if let Some(with_opacity_content) = hex.strip_prefix("with_opacity(").and_then(|s| s.strip_suffix(")")) {
+        return parse_with_opacity(with_opacity_content).unwrap_or_else(|err| {
+            error!("could not parse with_opacity: {err}");
+            D2D1_COLOR_F::default()
+        });
+    }
+    
     let s = hex.strip_prefix("#").unwrap_or_default();
     parse_hex(s).unwrap_or_else(|err| {
         error!("could not parse hex: {err}");
         D2D1_COLOR_F::default()
     })
+}
+
+fn parse_with_opacity(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
+    // Expected format: "color,X%" where color is "accent" or hex code, X is opacity percentage
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("invalid with_opacity format, expected 'color,X%': {s}"));
+    }
+    
+    // Extract opacity percentage
+    let alpha_str = parts[1].trim();
+    if !alpha_str.ends_with('%') {
+        return Err(anyhow!("invalid alpha format, expected percentage: {alpha_str}"));
+    }
+    
+    let alpha_percent = alpha_str
+        .strip_suffix('%')
+        .and_then(|s| s.parse::<f32>().ok())
+        .ok_or_else(|| anyhow!("invalid alpha percentage: {alpha_str}"))?;
+    
+    // Get color based on the first parameter
+    let color_part = parts[0].trim();
+    let mut color = if color_part == "accent" {
+        // If accent is specified, get Windows accent color
+        get_accent_color(true)
+    } else {
+        // Otherwise parse as hex code
+        let hex = color_part.strip_prefix("#").unwrap_or(color_part);
+        parse_hex(hex)?
+    };
+    
+    // Override transparency
+    color.a = alpha_percent / 100.0;
+    
+    Ok(color)
 }
 
 fn parse_hex(s: &str) -> anyhow::Result<D2D1_COLOR_F> {
@@ -551,6 +594,74 @@ mod tests {
                         a: 128.0 / 255.0
                     }
             );
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+    
+    #[test]
+    fn test_with_opacity_accent() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(accent,40%)".to_string());
+        let color_brush = color_brush_config.to_color_brush(true);
+
+        if let ColorBrush::Solid(ref solid) = color_brush {
+            // We can't test exact color values since accent color depends on Windows settings
+            // But we can test that alpha is set correctly
+            assert_eq!(solid.color.a, 0.4);
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+    
+    #[test]
+    fn test_with_opacity_hex_code() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(#ff0000,60%)".to_string());
+        let color_brush = color_brush_config.to_color_brush(true);
+
+        if let ColorBrush::Solid(ref solid) = color_brush {
+            assert_eq!(solid.color.r, 1.0);
+            assert_eq!(solid.color.g, 0.0);
+            assert_eq!(solid.color.b, 0.0);
+            assert_eq!(solid.color.a, 0.6);
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+    
+    #[test]
+    fn test_with_opacity_hex_with_alpha_override() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(#ff000080,30%)".to_string());
+        let color_brush = color_brush_config.to_color_brush(true);
+
+        if let ColorBrush::Solid(ref solid) = color_brush {
+            assert_eq!(solid.color.r, 1.0);
+            assert_eq!(solid.color.g, 0.0);
+            assert_eq!(solid.color.b, 0.0);
+            // Alpha should be overridden to 30%
+            assert_eq!(solid.color.a, 0.3);
+        } else {
+            panic!("created incorrect color brush");
+        }
+
+        Ok(())
+    }
+    
+    #[test]
+    fn test_with_opacity_without_hash() -> anyhow::Result<()> {
+        let color_brush_config = ColorBrushConfig::Solid("with_opacity(00ff00,50%)".to_string());
+        let color_brush = color_brush_config.to_color_brush(true);
+
+        if let ColorBrush::Solid(ref solid) = color_brush {
+            assert_eq!(solid.color.r, 0.0);
+            assert_eq!(solid.color.g, 1.0);
+            assert_eq!(solid.color.b, 0.0);
+            assert_eq!(solid.color.a, 0.5);
         } else {
             panic!("created incorrect color brush");
         }
