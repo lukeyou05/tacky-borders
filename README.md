@@ -292,6 +292,9 @@ window_rules:
   #     If the border still isn't visible, try setting 'follow_native_border' to False.
 ```
 
+## Community Projects
+- [Color-Presets-for-Tacky-Borders](https://github.com/landnthrn/Color-Presets-for-Tacky-Borders) - Additional color presets including color animations, gradients, one side color fades, and static colors.
+
 ## Comparison to cute-borders
 
 Here is another great app that achieves similar functionality: <https://github.com/keifufu/cute-borders>. I've taken a lot of inspiration from them and would highly recommend checking them out!
