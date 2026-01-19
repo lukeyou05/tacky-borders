@@ -4,6 +4,7 @@ extern crate sp_log;
 
 pub mod anim_timer;
 pub mod animations;
+pub mod auto_start;
 pub mod border_drawer;
 pub mod colors;
 pub mod config;
@@ -12,7 +13,6 @@ pub mod event_hook;
 pub mod iocp;
 pub mod komorebi;
 pub mod render_backend;
-pub mod auto_start;
 pub mod sys_tray_icon;
 pub mod utils;
 pub mod window_border;
@@ -23,7 +23,6 @@ use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock, RwLock, RwLockWriteGuard};
 use std::thread::{self, JoinHandle};
 use utils::{
@@ -89,7 +88,6 @@ pub struct AppState {
     borders: Mutex<HashMap<isize, isize>>,
     initial_windows: Mutex<Vec<isize>>,
     active_window: Mutex<isize>,
-    is_polling_active_window: AtomicBool,
     config: RwLock<Config>,
     config_watcher: Mutex<Option<ConfigWatcher>>,
     render_factory: ID2D1Factory1,
@@ -170,7 +168,6 @@ impl AppState {
             borders: Mutex::new(HashMap::new()),
             initial_windows: Mutex::new(Vec::new()),
             active_window: Mutex::new(active_window),
-            is_polling_active_window: AtomicBool::new(false),
             config: RwLock::new(config),
             config_watcher,
             render_factory,
@@ -178,14 +175,6 @@ impl AppState {
             komorebi_integration,
             display_adapters_watcher,
         }
-    }
-
-    fn is_polling_active_window(&self) -> bool {
-        self.is_polling_active_window.load(Ordering::SeqCst)
-    }
-
-    fn set_polling_active_window(&self, val: bool) {
-        self.is_polling_active_window.store(val, Ordering::SeqCst);
     }
 
     // The following getter/setters are meant for use in testing

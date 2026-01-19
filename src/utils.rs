@@ -6,7 +6,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
-use std::{fs, ptr, thread};
+use std::{fs, ptr, thread, time};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ENVVAR_NOT_FOUND, ERROR_INVALID_WINDOW_HANDLE, ERROR_SUCCESS, GetLastError,
     HANDLE, HWND, LPARAM, LRESULT, RECT, SetLastError, WIN32_ERROR, WPARAM,
@@ -37,6 +37,7 @@ use windows::core::{BOOL, HRESULT, PWSTR};
 
 use crate::APP_STATE;
 use crate::config::{EnableMode, MatchKind, MatchStrategy, WindowRule};
+use crate::event_hook::handle_foreground_event;
 use crate::window_border::WindowBorder;
 
 pub const WM_APP_LOCATIONCHANGE: u32 = WM_APP;
@@ -846,6 +847,37 @@ pub fn hide_border_for_window(hwnd: HWND) {
             post_message_w(Some(border), WM_APP_HIDECLOAKED, WPARAM(0), LPARAM(0))
                 .context("hide_border_for_window")
                 .log_if_err();
+        }
+    });
+}
+
+/// Spawns a thread that polls to make up for unreliable events (e.g. EVENT_SYSTEM_FOREGROUND).
+pub fn spawn_window_state_poller() {
+    const POLL_DELAY: u64 = 100;
+
+    let _ = thread::spawn(move || {
+        loop {
+            // Handle any changes in terms of which window is foreground/active
+            let old_active_hwnd = HWND(*APP_STATE.active_window.lock().unwrap() as _);
+            let new_active_hwnd = get_foreground_window();
+            if new_active_hwnd != old_active_hwnd && !new_active_hwnd.is_invalid() {
+                handle_foreground_event(new_active_hwnd, old_active_hwnd);
+            }
+
+            // Reap borders for windows that no longer exist
+            let invalid_hwnds: Vec<HWND> = APP_STATE
+                .borders
+                .lock()
+                .unwrap()
+                .keys()
+                .map(|tracking_isize| HWND(*tracking_isize as _))
+                .filter(|tracking_hwnd| !is_window(Some(*tracking_hwnd)))
+                .collect();
+            for hwnd in invalid_hwnds {
+                destroy_border_for_window(hwnd);
+            }
+
+            thread::sleep(time::Duration::from_millis(POLL_DELAY));
         }
     });
 }
