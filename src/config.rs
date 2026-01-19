@@ -236,7 +236,7 @@ impl Config {
         }
 
         // Deserialize the config.yaml file
-        serde_yml::from_str(&contents).map_err(anyhow::Error::new)
+        serde_yaml_ng::from_str(&contents).map_err(anyhow::Error::new)
     }
 
     pub fn get_dir() -> anyhow::Result<PathBuf> {
