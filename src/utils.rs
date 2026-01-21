@@ -797,7 +797,7 @@ pub fn destroy_border_for_window(tracking_window: HWND) {
     {
         let border_window = HWND(border_isize as _);
 
-        post_message_w(Some(border_window), WM_NCDESTROY, WPARAM(0), LPARAM(0))
+        send_notify_message_w(border_window, WM_NCDESTROY, WPARAM(0), LPARAM(0))
             .context("destroy_border_for_window")
             .log_if_err();
     }
