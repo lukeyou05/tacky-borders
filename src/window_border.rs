@@ -83,6 +83,7 @@ pub struct WindowBorder {
     unminimize_delay: u64,
     // ------------------------------
     is_paused: bool,
+    last_reorder_time: Option<time::Instant>,
 }
 
 impl WindowBorder {
@@ -105,6 +106,7 @@ impl WindowBorder {
             initialize_delay: Default::default(),
             unminimize_delay: Default::default(),
             is_paused: Default::default(),
+            last_reorder_time: None,
         });
 
         this.create_window()
@@ -897,26 +899,32 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                match self.border_z_order {
-                    ZOrderMode::AboveWindow => {
-                        // When the tracking window reorders its contents, it may change the z-order. So,
-                        // we first check whether the border is still above the tracking window, and if
-                        // not, we must update its position and place it back on top
-                        if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
-                            != Ok(self.border_window.0)
-                        {
-                            self.update_position(None).log_if_err();
+                // Check if z-order needs fixing
+                let z_order_correct = match self.border_z_order {
+                    ZOrderMode::AboveWindow => (
+                        unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
+                            == Ok(self.border_window.0)
+                    ),
+                    ZOrderMode::BelowWindow => (
+                        unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
+                            == Ok(self.border_window.0)
+                    ),
+                };
+
+                // If z-order is correct, apply debouncing to prevent excessive checks
+                // If z-order is WRONG, always fix it regardless of debounce timing
+                if z_order_correct {
+                    let now = time::Instant::now();
+                    if let Some(last_time) = self.last_reorder_time {
+                        if now.duration_since(last_time) < time::Duration::from_millis(16) {
+                            return LRESULT(0);
                         }
                     }
-                    ZOrderMode::BelowWindow => {
-                        // Check if the border is still directly below the tracking window
-                        // GW_HWNDNEXT returns the window below the specified window in z-order
-                        if unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
-                            != Ok(self.border_window.0)
-                        {
-                            self.update_position(None).log_if_err();
-                        }
-                    }
+                    self.last_reorder_time = Some(now);
+                } else {
+                    // Z-order is wrong - fix it immediately
+                    self.last_reorder_time = Some(time::Instant::now());
+                    self.update_position(None).log_if_err();
                 }
             }
             // EVENT_SYSTEM_FOREGROUND
