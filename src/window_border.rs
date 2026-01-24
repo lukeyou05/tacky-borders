@@ -1239,7 +1239,13 @@ impl WindowBorder {
                     self.update_position(None).log_if_err();
                 }
             }
-            ZOrderMode::BelowWindow => {} // do nothing
+            ZOrderMode::BelowWindow => {
+                if unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
+                    != Ok(self.border_window.0)
+                {
+                    self.update_position(None).log_if_err();
+                }
+            }
         }
 
         self.last_reorder_time = Some(time::Instant::now());
