@@ -302,20 +302,22 @@ impl WindowBorder {
                     .max_by_key(|params| {
                         // Try to find the effect params with the largest required padding
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
                         // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()) as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
                         // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                        (max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()
                     })
                     .unwrap_or(0.0);
                 let max_inactive_padding = self
@@ -326,18 +328,20 @@ impl WindowBorder {
                     .max_by_key(|params| {
                         // Try to find the effect params with the largest required padding
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()) as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                        (max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()
                     })
                     .unwrap_or(0.0);
 
