@@ -4,8 +4,8 @@ use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR,
-    OBJID_WINDOW,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CLIENT,
+    OBJID_CURSOR, OBJID_WINDOW,
 };
 
 use crate::APP_STATE;
@@ -43,6 +43,11 @@ pub extern "system" fn process_win_event(
             }
         }
         EVENT_OBJECT_REORDER => {
+            // Ignore OBJIDs not needed for window Z-order handling.
+            if _id_object != OBJID_CLIENT.0 {
+                return;
+            }
+
             // Send reorder messages to all the border windows
             for value in APP_STATE.borders.lock().unwrap().values() {
                 let border_window = HWND(*value as _);

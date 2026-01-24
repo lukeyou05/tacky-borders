@@ -19,7 +19,7 @@ use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
-    GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
+    GW_HWNDNEXT, GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
     LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PostQuitMessage,
     SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW,
     SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
@@ -42,7 +42,7 @@ use crate::utils::{
     WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
     WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
     get_dpi_for_monitor, get_monitor_info, get_window_rule, get_window_title, has_native_border,
-    is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible, loword,
+    is_window, is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible, loword,
     monitor_from_window, post_message_w,
 };
 
@@ -843,6 +843,12 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
+                // Check if tracking window still exists to avoid ghost borders
+                if !is_window(Some(self.tracking_window)) {
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+
                 // This is mainly here to handle cases where a window is made borderless fullscreen
                 // (if 'follow_native_border' is set to true in the config), which doesn't have any
                 // dedicated events like MINIMIZEEND. Note that we don't set 'is_paused' to true as
@@ -888,21 +894,43 @@ impl WindowBorder {
                     .set_anims_timer_if_needed(self.border_window.0);
             }
             // EVENT_OBJECT_REORDER
-            WM_APP_REORDER => match self.border_z_order {
-                ZOrderMode::AboveWindow => {
-                    // When the tracking window reorders its contents, it may change the z-order. So,
-                    // we first check whether the border is still above the tracking window, and if
-                    // not, we must update its position and place it back on top
-                    if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
-                        != Ok(self.border_window.0)
-                    {
-                        self.update_position(None).log_if_err();
+            WM_APP_REORDER => {
+                // First check if the tracking window still exists to avoid ghost borders
+                if !is_window(Some(self.tracking_window)) {
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+
+                match self.border_z_order {
+                    ZOrderMode::AboveWindow => {
+                        // When the tracking window reorders its contents, it may change the z-order. So,
+                        // we first check whether the border is still above the tracking window, and if
+                        // not, we must update its position and place it back on top
+                        if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
+                            != Ok(self.border_window.0)
+                        {
+                            self.update_position(None).log_if_err();
+                        }
+                    }
+                    ZOrderMode::BelowWindow => {
+                        // Check if the border is still directly below the tracking window
+                        // GW_HWNDNEXT returns the window below the specified window in z-order
+                        if unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
+                            != Ok(self.border_window.0)
+                        {
+                            self.update_position(None).log_if_err();
+                        }
                     }
                 }
-                ZOrderMode::BelowWindow => {} // do nothing
-            },
+            }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
+                // Check if tracking window still exists to avoid ghost borders
+                if !is_window(Some(self.tracking_window)) {
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+
                 self.update_color(None);
                 self.update_position(None).log_if_err();
                 self.render().log_if_err();
