@@ -1,11 +1,13 @@
+use std::collections::HashMap;
+
 use anyhow::Context;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CURSOR,
-    OBJID_WINDOW,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CLIENT,
+    OBJID_CURSOR, OBJID_WINDOW,
 };
 
 use crate::APP_STATE;
@@ -30,6 +32,27 @@ pub extern "system" fn process_win_event(
         return;
     }
 
+    // let events: HashMap<u32, &str> = HashMap::from([
+    //     (EVENT_OBJECT_LOCATIONCHANGE, "EVENT_OBJECT_LOCATIONCHANGE"),
+    //     (EVENT_OBJECT_REORDER, "EVENT_OBJECT_REORDER"),
+    //     (EVENT_SYSTEM_FOREGROUND, "EVENT_SYSTEM_FOREGROUND"),
+    //     (EVENT_OBJECT_SHOW, "EVENT_OBJECT_SHOW"),
+    //     (EVENT_OBJECT_UNCLOAKED, "EVENT_OBJECT_UNCLOAKED"),
+    //     (EVENT_OBJECT_HIDE, "EVENT_OBJECT_HIDE"),
+    //     (EVENT_OBJECT_CLOAKED, "EVENT_OBJECT_CLOAKED"),
+    //     (EVENT_SYSTEM_MINIMIZESTART, "EVENT_SYSTEM_MINIMIZESTART"),
+    //     (EVENT_SYSTEM_MINIMIZEEND, "EVENT_SYSTEM_MINIMIZEEND"),
+    //     (EVENT_OBJECT_DESTROY, "EVENT_OBJECT_DESTROY"),
+    // ]);
+    // if let Some(event) = events.get(&_event) {
+    //     println!(
+    //         "event (known): {}; hwnd: {:?}; id_object: {}; id_child: {}",
+    //         event, _hwnd, _id_object, _id_child
+    //     );
+    // } else {
+    //     println!("event (unknown): {}", _event);
+    // }
+
     match _event {
         EVENT_OBJECT_LOCATIONCHANGE => {
             if _id_child != CHILDID_SELF as i32 {
@@ -43,6 +66,11 @@ pub extern "system" fn process_win_event(
             }
         }
         EVENT_OBJECT_REORDER => {
+            // Ignore OBJIDs not needed for window Z-order handling.
+            if _id_object != OBJID_CLIENT.0 {
+                return;
+            }
+
             // Send reorder messages to all the border windows
             for value in APP_STATE.borders.lock().unwrap().values() {
                 let border_window = HWND(*value as _);
