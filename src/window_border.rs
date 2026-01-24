@@ -19,13 +19,14 @@ use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
-    GW_HWNDNEXT, GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW, HWND_TOP,
-    LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PostQuitMessage,
-    SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW,
-    SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
-    SetWindowLongPtrW, SetWindowPos, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED,
-    WM_NCDESTROY, WM_PAINT, WM_POWERBROADCAST, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING,
-    WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    GW_HWNDNEXT, GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
+    HWND_TOP, KillTimer, LWA_ALPHA, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND, PM_REMOVE, PeekMessageW, PostQuitMessage, SET_WINDOW_POS_FLAGS,
+    SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW,
+    SetWindowPos, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY,
+    WM_PAINT, WM_POWERBROADCAST, WM_TIMER, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
+    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -42,9 +43,11 @@ use crate::utils::{
     WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
     WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
     get_dpi_for_monitor, get_monitor_info, get_window_rule, get_window_title, has_native_border,
-    is_window, is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible, loword,
-    monitor_from_window, post_message_w,
+    is_window, is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible,
+    loword, monitor_from_window, post_message_w,
 };
+
+const REORDER_TIMER_ID: usize = 0;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum WindowState {
@@ -83,6 +86,9 @@ pub struct WindowBorder {
     unminimize_delay: u64,
     // ------------------------------
     is_paused: bool,
+    last_reorder_time: Option<time::Instant>,
+    is_debouncing_reorder: bool,
+    consecutive_reorders: u64,
 }
 
 impl WindowBorder {
@@ -105,6 +111,9 @@ impl WindowBorder {
             initialize_delay: Default::default(),
             unminimize_delay: Default::default(),
             is_paused: Default::default(),
+            last_reorder_time: None,
+            is_debouncing_reorder: false,
+            consecutive_reorders: 0,
         });
 
         this.create_window()
@@ -307,7 +316,8 @@ impl WindowBorder {
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
                         // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()) as i32
+                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil())
+                            as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
@@ -332,7 +342,8 @@ impl WindowBorder {
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()) as i32
+                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil())
+                            as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
@@ -901,26 +912,59 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                match self.border_z_order {
-                    ZOrderMode::AboveWindow => {
-                        // When the tracking window reorders its contents, it may change the z-order. So,
-                        // we first check whether the border is still above the tracking window, and if
-                        // not, we must update its position and place it back on top
-                        if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
-                            != Ok(self.border_window.0)
-                        {
-                            self.update_position(None).log_if_err();
+                // Drain any pending WM_APP_REORDER messages from the queue
+                while unsafe {
+                    PeekMessageW(
+                        &mut MSG::default(),
+                        Some(self.border_window.0),
+                        WM_APP_REORDER,
+                        WM_APP_REORDER,
+                        PM_REMOVE,
+                    )
+                    .as_bool()
+                } {
+                    // Intentionally empty.
+                }
+
+                // Allows the immediate processing of some reorder messages, then debounces after
+                const NUM_REORDERS_BEFORE_DEBOUNCE: u64 = 8;
+                const DEBOUNCE_DELAY: time::Duration = time::Duration::from_millis(16);
+
+                if let Some(last_reorder_time) = self.last_reorder_time
+                    && let time_since_reorder = last_reorder_time.elapsed()
+                    && time_since_reorder < DEBOUNCE_DELAY
+                {
+                    self.consecutive_reorders += 1;
+                    if self.consecutive_reorders >= NUM_REORDERS_BEFORE_DEBOUNCE {
+                        if !self.is_debouncing_reorder {
+                            // Set a timer which fires a WM_TIMER message when it expires
+                            unsafe {
+                                SetTimer(
+                                    Some(self.border_window.0),
+                                    REORDER_TIMER_ID,
+                                    (DEBOUNCE_DELAY - time_since_reorder).as_millis() as u32,
+                                    None,
+                                )
+                            };
+                            self.is_debouncing_reorder = true;
                         }
+
+                        return LRESULT(0);
                     }
-                    ZOrderMode::BelowWindow => {
-                        // Check if the border is still directly below the tracking window
-                        // GW_HWNDNEXT returns the window below the specified window in z-order
-                        if unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
-                            != Ok(self.border_window.0)
-                        {
-                            self.update_position(None).log_if_err();
-                        }
-                    }
+                } else {
+                    self.consecutive_reorders = 0;
+                }
+
+                self.handle_reorder();
+            }
+            WM_TIMER => {
+                // WPARAM contains the nIDEvent used in SetTimer
+                if wparam.0 == REORDER_TIMER_ID {
+                    unsafe { KillTimer(Some(window), REORDER_TIMER_ID) }.log_if_err();
+                    self.is_debouncing_reorder = false;
+                    self.consecutive_reorders = 0;
+
+                    self.handle_reorder();
                 }
             }
             // EVENT_SYSTEM_FOREGROUND
@@ -1205,5 +1249,29 @@ impl WindowBorder {
             }
         }
         LRESULT(0)
+    }
+
+    fn handle_reorder(&mut self) {
+        match self.border_z_order {
+            ZOrderMode::AboveWindow => {
+                // When the tracking window reorders its contents, it may change the z-order. So,
+                // we first check whether the border is still above the tracking window, and if
+                // not, we must update its position and place it back on top
+                if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
+                    != Ok(self.border_window.0)
+                {
+                    self.update_position(None).log_if_err();
+                }
+            }
+            ZOrderMode::BelowWindow => {
+                if unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
+                    != Ok(self.border_window.0)
+                {
+                    self.update_position(None).log_if_err();
+                }
+            }
+        }
+
+        self.last_reorder_time = Some(time::Instant::now());
     }
 }
