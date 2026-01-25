@@ -43,8 +43,8 @@ use crate::utils::{
     WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
     WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
     get_dpi_for_monitor, get_monitor_info, get_window_rule, get_window_title, has_native_border,
-    is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible, loword,
-    monitor_from_window, post_message_w,
+    is_window, is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible,
+    loword, monitor_from_window, post_message_w,
 };
 
 const REORDER_TIMER_ID: usize = 0;
@@ -311,20 +311,23 @@ impl WindowBorder {
                     .max_by_key(|params| {
                         // Try to find the effect params with the largest required padding
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
                         // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil())
+                            as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
                         // 3 standard deviations gets us 99.7% coverage, which should be good enough
-                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                        (max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()
                     })
                     .unwrap_or(0.0);
                 let max_inactive_padding = self
@@ -335,18 +338,21 @@ impl WindowBorder {
                     .max_by_key(|params| {
                         // Try to find the effect params with the largest required padding
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        ((max_std_dev * 3.0).ceil() + max_translation.ceil()) as i32
+                        ((max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil())
+                            as i32
                     })
                     .map(|params| {
                         // Now that we found it, go ahead and calculate it as an f32
                         let max_std_dev = params.std_dev;
+                        let max_spread = params.spread;
                         let max_translation =
                             f32::max(params.translation.x.abs(), params.translation.y.abs());
 
-                        (max_std_dev * 3.0).ceil() + max_translation.ceil()
+                        (max_std_dev * 3.0).ceil() + max_spread.ceil() + max_translation.ceil()
                     })
                     .unwrap_or(0.0);
 
@@ -848,6 +854,12 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
+                // Check if tracking window still exists to avoid ghost borders
+                if !is_window(Some(self.tracking_window)) {
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+
                 // This is mainly here to handle cases where a window is made borderless fullscreen
                 // (if 'follow_native_border' is set to true in the config), which doesn't have any
                 // dedicated events like MINIMIZEEND. Note that we don't set 'is_paused' to true as
@@ -894,6 +906,12 @@ impl WindowBorder {
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
+                // First check if the tracking window still exists to avoid ghost borders
+                if !is_window(Some(self.tracking_window)) {
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+
                 // Drain any pending WM_APP_REORDER messages from the queue
                 while unsafe {
                     PeekMessageW(
@@ -951,6 +969,12 @@ impl WindowBorder {
             }
             // EVENT_SYSTEM_FOREGROUND
             WM_APP_FOREGROUND => {
+                // Check if tracking window still exists to avoid ghost borders
+                if !is_window(Some(self.tracking_window)) {
+                    self.cleanup_and_queue_exit();
+                    return LRESULT(0);
+                }
+
                 self.update_color(None);
                 self.update_position(None).log_if_err();
                 self.render().log_if_err();

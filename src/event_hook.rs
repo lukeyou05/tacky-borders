@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::Context;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
@@ -31,27 +29,6 @@ pub extern "system" fn process_win_event(
     if _id_object == OBJID_CURSOR.0 {
         return;
     }
-
-    // let events: HashMap<u32, &str> = HashMap::from([
-    //     (EVENT_OBJECT_LOCATIONCHANGE, "EVENT_OBJECT_LOCATIONCHANGE"),
-    //     (EVENT_OBJECT_REORDER, "EVENT_OBJECT_REORDER"),
-    //     (EVENT_SYSTEM_FOREGROUND, "EVENT_SYSTEM_FOREGROUND"),
-    //     (EVENT_OBJECT_SHOW, "EVENT_OBJECT_SHOW"),
-    //     (EVENT_OBJECT_UNCLOAKED, "EVENT_OBJECT_UNCLOAKED"),
-    //     (EVENT_OBJECT_HIDE, "EVENT_OBJECT_HIDE"),
-    //     (EVENT_OBJECT_CLOAKED, "EVENT_OBJECT_CLOAKED"),
-    //     (EVENT_SYSTEM_MINIMIZESTART, "EVENT_SYSTEM_MINIMIZESTART"),
-    //     (EVENT_SYSTEM_MINIMIZEEND, "EVENT_SYSTEM_MINIMIZEEND"),
-    //     (EVENT_OBJECT_DESTROY, "EVENT_OBJECT_DESTROY"),
-    // ]);
-    // if let Some(event) = events.get(&_event) {
-    //     println!(
-    //         "event (known): {}; hwnd: {:?}; id_object: {}; id_child: {}",
-    //         event, _hwnd, _id_object, _id_child
-    //     );
-    // } else {
-    //     println!("event (unknown): {}", _event);
-    // }
 
     match _event {
         EVENT_OBJECT_LOCATIONCHANGE => {
