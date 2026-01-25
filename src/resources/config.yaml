@@ -1,5 +1,3 @@
-# TODO: Add the config fixes by landnthrn from #54
-
 # watch_config_changes: Automatically reload borders whenever the config file is modified.
 watch_config_changes: True
 
@@ -154,14 +152,16 @@ global:
   # Specify effect types and parameters as follows:
   #   active:
   #    - type: Shadow
-  #      radius: 2.0
+  #      blur: 2.0
+  #      spread: 0.0
   #      opacity: 1.0
   #      translation:
   #        x: 0
   #        y: 20
   #
   #    - type: Glow
-  #      radius: 8.0
+  #      blur: 8.0
+  #      spread: 0.0
   #      opacity: 1.0
   #
   # NOTE: These effects can significantly increase CPU and GPU usage.
@@ -169,26 +169,30 @@ global:
   effects:
     active:
       - type: Shadow
-        radius: 2.0
+        blur: 2.0
+        spread: 0.0
         opacity: 1.0
         translation:
           x: 0
           y: 0
 
       - type: Glow
-        radius: 8.0
+        blur: 8.0
+        spread: 0.0
         opacity: 1.0
 
     inactive:
       - type: Shadow
-        radius: 2.0
+        blur: 2.0
+        spread: 0.0
         opacity: 1.0
         translation:
           x: 0
           y: 0
 
       - type: Glow
-        radius: 8.0
+        blur: 8.0
+        spread: 0.0
         opacity: 1.0
 
     enabled: False
@@ -221,6 +225,10 @@ window_rules:
 
   - match: Title
     name: "Picture-in-Picture"
+    enabled: False
+
+  - match: Process
+    name: "seelen-ui"
     enabled: False
 
   # Example rule:
