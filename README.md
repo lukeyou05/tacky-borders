@@ -47,7 +47,7 @@ Alternatively, if you wish to build it yourself, you can follow these steps:
 To uninstall, it's as easy as deleting `tacky-borders.exe`.
 
 > [!NOTE]
-> If you wish to remove all traces of _tacky-borders_ from your system, you can also delete the config folder located at ```%userprofile%/.config/tacky-borders/```
+> If you wish to remove all traces of _tacky-borders_ from your system, you should also ensure auto-start is disabled via the tray menu and delete the config folder located at ```%userprofile%/.config/tacky-borders/```
 
 ## Configuration Options
 
@@ -210,14 +210,16 @@ global:
   # Specify effect types and parameters as follows:
   #   active:
   #    - type: Shadow
-  #      radius: 2.0
+  #      blur: 2.0
+  #      spread: 0.0
   #      opacity: 1.0
   #      translation:
   #        x: 0
   #        y: 20
   #
   #    - type: Glow
-  #      radius: 8.0
+  #      blur: 8.0
+  #      spread: 0.0
   #      opacity: 1.0
   #
   # NOTE: These effects can significantly increase CPU and GPU usage.
@@ -225,26 +227,30 @@ global:
   effects:
     active:
       - type: Shadow
-        radius: 2.0
+        blur: 2.0
+        spread: 0.0
         opacity: 1.0
         translation:
           x: 0
           y: 0
 
       - type: Glow
-        radius: 8.0
+        blur: 8.0
+        spread: 0.0
         opacity: 1.0
 
     inactive:
       - type: Shadow
-        radius: 2.0
+        blur: 2.0
+        spread: 0.0
         opacity: 1.0
         translation:
           x: 0
           y: 0
 
       - type: Glow
-        radius: 8.0
+        blur: 8.0
+        spread: 0.0
         opacity: 1.0
 
     enabled: False
@@ -279,6 +285,10 @@ window_rules:
     name: "Picture-in-Picture"
     enabled: False
 
+  - match: Process
+    name: "seelen-ui"
+    enabled: False
+
   # Example rule:
   # - match: Class                   # Match based on Class, Title, or Process
   #   name: "MozillaWindowClass"     # Class/title/process name to match
@@ -293,6 +303,7 @@ window_rules:
 ```
 
 ## Community Projects
+
 - [Color-Presets-for-Tacky-Borders](https://github.com/landnthrn/Color-Presets-for-Tacky-Borders) - Additional color presets including color animations, gradients, one side color fades, and static colors.
 
 ## Comparison to cute-borders
