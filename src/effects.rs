@@ -127,7 +127,7 @@ impl Effects {
                                 let blur_effect = d2d_context
                                     .CreateEffect(&CLSID_D2D1GaussianBlur)
                                     .windows_context("glow_blur_effect")?;
-                                
+
                                 // If spread > 0, apply morphology dilation before blur
                                 // This preserves corner shapes while expanding the glow
                                 if effect_params.spread > 0.0 {
@@ -135,7 +135,7 @@ impl Effects {
                                         .CreateEffect(&CLSID_D2D1Morphology)
                                         .windows_context("glow_morphology_effect")?;
                                     morphology_effect.SetInput(0, border_bitmap, false);
-                                    
+
                                     // Set morphology mode to dilate (expand)
                                     morphology_effect
                                         .SetValue(
@@ -143,38 +143,45 @@ impl Effects {
                                             D2D1_PROPERTY_TYPE_ENUM,
                                             &D2D1_MORPHOLOGY_MODE_DILATE.0.to_le_bytes(),
                                         )
-                                        .windows_context("glow_morphology_effect.SetValue() mode")?;
-                                    
+                                        .windows_context(
+                                            "glow_morphology_effect.SetValue() mode",
+                                        )?;
+
                                     // Set dilation size based on spread
-                                    let dilation_size = (effect_params.spread.round() as u32).max(1);
+                                    let dilation_size =
+                                        (effect_params.spread.round() as u32).max(1);
                                     morphology_effect
                                         .SetValue(
                                             D2D1_MORPHOLOGY_PROP_WIDTH.0 as u32,
                                             D2D1_PROPERTY_TYPE_UINT32,
                                             &dilation_size.to_le_bytes(),
                                         )
-                                        .windows_context("glow_morphology_effect.SetValue() width")?;
+                                        .windows_context(
+                                            "glow_morphology_effect.SetValue() width",
+                                        )?;
                                     morphology_effect
                                         .SetValue(
                                             D2D1_MORPHOLOGY_PROP_HEIGHT.0 as u32,
                                             D2D1_PROPERTY_TYPE_UINT32,
                                             &dilation_size.to_le_bytes(),
                                         )
-                                        .windows_context("glow_morphology_effect.SetValue() height")?;
-                                    
+                                        .windows_context(
+                                            "glow_morphology_effect.SetValue() height",
+                                        )?;
+
                                     // Chain blur to morphology output
                                     blur_effect.SetInput(
                                         0,
-                                        &morphology_effect
-                                            .GetOutput()
-                                            .windows_context("could not get glow morphology output")?,
+                                        &morphology_effect.GetOutput().windows_context(
+                                            "could not get glow morphology output",
+                                        )?,
                                         false,
                                     );
                                 } else {
                                     // No spread - just blur the border directly
                                     blur_effect.SetInput(0, border_bitmap, false);
                                 }
-                                
+
                                 // Apply blur using config's std_dev as-is
                                 blur_effect
                                     .SetValue(
@@ -198,7 +205,7 @@ impl Effects {
                                 let color_matrix_effect = d2d_context
                                     .CreateEffect(&CLSID_D2D1ColorMatrix)
                                     .windows_context("color_matrix_effect")?;
-                                
+
                                 // 5x4 matrix in row-major order: sets RGB to 0, keeps A
                                 #[rustfmt::skip]
                                 let black_matrix: [f32; 20] = [
@@ -219,7 +226,7 @@ impl Effects {
                                         matrix_bytes,
                                     )
                                     .windows_context("color_matrix_effect.SetValue()")?;
-                                
+
                                 // If spread > 0, apply morphology dilation
                                 // This preserves corner shapes while expanding the shadow
                                 if effect_params.spread > 0.0 {
@@ -227,7 +234,7 @@ impl Effects {
                                         .CreateEffect(&CLSID_D2D1Morphology)
                                         .windows_context("shadow_morphology_effect")?;
                                     morphology_effect.SetInput(0, border_bitmap, false);
-                                    
+
                                     // Set morphology mode to dilate (expand)
                                     morphology_effect
                                         .SetValue(
@@ -235,38 +242,45 @@ impl Effects {
                                             D2D1_PROPERTY_TYPE_ENUM,
                                             &D2D1_MORPHOLOGY_MODE_DILATE.0.to_le_bytes(),
                                         )
-                                        .windows_context("shadow_morphology_effect.SetValue() mode")?;
-                                    
+                                        .windows_context(
+                                            "shadow_morphology_effect.SetValue() mode",
+                                        )?;
+
                                     // Set dilation size based on spread
-                                    let dilation_size = (effect_params.spread.round() as u32).max(1);
+                                    let dilation_size =
+                                        (effect_params.spread.round() as u32).max(1);
                                     morphology_effect
                                         .SetValue(
                                             D2D1_MORPHOLOGY_PROP_WIDTH.0 as u32,
                                             D2D1_PROPERTY_TYPE_UINT32,
                                             &dilation_size.to_le_bytes(),
                                         )
-                                        .windows_context("shadow_morphology_effect.SetValue() width")?;
+                                        .windows_context(
+                                            "shadow_morphology_effect.SetValue() width",
+                                        )?;
                                     morphology_effect
                                         .SetValue(
                                             D2D1_MORPHOLOGY_PROP_HEIGHT.0 as u32,
                                             D2D1_PROPERTY_TYPE_UINT32,
                                             &dilation_size.to_le_bytes(),
                                         )
-                                        .windows_context("shadow_morphology_effect.SetValue() height")?;
-                                    
+                                        .windows_context(
+                                            "shadow_morphology_effect.SetValue() height",
+                                        )?;
+
                                     // Chain color matrix to morphology output
                                     color_matrix_effect.SetInput(
                                         0,
-                                        &morphology_effect
-                                            .GetOutput()
-                                            .windows_context("could not get shadow morphology output")?,
+                                        &morphology_effect.GetOutput().windows_context(
+                                            "could not get shadow morphology output",
+                                        )?,
                                         false,
                                     );
                                 } else {
                                     // No spread - just apply color matrix to border directly
                                     color_matrix_effect.SetInput(0, border_bitmap, false);
                                 }
-                                
+
                                 // Create blur effect
                                 let blur_effect = d2d_context
                                     .CreateEffect(&CLSID_D2D1GaussianBlur)
@@ -278,7 +292,7 @@ impl Effects {
                                         .windows_context("could not get color_matrix output")?,
                                     false,
                                 );
-                                
+
                                 // Apply blur using config's std_dev as-is
                                 blur_effect
                                     .SetValue(
@@ -286,14 +300,18 @@ impl Effects {
                                         D2D1_PROPERTY_TYPE_FLOAT,
                                         &effect_params.std_dev.to_le_bytes(),
                                     )
-                                    .windows_context("shadow_blur_effect.SetValue() std deviation")?;
+                                    .windows_context(
+                                        "shadow_blur_effect.SetValue() std deviation",
+                                    )?;
                                 blur_effect
                                     .SetValue(
                                         D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION.0 as u32,
                                         D2D1_PROPERTY_TYPE_ENUM,
                                         &D2D1_DIRECTIONALBLUR_OPTIMIZATION_SPEED.0.to_le_bytes(),
                                     )
-                                    .windows_context("shadow_blur_effect.SetValue() optimization")?;
+                                    .windows_context(
+                                        "shadow_blur_effect.SetValue() optimization",
+                                    )?;
 
                                 blur_effect
                             }
@@ -441,7 +459,7 @@ pub struct EffectParamsConfig {
     #[serde(alias = "type")]
     effect_type: EffectType,
     #[serde(alias = "blur")]
-    #[serde(alias = "radius")]  // Backwards compatibility
+    #[serde(alias = "radius")] // Backwards compatibility
     #[serde(default = "serde_default_f32::<8>")]
     std_dev: f32,
     #[serde(default)]
@@ -474,6 +492,18 @@ pub struct EffectParams {
     pub spread: f32,
     pub opacity: f32,
     pub translation: Translation,
+}
+
+impl EffectParams {
+    /// Padding needed on each side of a window so as to not clip the effect
+    pub fn required_padding(&self) -> i32 {
+        let std_dev = self.std_dev;
+        let spread = self.spread;
+        let max_translation = f32::max(self.translation.x.abs(), self.translation.y.abs());
+
+        // 3 standard deviations gets us 99.7% coverage, which should be good enough
+        ((std_dev * 3.0) + spread + max_translation).ceil() as i32
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
