@@ -22,7 +22,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -40,7 +40,7 @@ jobs:
         run: echo "COMMIT_SHA=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload a Build Artifact
-        uses: actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@v7
         with:
           name: tacky-borders-${{ env.COMMIT_SHA }}
           path: target/release/*.exe
@@ -49,7 +49,7 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run tests
         run: cargo test --verbose
@@ -62,7 +62,7 @@ jobs:
       contents: write
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts/
 
