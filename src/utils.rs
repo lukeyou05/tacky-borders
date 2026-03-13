@@ -170,7 +170,7 @@ impl std::error::Error for WindowsCompatibleError {
             WindowsCompatibleError::Standalone(err) => err
                 .source
                 .as_deref()
-                .map(|err| err as &(dyn std::error::Error)),
+                .map(|err| err as &dyn std::error::Error ),
         }
     }
 }
