@@ -170,7 +170,7 @@ impl std::error::Error for WindowsCompatibleError {
             WindowsCompatibleError::Standalone(err) => err
                 .source
                 .as_deref()
-                .map(|err| err as &dyn std::error::Error ),
+                .map(|err| err as &dyn std::error::Error),
         }
     }
 }
@@ -517,19 +517,19 @@ pub fn get_window_rule(hwnd: HWND) -> WindowRule {
 
     let title = || -> String {
         get_window_title(hwnd).unwrap_or_else(|err| {
-            error!("could not retrieve window title for {hwnd:?}: {err}");
+            error!("could not retrieve window title for {hwnd:?}: {err:#}");
             "".to_string()
         })
     };
     let class = || -> String {
         get_window_class(hwnd).unwrap_or_else(|err| {
-            error!("could not retrieve window class for {hwnd:?}: {err}");
+            error!("could not retrieve window class for {hwnd:?}: {err:#}");
             "".to_string()
         })
     };
     let process = || -> String {
         get_window_process_name(hwnd).unwrap_or_else(|err| {
-            error!("could not retrieve window process name for {hwnd:?}: {err}");
+            error!("could not retrieve window process name for {hwnd:?}: {err:#}");
             "".to_string()
         })
     };
@@ -600,7 +600,7 @@ pub fn is_window_cloaked(hwnd: HWND) -> bool {
     } {
         // I've never seen this fail, so I think returning a default value is better than a Result
         // type which would sacrifice ergonomics elsewhere in the code
-        error!("could not check if window is cloaked: {err}");
+        error!("could not check if window is cloaked: {err:#}");
         return false;
     }
 
@@ -683,7 +683,7 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
         let mut border = match WindowBorder::new(tracking_window) {
             Ok(border) => border,
             Err(err) => {
-                error!("could not create window border for {tracking_window:?}: {err}");
+                error!("could not create window border for {tracking_window:?}: {err:#}");
                 return;
             }
         };
@@ -696,7 +696,7 @@ pub fn create_border_for_window(tracking_window: HWND, window_rule: WindowRule) 
         let _ = tracking_window_isize;
 
         if let Err(err) = border.init(window_rule) {
-            error!("could not initialize border: {err}");
+            error!("could not initialize border: {err:#}");
         } else {
             // Window message loop
             unsafe {

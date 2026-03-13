@@ -853,7 +853,7 @@ impl Drop for UnixStreamSink {
                 None => error!("could not take unix stream sink thread handle"),
             },
             Err(err) => error!(
-                "could not post stop packet to iocp {:?} for unix stream sink: {err}",
+                "could not post stop packet to iocp {:?} for unix stream sink: {err:#}",
                 self.iocp_handle
             ),
         }

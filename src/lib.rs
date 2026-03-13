@@ -111,18 +111,18 @@ impl AppState {
                 if config.enable_logging
                     && let Err(err) = create_logger()
                 {
-                    eprintln!("[ERROR] could not create logger: {err}");
+                    eprintln!("[ERROR] could not create logger: {err:#}");
                 };
 
                 if config.is_config_watcher_enabled() {
                     *config_watcher.lock().unwrap() = create_config_watcher()
-                        .inspect_err(|err| error!("could not start config watcher: {err}"))
+                        .inspect_err(|err| error!("could not start config watcher: {err:#}"))
                         .ok()
                 }
 
                 if config.is_komorebi_integration_enabled() {
                     *komorebi_integration.lock().unwrap() = KomorebiIntegration::new()
-                        .inspect_err(|err| error!("could not start komorebi integration: {err}"))
+                        .inspect_err(|err| error!("could not start komorebi integration: {err:#}"))
                         .ok();
                 }
 
@@ -140,13 +140,13 @@ impl AppState {
 
         let display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>> = Mutex::new(
             DisplayAdaptersWatcher::new()
-                .inspect_err(|err| error!("could not start display adapters watcher: {err}"))
+                .inspect_err(|err| error!("could not start display adapters watcher: {err:#}"))
                 .ok(),
         );
 
         let render_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
-                error!("could not create ID2D1Factory: {err}");
+                error!("could not create ID2D1Factory: {err:#}");
                 panic!()
             })
         };
@@ -155,8 +155,8 @@ impl AppState {
             RenderBackendConfig::V2 => {
                 // I think I have to just panic if .unwrap() fails tbh; don't know what else I could do.
                 let directx_devices = DirectXDevices::new(&render_factory).unwrap_or_else(|err| {
-                    error!("could not create directx devices: {err}");
-                    panic!("could not create directx devices: {err}");
+                    error!("could not create directx devices: {err:#}");
+                    panic!("could not create directx devices: {err:#}");
                 });
 
                 Some(directx_devices)
@@ -255,7 +255,7 @@ impl DisplayAdaptersWatcher {
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
                     && let Err(err) = directx_devices.recreate_if_needed()
                 {
-                    error!("could not recreate directx devices if needed: {err}");
+                    error!("could not recreate directx devices if needed: {err:#}");
                     break;
                 }
 
@@ -306,7 +306,7 @@ impl Drop for DisplayAdaptersWatcher {
                 None => error!("could not take display adapters watcher thread handle"),
             },
             Err(err) => error!(
-                "could not signal stop event on {:?} for display adapters watcher: {err}",
+                "could not signal stop event on {:?} for display adapters watcher: {err:#}",
                 self.stop_event
             ),
         }
@@ -527,7 +527,7 @@ pub fn destroy_borders() {
             |thread_id| match unsafe { OpenThread(THREAD_SYNCHRONIZE, false, thread_id) } {
                 Ok(handle) => Some(handle),
                 Err(err) => {
-                    error!("could not get thread handle from thread id {thread_id}: {err}");
+                    error!("could not get thread handle from thread id {thread_id}: {err:#}");
                     None
                 }
             },

@@ -117,7 +117,7 @@ impl KomorebiIntegration {
             while let Err(err) = write_to_unix_socket(&komorebi_socket_path, subscribe_bytes) {
                 // The write fails when komorebi isn't running which isn't a real issue, so we'll
                 // use debug instead of logging it as a full error
-                debug!("could not send subscribe-socket message to komorebi: {err}");
+                debug!("could not send subscribe-socket message to komorebi: {err:#}");
                 thread::sleep(Self::SUBSCRIBE_RETRY_INTERVAL);
             }
         });
@@ -141,7 +141,7 @@ impl KomorebiIntegration {
             match serde_json::from_slice(&buffer[..bytes_received as usize]) {
                 Ok(event) => event,
                 Err(err) => {
-                    error!("could not parse unix domain socket buffer: {err}");
+                    error!("could not parse unix domain socket buffer: {err:#}");
                     return;
                 }
             };

@@ -605,12 +605,12 @@ impl WindowBorder {
             // Functions like render() may be called via callback functions before init()
             // completes, leading to errors due to uninitialized objects. This is likely only
             // temporary, so I'll just use debug! instead of logging it as a full error.
-            debug!("an object is currently unitialized: {err}");
+            debug!("an object is currently unitialized: {err:#}");
         } else {
             return Err(WindowsCompatibleError::Standalone(
                 StandaloneWindowsError::new(
                     T_E_ERROR,
-                    format!("self.render() failed; exiting thread: {err}"),
+                    format!("self.render() failed; exiting thread: {err:#}"),
                 ),
             ));
         }
@@ -665,7 +665,7 @@ impl WindowBorder {
         self.border_drawer
             .border_radius
             .set(new_radius)
-            .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
+            .unwrap_or_else(|err| debug!("border_radius: {err:#}")); // non-critical, so debug
     }
 
     fn needs_renderer_resize(&self) -> anyhow::Result<bool> {
@@ -746,7 +746,7 @@ impl WindowBorder {
             self.border_drawer
                 .border_radius
                 .set(0.0)
-                .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
+                .unwrap_or_else(|err| debug!("border_radius: {err:#}")); // non-critical, so debug
             self.border_drawer.border_radius.lock_writes();
 
             is_updated = true;
@@ -760,7 +760,7 @@ impl WindowBorder {
             self.border_drawer
                 .border_radius
                 .set(radius)
-                .unwrap_or_else(|err| debug!("border_radius: {err}")); // non-critical, so debug
+                .unwrap_or_else(|err| debug!("border_radius: {err:#}")); // non-critical, so debug
 
             is_updated = true;
         }
@@ -853,7 +853,7 @@ impl WindowBorder {
                         match self.rescale_border_and_resize_renderer_if_needed(new_monitor) {
                             Ok(is_updated) => is_updated,
                             Err(err) => {
-                                error!("could not update appearance and renderer: {err}");
+                                error!("could not update appearance and renderer: {err:#}");
                                 return LRESULT(0);
                             }
                         };
@@ -1136,7 +1136,7 @@ impl WindowBorder {
                     match self.rescale_border_and_resize_renderer_if_needed(self.current_monitor) {
                         Ok(is_updated) => is_updated,
                         Err(err) => {
-                            error!("could not update appearance and renderer: {err}");
+                            error!("could not update appearance and renderer: {err:#}");
                             return LRESULT(0);
                         }
                     };
@@ -1169,12 +1169,12 @@ impl WindowBorder {
                 if let Some(directx_devices) = APP_STATE.directx_devices.write().unwrap().as_mut()
                     && let Err(err) = directx_devices.recreate_if_needed()
                 {
-                    error!("could not recreate directx devices if needed: {err}");
+                    error!("could not recreate directx devices if needed: {err:#}");
                     self.cleanup_and_queue_exit();
                     return LRESULT(0);
                 }
                 if let Err(err) = self.recreate_drawer_if_needed() {
-                    error!("could not recreate border drawer if needed: {err}");
+                    error!("could not recreate border drawer if needed: {err:#}");
                     self.cleanup_and_queue_exit();
                     return LRESULT(0);
                 }
@@ -1182,7 +1182,7 @@ impl WindowBorder {
             // This message is sent by the DisplayAdaptersWatcher
             WM_APP_RECREATE_DRAWER => {
                 if let Err(err) = self.recreate_drawer_if_needed() {
-                    error!("could not recreate border drawer if needed: {err}");
+                    error!("could not recreate border drawer if needed: {err:#}");
                     self.cleanup_and_queue_exit();
                 }
             }
@@ -1198,7 +1198,7 @@ impl WindowBorder {
                 {
                     debug!("system is resuming; reinitializing border drawer");
                     if let Err(err) = self.init_drawer() {
-                        error!("could not initialize border drawer in WM_POWERBROADCAST: {err}");
+                        error!("could not initialize border drawer in WM_POWERBROADCAST: {err:#}");
                         self.cleanup_and_queue_exit();
                         return LRESULT(0);
                     };

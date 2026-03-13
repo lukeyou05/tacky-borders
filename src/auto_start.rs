@@ -43,9 +43,10 @@ fn set_autostart(enable: bool) -> Result<()> {
             .context("failed to set the autostart registry key")?;
     } else {
         if let Err(e) = run_key.delete_value(APP_NAME)
-            && e.kind() != std::io::ErrorKind::NotFound {
-                return Err(anyhow!("failed to delete the autostart registry key"));
-            }
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(anyhow!("failed to delete the autostart registry key"));
+        }
     }
 
     Ok(())

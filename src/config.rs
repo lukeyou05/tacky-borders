@@ -266,7 +266,7 @@ impl Config {
 
                     if config.is_config_watcher_enabled() && config_watcher_opt.is_none() {
                         *config_watcher_opt = create_config_watcher()
-                            .inspect_err(|err| error!("could not start config watcher: {err}"))
+                            .inspect_err(|err| error!("could not start config watcher: {err:#}"))
                             .ok();
                     } else if !config.is_config_watcher_enabled() && config_watcher_opt.is_some() {
                         *config_watcher_opt = None;
@@ -282,7 +282,7 @@ impl Config {
                     {
                         *komorebi_integration_opt = KomorebiIntegration::new()
                             .inspect_err(|err| {
-                                error!("could not start komorebi integration: {err}")
+                                error!("could not start komorebi integration: {err:#}")
                             })
                             .ok();
                     } else if !config.is_komorebi_integration_enabled()
@@ -300,8 +300,8 @@ impl Config {
                     {
                         let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
                             .unwrap_or_else(|err| {
-                                error!("could not create directx devices: {err}");
-                                panic!("could not create directx devices: {err}");
+                                error!("could not create directx devices: {err:#}");
+                                panic!("could not create directx devices: {err:#}");
                             });
 
                         *directx_devices_opt = Some(direct_x_devices);
@@ -479,7 +479,7 @@ impl Drop for ConfigWatcher {
                 None => error!("could not take config watcher thread handle"),
             },
             Err(err) => error!(
-                "could not cancel i/o operations on {:?} for config watcher: {err}",
+                "could not cancel i/o operations on {:?} for config watcher: {err:#}",
                 self.dir_handle.0
             ),
         }

@@ -47,7 +47,7 @@ fn main() {
     // This owns the tray icon window, so it must be kept in scope
     let tray_icon_res = create_tray_icon(hwineventhook);
     if let Err(err) = tray_icon_res {
-        error!("could not create tray icon: {err}");
+        error!("could not create tray icon: {err:#}");
     }
 
     register_border_window_class().log_if_err();

@@ -4,8 +4,8 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
-use crate::config::Config;
 use crate::auto_start::{is_autostart_enabled, toggle_autostart};
+use crate::config::Config;
 use crate::utils::LogIfErr;
 use crate::{APP_STATE, destroy_borders, reload_borders};
 
@@ -13,7 +13,7 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
     let icon = match Icon::from_resource(1, Some((64, 64))) {
         Ok(icon) => icon,
         Err(err) => {
-            error!("could not retrieve icon from tacky-borders.exe for tray menu: {err}");
+            error!("could not retrieve icon from tacky-borders.exe for tray menu: {err:#}");
 
             // If we could not retrieve an icon from the exe, then try to create an empty icon. If
             // even that fails, then we'll just return an Error.
@@ -50,12 +50,12 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
             Ok(dir) => {
                 open::that(dir).log_if_err();
             }
-            Err(err) => error!("{err}"),
+            Err(err) => error!("{err:#}"),
         },
         // Auto Start
         "1" => {
             if let Err(err) = toggle_autostart() {
-                error!("{err}")
+                error!("{err:#}")
             }
         }
         // Reload

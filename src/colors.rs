@@ -425,7 +425,7 @@ fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
 fn get_color_from_hex(hex: &str) -> D2D1_COLOR_F {
     let s = hex.strip_prefix("#").unwrap_or_default();
     parse_hex(s).unwrap_or_else(|err| {
-        error!("could not parse hex: {err}");
+        error!("could not parse hex: {err:#}");
         D2D1_COLOR_F::default()
     })
 }
