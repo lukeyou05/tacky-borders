@@ -440,9 +440,7 @@ impl WindowBorder {
                 backend.render_target.BeginDraw();
                 Ok(backend.render_target.EndDraw(None, None).is_err())
             },
-            RenderBackend::None => Err(WindowsCompatibleError::Standalone(
-                StandaloneWindowsError::new(T_E_UNINIT, "render_backend is None"),
-            )),
+            RenderBackend::None => Ok(true),
         }
     }
 
