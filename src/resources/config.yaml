@@ -79,6 +79,13 @@ global:
   #             start: [0.0, 1.0]
   #             end: [1.0, 0.0]
   #       NOTE: [0.0, 0.0] = top-left, [1.0, 1.0] = bottom-right
+  #   - Theme-aware: Define separate colors for dark/light Windows system themes
+  #       Example:
+  #         active_color:
+  #           dark: "#ffffff"
+  #           light: "#000000"
+  #       Each value (dark/light) can be a hex code, "accent", or a gradient.
+  #       Borders automatically update when the system theme changes.
   active_color:
     colors: ["#6274e7", "#8752a3"]
     direction: 45deg

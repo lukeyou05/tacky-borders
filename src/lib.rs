@@ -14,6 +14,7 @@ pub mod iocp;
 pub mod komorebi;
 pub mod render_backend;
 pub mod sys_tray_icon;
+pub mod theme;
 pub mod utils;
 pub mod window_border;
 
@@ -21,6 +22,7 @@ use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
+use theme::ThemeWatcher;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex, OnceLock, RwLock, RwLockWriteGuard};
@@ -93,6 +95,7 @@ pub struct AppState {
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<Option<KomorebiIntegration>>,
+    pub theme_watcher: Mutex<Option<ThemeWatcher>>,
     display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
 }
 
@@ -105,6 +108,7 @@ impl AppState {
 
         let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
         let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
+        let theme_watcher: Mutex<Option<ThemeWatcher>> = Mutex::new(None);
 
         let config = match Config::create() {
             Ok(config) => {
@@ -123,6 +127,12 @@ impl AppState {
                 if config.is_komorebi_integration_enabled() {
                     *komorebi_integration.lock().unwrap() = KomorebiIntegration::new()
                         .inspect_err(|err| error!("could not start komorebi integration: {err:#}"))
+                        .ok();
+                }
+
+                if config.is_theme_aware_enabled() {
+                    *theme_watcher.lock().unwrap() = ThemeWatcher::new()
+                        .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
                         .ok();
                 }
 
@@ -173,6 +183,7 @@ impl AppState {
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
             komorebi_integration,
+            theme_watcher,
             display_adapters_watcher,
         }
     }
