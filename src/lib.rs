@@ -95,7 +95,7 @@ pub struct AppState {
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
     komorebi_integration: Mutex<Option<KomorebiIntegration>>,
-    pub theme_watcher: Mutex<Option<ThemeWatcher>>,
+    theme_watcher: Mutex<Option<ThemeWatcher>>,
     display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
 }
 

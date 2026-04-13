@@ -7,7 +7,7 @@ use windows::Win32::Foundation::{
     HANDLE, WAIT_ABANDONED_0, WAIT_EVENT, WAIT_FAILED, WAIT_OBJECT_0,
 };
 use windows::Win32::System::Registry::{
-    HKEY, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RegCloseKey, RegNotifyChangeKeyValue,
+    HKEY, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RegNotifyChangeKeyValue,
     RegOpenKeyExW,
 };
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE};
@@ -17,7 +17,7 @@ use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
 
 use crate::reload_borders;
-use crate::utils::{OwnedHANDLE, get_last_error};
+use crate::utils::{OwnedHANDLE, OwnedHKEY, get_last_error};
 
 const PERSONALIZE_SUBKEY: &str =
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -42,6 +42,7 @@ pub fn is_light_theme() -> bool {
 #[derive(Debug)]
 #[allow(unused)]
 pub struct ThemeWatcher {
+    reg_key: OwnedHKEY,
     changed_event: OwnedHANDLE,
     stop_event: OwnedHANDLE,
     thread_handle: Option<JoinHandle<()>>,
@@ -68,8 +69,10 @@ impl ThemeWatcher {
         .ok()
         .context("could not open Personalize registry key for theme watcher")?;
 
+        let reg_key = OwnedHKEY(hkey);
+
         // Convert the HKEY to isize so we can move it into the new thread
-        let reg_handle_isize = hkey.0 as isize;
+        let reg_handle_isize = reg_key.0.0 as isize;
 
         let changed_event = {
             let handle = unsafe { CreateEventW(None, false, false, None)? };
@@ -152,13 +155,11 @@ impl ThemeWatcher {
                 }
             }
 
-            // Close the registry key handle since we own it
-            let _ = unsafe { RegCloseKey(reg_hkey) };
-
             debug!("exiting theme watcher thread");
         });
 
         Ok(Self {
+            reg_key,
             changed_event,
             stop_event,
             thread_handle: Some(thread_handle),
