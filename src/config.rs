@@ -298,13 +298,9 @@ impl Config {
 
                     if config.is_theme_aware_enabled() && theme_watcher_opt.is_none() {
                         *theme_watcher_opt = ThemeWatcher::new()
-                            .inspect_err(|err| {
-                                error!("could not start theme watcher: {err:#}")
-                            })
+                            .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
                             .ok();
-                    } else if !config.is_theme_aware_enabled()
-                        && theme_watcher_opt.is_some()
-                    {
+                    } else if !config.is_theme_aware_enabled() && theme_watcher_opt.is_some() {
                         *theme_watcher_opt = None;
                     }
                 }

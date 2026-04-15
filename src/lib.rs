@@ -22,11 +22,11 @@ use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
-use theme::ThemeWatcher;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex, OnceLock, RwLock, RwLockWriteGuard};
 use std::thread::{self, JoinHandle};
+use theme::ThemeWatcher;
 use utils::{
     LogIfErr, OwnedHANDLE, T_E_UNINIT, ToWindowsResult, WM_APP_RECREATE_DRAWER,
     WindowsCompatibleResult, WindowsContext, create_border_for_window, get_foreground_window,

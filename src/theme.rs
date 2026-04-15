@@ -7,20 +7,18 @@ use windows::Win32::Foundation::{
     HANDLE, WAIT_ABANDONED_0, WAIT_EVENT, WAIT_FAILED, WAIT_OBJECT_0,
 };
 use windows::Win32::System::Registry::{
-    HKEY, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RegNotifyChangeKeyValue,
-    RegOpenKeyExW,
+    HKEY, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RegNotifyChangeKeyValue, RegOpenKeyExW,
 };
-use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE};
+use windows::Win32::System::Threading::{CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects};
 use windows::core::PCWSTR;
 
-use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
+use winreg::enums::HKEY_CURRENT_USER;
 
 use crate::reload_borders;
 use crate::utils::{OwnedHANDLE, OwnedHKEY, get_last_error};
 
-const PERSONALIZE_SUBKEY: &str =
-    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+const PERSONALIZE_SUBKEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize";
 const THEME_VALUE_NAME: &str = "SystemUsesLightTheme";
 
 /// Returns `true` if the Windows system theme is currently set to light mode.
@@ -85,8 +83,8 @@ impl ThemeWatcher {
         };
 
         // Convert HANDLEs to isize so we can move them into the new thread
-        let changed_handle_isize = changed_event.0 .0 as isize;
-        let stop_handle_isize = stop_event.0 .0 as isize;
+        let changed_handle_isize = changed_event.0.0 as isize;
+        let stop_handle_isize = stop_event.0.0 as isize;
 
         let thread_handle = thread::spawn(move || {
             debug!("entering theme watcher thread");
@@ -121,8 +119,7 @@ impl ThemeWatcher {
                 }
 
                 // Wait for either a registry change or a stop signal
-                let wait_result =
-                    unsafe { WaitForMultipleObjects(&events, false, INFINITE) };
+                let wait_result = unsafe { WaitForMultipleObjects(&events, false, INFINITE) };
 
                 // If the stop event is signaled, exit the loop
                 if wait_result == WAIT_OBJECT_1 {
