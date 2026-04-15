@@ -14,6 +14,7 @@ use windows::core::BOOL;
 use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::LogIfErr;
+use crate::theme::is_light_theme;
 use crate::utils::WindowsCompatibleResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -21,6 +22,14 @@ use crate::utils::WindowsCompatibleResult;
 pub enum ColorBrushConfig {
     Solid(String),
     Gradient(GradientBrushConfig),
+    ThemeAware(ThemeAwareColor),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeAwareColor {
+    pub dark: Box<ColorBrushConfig>,
+    pub light: Box<ColorBrushConfig>,
 }
 
 impl Default for ColorBrushConfig {
@@ -81,6 +90,14 @@ pub struct GradientBrush {
 impl ColorBrushConfig {
     pub fn to_color_brush(&self, is_active_color: bool) -> ColorBrush {
         match self {
+            ColorBrushConfig::ThemeAware(theme) => {
+                let resolved = if is_light_theme() {
+                    &theme.light
+                } else {
+                    &theme.dark
+                };
+                resolved.to_color_brush(is_active_color)
+            }
             ColorBrushConfig::Solid(solid_config) => {
                 if solid_config == "accent" {
                     ColorBrush::Solid(SolidBrush {

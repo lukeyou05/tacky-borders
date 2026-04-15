@@ -19,6 +19,7 @@ use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::System::Diagnostics::Debug::FACILITY_ITF;
+use windows::Win32::System::Registry::{HKEY, RegCloseKey};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
@@ -381,6 +382,18 @@ pub struct OwnedHANDLE(pub HANDLE);
 impl Drop for OwnedHANDLE {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) }
+            .with_context(|| format!("could not close {:?}", self.0))
+            .log_if_err();
+    }
+}
+
+#[derive(Debug)]
+pub struct OwnedHKEY(pub HKEY);
+
+impl Drop for OwnedHKEY {
+    fn drop(&mut self) {
+        unsafe { RegCloseKey(self.0) }
+            .ok()
             .with_context(|| format!("could not close {:?}", self.0))
             .log_if_err();
     }

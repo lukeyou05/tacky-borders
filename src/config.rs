@@ -3,6 +3,7 @@ use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
 use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
+use crate::theme::ThemeWatcher;
 use crate::utils::{OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
 use crate::{
     APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
@@ -293,6 +294,22 @@ impl Config {
                 }
 
                 {
+                    let mut theme_watcher_opt = APP_STATE.theme_watcher.lock().unwrap();
+
+                    if config.is_theme_aware_enabled() && theme_watcher_opt.is_none() {
+                        *theme_watcher_opt = ThemeWatcher::new()
+                            .inspect_err(|err| {
+                                error!("could not start theme watcher: {err:#}")
+                            })
+                            .ok();
+                    } else if !config.is_theme_aware_enabled()
+                        && theme_watcher_opt.is_some()
+                    {
+                        *theme_watcher_opt = None;
+                    }
+                }
+
+                {
                     let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
 
                     if config.render_backend == RenderBackendConfig::V2
@@ -338,6 +355,24 @@ impl Config {
                     .map(|komocolors| komocolors.enabled)
                     .unwrap_or(false)
             })
+    }
+
+    pub fn is_theme_aware_enabled(&self) -> bool {
+        Self::is_color_theme_aware(&self.global.active_color)
+            || Self::is_color_theme_aware(&self.global.inactive_color)
+            || self.window_rules.iter().any(|rule| {
+                rule.active_color
+                    .as_ref()
+                    .map_or(false, Self::is_color_theme_aware)
+                    || rule
+                        .inactive_color
+                        .as_ref()
+                        .map_or(false, Self::is_color_theme_aware)
+            })
+    }
+
+    fn is_color_theme_aware(config: &ColorBrushConfig) -> bool {
+        matches!(config, ColorBrushConfig::ThemeAware(_))
     }
 }
 
