@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow};
 use core::f32;
 use serde::{Deserialize, Serialize};
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use windows::Win32::Foundation::{FALSE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP};
 use windows::Win32::Graphics::Direct2D::{
@@ -131,9 +131,6 @@ impl ColorBrushConfig {
                     .collect();
 
                 let direction = match gradient_config.direction {
-                    // We'll convert an angle to coordinates by representing the angle as a linear
-                    // line, then checking for collisions within the unit square bounded by (0.0,
-                    // 0.0) and (1.0, 1.0)
                     GradientDirection::Angle(ref angle) => {
                         let Some(degree) = angle
                             .strip_suffix("deg")
@@ -143,68 +140,16 @@ impl ColorBrushConfig {
                             return ColorBrush::default();
                         };
 
-                        // Convert degrees to radians. We multiply `degree` by -1 because Direct2D
-                        // uses the top left for the origin instead of the bottom left
-                        let rad = -degree * PI / 180.0;
+                        // Calculate x and y distance from the center point [0.5, 0.5].
+                        // We multiply rad.sin() by -1 (flip the y-component) because Direct2D uses
+                        // the top-left as the origin, but most people expect bottom-left.
+                        let rad = degree as f64 * PI / 180.0;
+                        let (x_raw, y_raw) = (rad.cos(), -rad.sin());
+                        let scalar = (1.0 / f64::max(x_raw.abs(), y_raw.abs())) * 0.5;
+                        let (x_dist, y_dist) = (x_raw * scalar, y_raw * scalar);
 
-                        // Calculate the slope of the line. We also handle edge cases like 90
-                        // degrees or 270 degrees to avoid division by 0.
-                        let m = match degree.abs() % 360.0 {
-                            90.0 | 270.0 => degree.signum() * f32::MAX,
-                            _ => rad.sin() / rad.cos(),
-                        };
-
-                        // y - y_p = m(x - x_p);
-                        // y = m(x - x_p) + y_p;
-                        // y = (m * x) - (m * x_p) + y_p;
-                        // b = -(m * x_p) + y_p;
-                        //
-                        // Calculate the y-intercept of the line such that it goes through the
-                        // center point (0.5, 0.5)
-                        let b = -m * 0.5 + 0.5;
-
-                        // Create the line with the given slope and y-intercept
-                        let line = Line { m, b };
-
-                        // Determine initial x-value estimates for the start and end points
-                        let (x_s, x_e) = match degree.abs() % 360.0 {
-                            0.0..90.0 => (0.0, 1.0),
-                            90.0..270.0 => (1.0, 0.0),
-                            270.0..360.0 => (0.0, 1.0),
-                            _ => {
-                                debug!(
-                                    "reached a gradient angle that is not covered by the match statement in colors.rs"
-                                );
-                                (0.0, 1.0)
-                            }
-                        };
-
-                        // y = mx + b
-                        // 0 = mx + b
-                        // mx = -b
-                        // x = -b/m
-                        //
-                        // y = mx + b
-                        // 1 = mx + b
-                        // mx = 1 - b
-                        // x = (1 - b)/m
-                        //
-                        // Determine our coordinates by checking collisions with the unit square
-                        // using the above x_s and x_e, handling three separate cases:
-                        //  1. the y-coordinate at x_s/x_e is between 0 and 1
-                        //  2. the y-coordinate at x_s/x_e is greater than 1
-                        //  3. the y-coordinate at x_s/x_e is less than 0
-                        let start = match line.plug_in_x(x_s) {
-                            0.0..=1.0 => [x_s, line.plug_in_x(x_s)], // Case 1
-                            1.0.. => [(1.0 - line.b) / line.m, 1.0], // Case 2
-                            _ => [-line.b / line.m, 0.0],            // Case 3
-                        };
-
-                        let end = match line.plug_in_x(x_e) {
-                            0.0..=1.0 => [x_e, line.plug_in_x(x_e)], // Case 1
-                            1.0.. => [(1.0 - line.b) / line.m, 1.0], // Case 2
-                            _ => [-line.b / line.m, 0.0],            // Case 3
-                        };
+                        let start = [0.5 - x_dist as f32, 0.5 - y_dist as f32];
+                        let end = [0.5 + x_dist as f32, 0.5 + y_dist as f32];
 
                         GradientCoordinates { start, end }
                     }
@@ -218,18 +163,6 @@ impl ColorBrushConfig {
                 })
             }
         }
-    }
-}
-
-#[derive(Debug)]
-struct Line {
-    m: f32,
-    b: f32,
-}
-
-impl Line {
-    fn plug_in_x(&self, x: f32) -> f32 {
-        self.m * x + self.b
     }
 }
 
