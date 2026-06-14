@@ -44,10 +44,21 @@ pub struct Config {
     #[serde(default)]
     #[serde(alias = "rendering_backend")]
     pub render_backend: RenderBackendConfig,
-    #[serde(default)]
+    #[serde(default = "serde_default_global")]
     pub global: Global,
     #[serde(default)]
     pub window_rules: Vec<WindowRule>,
+}
+
+// Show borders even if the config.yaml is completely empty
+// NOTE: This is intentionally kept separate from the Default trait because I want the
+// width/offset zeroed out when config deserialization fails and falls back to Config::default()
+fn serde_default_global() -> Global {
+    Global {
+        border_width: WidthConfig::serde_default(),
+        border_offset: OffsetConfig::serde_default(),
+        ..Default::default()
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
@@ -146,8 +157,6 @@ impl WidthConfig {
         (self.0 as f32 * dpi / 96.0).round() as i32
     }
 
-    // Intentionally kept separate from the Default trait because I want width zeroed
-    // out when config deserialization fails (and we fall back to Config::default())
     fn serde_default() -> Self {
         Self(4.0)
     }
@@ -163,8 +172,6 @@ impl OffsetConfig {
         (self.0 as f32 * dpi / 96.0).round() as i32
     }
 
-    // Intentionally kept separate from the Default trait because I want offset zeroed
-    // out when config deserialization fails (and we fall back to Config::default())
     fn serde_default() -> Self {
         Self(-1)
     }
