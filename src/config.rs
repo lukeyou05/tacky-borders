@@ -1,6 +1,7 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
+use crate::ipc::{self, IpcServer};
 use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
 use crate::render_backend::RenderBackendConfig;
 use crate::theme::ThemeWatcher;
@@ -38,33 +39,24 @@ pub struct Config {
     pub watch_config_changes: bool,
     #[serde(default = "serde_default_bool::<true>")]
     pub enable_logging: bool,
+    #[serde(default = "serde_default_bool::<true>")]
+    pub enable_ipc_server: bool,
     #[serde(default)]
     #[serde(alias = "rendering_backend")]
     pub render_backend: RenderBackendConfig,
-    #[serde(default = "serde_default_global")]
+    #[serde(default)]
     pub global: Global,
     #[serde(default)]
     pub window_rules: Vec<WindowRule>,
 }
 
-// Show borders even if the config.yaml is completely empty
-// NOTE: this is just for serde and is intentionally kept separate from the Default trait
-// because I still want the width and offset zeroed out when I call Config::default()
-fn serde_default_global() -> Global {
-    Global {
-        border_width: serde_default_f32::<4>(),
-        border_offset: serde_default_i32::<-1>(),
-        ..Default::default()
-    }
-}
-
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Global {
-    #[serde(default = "serde_default_f32::<4>")]
-    pub border_width: f32,
-    #[serde(default = "serde_default_i32::<-1>")]
-    pub border_offset: i32,
+    #[serde(default = "WidthConfig::serde_default")]
+    pub border_width: WidthConfig,
+    #[serde(default = "OffsetConfig::serde_default")]
+    pub border_offset: OffsetConfig,
     #[serde(default)]
     pub border_radius: RadiusConfig,
     #[serde(default)]
@@ -113,8 +105,8 @@ pub struct WindowRule {
     pub kind: Option<MatchKind>,
     pub name: Option<String>,
     pub strategy: Option<MatchStrategy>,
-    pub border_width: Option<f32>,
-    pub border_offset: Option<i32>,
+    pub border_width: Option<WidthConfig>,
+    pub border_offset: Option<OffsetConfig>,
     pub border_radius: Option<RadiusConfig>,
     pub border_z_order: Option<ZOrderMode>,
     pub follow_native_border: Option<bool>,
@@ -142,6 +134,40 @@ pub enum MatchStrategy {
     Equals,
     Contains,
     Regex,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct WidthConfig(f32);
+
+impl WidthConfig {
+    /// Returns a DPI-adjusted raw width value
+    pub fn to_width(&self, dpi: f32) -> i32 {
+        (self.0 as f32 * dpi / 96.0).round() as i32
+    }
+
+    // Intentionally kept separate from the Default trait because I want width zeroed
+    // out when config deserialization fails (and we fall back to Config::default())
+    fn serde_default() -> Self {
+        Self(4.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct OffsetConfig(i32);
+
+impl OffsetConfig {
+    /// Returns a DPI-adjusted raw offset value
+    pub fn to_offset(&self, dpi: f32) -> i32 {
+        (self.0 as f32 * dpi / 96.0).round() as i32
+    }
+
+    // Intentionally kept separate from the Default trait because I want offset zeroed
+    // out when config deserialization fails (and we fall back to Config::default())
+    fn serde_default() -> Self {
+        Self(-1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
@@ -325,6 +351,19 @@ impl Config {
                     }
                 }
 
+                {
+                    let mut ipc_server_opt = APP_STATE.ipc_server.lock().unwrap();
+
+                    if config.is_ipc_server_enabled() && ipc_server_opt.is_none() {
+                        *ipc_server_opt = ipc::socket_path()
+                            .and_then(|path| IpcServer::new(&path))
+                            .inspect_err(|err| error!("could not start ipc server: {err:#}"))
+                            .ok();
+                    } else if !config.is_ipc_server_enabled() && ipc_server_opt.is_some() {
+                        *ipc_server_opt = None;
+                    }
+                }
+
                 config
             }
             Err(err) => {
@@ -369,6 +408,10 @@ impl Config {
 
     fn is_color_theme_aware(config: &ColorBrushConfig) -> bool {
         matches!(config, ColorBrushConfig::ThemeAware(_))
+    }
+
+    pub fn is_ipc_server_enabled(&self) -> bool {
+        self.enable_ipc_server
     }
 }
 

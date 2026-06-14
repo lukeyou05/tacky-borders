@@ -11,6 +11,7 @@ pub mod config;
 pub mod effects;
 pub mod event_hook;
 pub mod iocp;
+pub mod ipc;
 pub mod komorebi;
 pub mod render_backend;
 pub mod sys_tray_icon;
@@ -20,6 +21,7 @@ pub mod window_border;
 
 use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
+use ipc::IpcServer;
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
@@ -97,6 +99,7 @@ pub struct AppState {
     komorebi_integration: Mutex<Option<KomorebiIntegration>>,
     theme_watcher: Mutex<Option<ThemeWatcher>>,
     display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
+    ipc_server: Mutex<Option<IpcServer>>,
 }
 
 unsafe impl Send for AppState {}
@@ -109,6 +112,7 @@ impl AppState {
         let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
         let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
         let theme_watcher: Mutex<Option<ThemeWatcher>> = Mutex::new(None);
+        let ipc_server: Mutex<Option<IpcServer>> = Mutex::new(None);
 
         let config = match Config::create() {
             Ok(config) => {
@@ -133,6 +137,13 @@ impl AppState {
                 if config.is_theme_aware_enabled() {
                     *theme_watcher.lock().unwrap() = ThemeWatcher::new()
                         .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
+                        .ok();
+                }
+
+                if config.is_ipc_server_enabled() {
+                    *ipc_server.lock().unwrap() = ipc::socket_path()
+                        .and_then(|path| IpcServer::new(&path))
+                        .inspect_err(|err| error!("could not start ipc server: {err:#}"))
                         .ok();
                 }
 
@@ -185,6 +196,7 @@ impl AppState {
             komorebi_integration,
             theme_watcher,
             display_adapters_watcher,
+            ipc_server,
         }
     }
 

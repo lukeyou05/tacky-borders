@@ -75,9 +75,13 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
                 .log_if_err();
 
             // Set to None to call their Drop impls
+            // TODO: Find some way to auto-drop Options instead of having to
+            // manually add them here everytime we add a new field to AppState
             *APP_STATE.config_watcher.lock().unwrap() = None;
             *APP_STATE.komorebi_integration.lock().unwrap() = None;
+            *APP_STATE.theme_watcher.lock().unwrap() = None;
             *APP_STATE.display_adapters_watcher.lock().unwrap() = None;
+            *APP_STATE.ipc_server.lock().unwrap() = None;
 
             unsafe { PostQuitMessage(0) };
         }

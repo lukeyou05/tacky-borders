@@ -51,6 +51,8 @@ pub const WM_APP_MINIMIZEEND: u32 = WM_APP + 6;
 pub const WM_APP_ANIMATE: u32 = WM_APP + 7;
 pub const WM_APP_KOMOREBI: u32 = WM_APP + 8;
 pub const WM_APP_RECREATE_DRAWER: u32 = WM_APP + 9;
+pub const WM_APP_SET_COLORS: u32 = WM_APP + 10;
+pub const WM_APP_SET_WIDTH: u32 = WM_APP + 11;
 
 // T_E_UNINIT indicates an uninitialized object, T_E_ERROR indicates a general error, and
 // T_E_REENTRANCY indicates re-entrancy where there shouldn't have been any. These custom HRESULTs
@@ -905,6 +907,10 @@ pub fn remove_file_if_exists(file_path: &Path) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn is_numeric(s: &str) -> bool {
+    str::parse::<f64>(s).is_ok()
 }
 
 // Bezier curve algorithm together with @0xJWLabs

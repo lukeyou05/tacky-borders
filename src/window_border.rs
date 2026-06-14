@@ -33,18 +33,20 @@ use windows::core::{PCWSTR, w};
 use crate::APP_STATE;
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
+use crate::colors::ColorBrushConfig;
 use crate::config::{RadiusConfig, WindowRule, ZOrderMode};
+use crate::ipc::{IpcSetColorsPayload, IpcSetWidthPayload};
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
     LogIfErr, OwnedHWND, ReentrancyBlocker, ReentrancyBlockerExt, StandaloneWindowsError,
     T_E_ERROR, T_E_REENTRANCY, T_E_UNINIT, ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND,
     WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
-    WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
-    WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
-    get_dpi_for_monitor, get_monitor_info, get_window_rule, get_window_title, has_native_border,
-    is_window, is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible,
-    loword, monitor_from_window, post_message_w,
+    WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SET_COLORS,
+    WM_APP_SET_WIDTH, WM_APP_SHOWUNCLOAKED, WindowsCompatibleError, WindowsCompatibleResult,
+    WindowsContext, are_rects_same_size, get_dpi_for_monitor, get_monitor_info, get_window_rule,
+    get_window_title, has_native_border, is_window, is_window_arranged, is_window_cloaked,
+    is_window_minimized, is_window_visible, loword, monitor_from_window, post_message_w,
 };
 
 const REORDER_TIMER_ID: usize = 0;
@@ -279,8 +281,8 @@ impl WindowBorder {
         self.radius_config = *radius_config;
 
         // Adjust the border parameters based on the window/monitor dpi
-        let border_width = (width_config * dpi as f32 / 96.0).round() as i32;
-        let border_offset = (offset_config as f32 * dpi as f32 / 96.0).round() as i32;
+        let border_width = width_config.to_width(dpi as f32);
+        let border_offset = offset_config.to_offset(dpi as f32);
         let border_radius = radius_config.to_radius(border_width, dpi, self.tracking_window);
         let active_color = active_color_config.to_color_brush(true);
         let inactive_color = inactive_color_config.to_color_brush(false);
@@ -578,6 +580,40 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
+    // TODO: I also update color brushes in WM_APP_KOMOREBI; maybe unify the logic.
+    fn update_color_brush(&mut self, is_active: bool, config: &ColorBrushConfig) {
+        let brush = match is_active {
+            true => &mut self.border_drawer.active_color,
+            false => &mut self.border_drawer.inactive_color,
+        };
+
+        let old_opacity = brush.get_opacity().unwrap_or_default();
+        let old_transform = brush.get_transform().unwrap_or_default();
+
+        *brush = config.to_color_brush(is_active);
+
+        let renderer: &ID2D1RenderTarget = match self.border_drawer.render_backend {
+            RenderBackend::V2(ref backend) => &backend.d2d_context,
+            RenderBackend::Legacy(ref backend) => &backend.render_target,
+            RenderBackend::None => {
+                error!("render backend is None in update_color_brush()");
+                return;
+            }
+        };
+        let brush_properties = D2D1_BRUSH_PROPERTIES {
+            opacity: old_opacity,
+            transform: old_transform,
+        };
+
+        let brush = match is_active {
+            true => &mut self.border_drawer.active_color,
+            false => &mut self.border_drawer.inactive_color,
+        };
+        brush
+            .init_brush(renderer, &self.window_rect, &brush_properties)
+            .log_if_err();
+    }
+
     fn handle_directx_errors(
         &mut self,
         err: WindowsCompatibleError,
@@ -652,9 +688,8 @@ impl WindowBorder {
             .as_ref()
             .unwrap_or(&global.border_radius);
 
-        self.border_drawer.border_width = (width_config * new_dpi as f32 / 96.0).round() as i32;
-        self.border_drawer.border_offset =
-            (offset_config as f32 * new_dpi as f32 / 96.0).round() as i32;
+        self.border_drawer.border_width = width_config.to_width(new_dpi as f32);
+        self.border_drawer.border_offset = offset_config.to_offset(new_dpi as f32);
         let new_radius = radius_config.to_radius(
             self.border_drawer.border_width,
             new_dpi,
@@ -1113,6 +1148,40 @@ impl WindowBorder {
                     .active_color
                     .init_brush(renderer, &self.window_rect, &brush_properties)
                     .log_if_err();
+                self.render().log_if_err();
+            }
+            // This message is sent by the IPC server to apply new colors at runtime
+            WM_APP_SET_COLORS => {
+                let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetColorsPayload) };
+
+                if let Some(ref active_config) = payload.active_color {
+                    self.update_color_brush(true, active_config);
+                }
+                if let Some(ref inactive_config) = payload.inactive_color {
+                    self.update_color_brush(false, inactive_config);
+                }
+
+                self.render().log_if_err();
+            }
+            // This message is sent by the IPC server to apply a new border width at runtime
+            WM_APP_SET_WIDTH => {
+                let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetWidthPayload) };
+
+                self.border_drawer.border_width =
+                    payload.width_config.to_width(self.current_dpi as f32);
+                let new_radius = self.radius_config.to_radius(
+                    self.border_drawer.border_width,
+                    self.current_dpi,
+                    self.tracking_window,
+                );
+                self.border_drawer
+                    .border_radius
+                    .set(new_radius)
+                    .log_if_err();
+
+                self.resize_renderer().log_if_err();
+                self.update_window_rect().log_if_err();
+                self.update_position(None).log_if_err();
                 self.render().log_if_err();
             }
             WM_PAINT => {
