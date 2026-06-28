@@ -55,6 +55,7 @@ use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter,
     IDXGIDevice, IDXGIFactory6, IDXGIFactory7,
 };
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
@@ -542,6 +543,11 @@ pub fn create_logger() -> anyhow::Result<()> {
         ),
     ])?;
 
+    Ok(())
+}
+
+pub fn attach_console() -> WindowsCompatibleResult<()> {
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }?;
     Ok(())
 }
 

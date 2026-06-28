@@ -30,7 +30,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use crate::{APP_STATE, BG_SERVICES};
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::colors::ColorBrushConfig;
@@ -48,6 +47,7 @@ use crate::utils::{
     get_window_title, has_native_border, is_window, is_window_arranged, is_window_cloaked,
     is_window_minimized, is_window_visible, loword, monitor_from_window, post_message_w,
 };
+use crate::{APP_STATE, BG_SERVICES};
 
 const REORDER_TIMER_ID: usize = 0;
 

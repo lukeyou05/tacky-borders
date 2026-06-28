@@ -19,7 +19,7 @@ use tacky_borders::utils::{
     spawn_window_state_poller,
 };
 use tacky_borders::{
-    APP_STATE, create_borders_for_existing_windows, is_unwanted_instance,
+    APP_STATE, attach_console, create_borders_for_existing_windows, is_unwanted_instance,
     register_border_window_class, set_event_hook,
 };
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
@@ -113,6 +113,9 @@ OPTIONS for set-color:
 ";
 
 fn run_cli(args: &[String]) -> anyhow::Result<()> {
+    // Console is disabled by default in release mode so we need to attach it
+    let _ = attach_console();
+
     let command_json = match args[0].as_str() {
         "set-color" | "set_color" => {
             let mut active: Option<String> = None;
