@@ -1,14 +1,11 @@
 use crate::animations::AnimationsConfig;
 use crate::colors::ColorBrushConfig;
 use crate::effects::EffectsConfig;
-use crate::ipc::{self, IpcServer};
-use crate::komorebi::{KomorebiColorsConfig, KomorebiIntegration};
+use crate::komorebi::KomorebiColorsConfig;
 use crate::render_backend::RenderBackendConfig;
-use crate::theme::ThemeWatcher;
 use crate::utils::{OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
 use crate::{
-    APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
-    reload_borders,
+    APP_STATE, BG_SERVICES, DirectXDevices, IS_WINDOWS_11, display_error_box, reload_borders,
 };
 use anyhow::{Context, anyhow};
 use dirs::home_dir;
@@ -295,80 +292,23 @@ impl Config {
     pub fn reload() {
         let new_config = match Self::create() {
             Ok(config) => {
+                BG_SERVICES.lock().unwrap().reload(&config);
+
+                let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
+
+                if config.render_backend == RenderBackendConfig::V2 && directx_devices_opt.is_none()
                 {
-                    let mut config_watcher_opt = APP_STATE.config_watcher.lock().unwrap();
+                    let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
+                        .unwrap_or_else(|err| {
+                            error!("could not create directx devices: {err:#}");
+                            panic!("could not create directx devices: {err:#}");
+                        });
 
-                    if config.is_config_watcher_enabled() && config_watcher_opt.is_none() {
-                        *config_watcher_opt = create_config_watcher()
-                            .inspect_err(|err| error!("could not start config watcher: {err:#}"))
-                            .ok();
-                    } else if !config.is_config_watcher_enabled() && config_watcher_opt.is_some() {
-                        *config_watcher_opt = None;
-                    }
-                }
-
+                    *directx_devices_opt = Some(direct_x_devices);
+                } else if config.render_backend == RenderBackendConfig::Legacy
+                    && directx_devices_opt.is_some()
                 {
-                    let mut komorebi_integration_opt =
-                        APP_STATE.komorebi_integration.lock().unwrap();
-
-                    if config.is_komorebi_integration_enabled()
-                        && komorebi_integration_opt.is_none()
-                    {
-                        *komorebi_integration_opt = KomorebiIntegration::new()
-                            .inspect_err(|err| {
-                                error!("could not start komorebi integration: {err:#}")
-                            })
-                            .ok();
-                    } else if !config.is_komorebi_integration_enabled()
-                        && komorebi_integration_opt.is_some()
-                    {
-                        *komorebi_integration_opt = None;
-                    }
-                }
-
-                {
-                    let mut theme_watcher_opt = APP_STATE.theme_watcher.lock().unwrap();
-
-                    if config.is_theme_aware_enabled() && theme_watcher_opt.is_none() {
-                        *theme_watcher_opt = ThemeWatcher::new()
-                            .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
-                            .ok();
-                    } else if !config.is_theme_aware_enabled() && theme_watcher_opt.is_some() {
-                        *theme_watcher_opt = None;
-                    }
-                }
-
-                {
-                    let mut directx_devices_opt = APP_STATE.directx_devices.write().unwrap();
-
-                    if config.render_backend == RenderBackendConfig::V2
-                        && directx_devices_opt.is_none()
-                    {
-                        let direct_x_devices = DirectXDevices::new(&APP_STATE.render_factory)
-                            .unwrap_or_else(|err| {
-                                error!("could not create directx devices: {err:#}");
-                                panic!("could not create directx devices: {err:#}");
-                            });
-
-                        *directx_devices_opt = Some(direct_x_devices);
-                    } else if config.render_backend == RenderBackendConfig::Legacy
-                        && directx_devices_opt.is_some()
-                    {
-                        *directx_devices_opt = None;
-                    }
-                }
-
-                {
-                    let mut ipc_server_opt = APP_STATE.ipc_server.lock().unwrap();
-
-                    if config.is_ipc_server_enabled() && ipc_server_opt.is_none() {
-                        *ipc_server_opt = ipc::socket_path()
-                            .and_then(|path| IpcServer::new(&path))
-                            .inspect_err(|err| error!("could not start ipc server: {err:#}"))
-                            .ok();
-                    } else if !config.is_ipc_server_enabled() && ipc_server_opt.is_some() {
-                        *ipc_server_opt = None;
-                    }
+                    *directx_devices_opt = None;
                 }
 
                 config

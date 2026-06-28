@@ -87,19 +87,16 @@ static IS_WINDOWS_11: LazyLock<bool> = LazyLock::new(|| {
     version_info.dwBuildNumber >= 22000
 });
 pub static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
+pub static BG_SERVICES: LazyLock<Mutex<BackgroundServices>> =
+    LazyLock::new(|| Mutex::new(BackgroundServices::new()));
 
 pub struct AppState {
     borders: Mutex<HashMap<isize, isize>>,
     initial_windows: Mutex<Vec<isize>>,
     active_window: Mutex<isize>,
     config: RwLock<Config>,
-    config_watcher: Mutex<Option<ConfigWatcher>>,
     render_factory: ID2D1Factory1,
     directx_devices: RwLock<Option<DirectXDevices>>,
-    komorebi_integration: Mutex<Option<KomorebiIntegration>>,
-    theme_watcher: Mutex<Option<ThemeWatcher>>,
-    display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>>,
-    ipc_server: Mutex<Option<IpcServer>>,
 }
 
 unsafe impl Send for AppState {}
@@ -109,48 +106,10 @@ impl AppState {
     fn new() -> Self {
         let active_window = get_foreground_window().0 as isize;
 
-        let config_watcher: Mutex<Option<ConfigWatcher>> = Mutex::new(None);
-        let komorebi_integration: Mutex<Option<KomorebiIntegration>> = Mutex::new(None);
-        let theme_watcher: Mutex<Option<ThemeWatcher>> = Mutex::new(None);
-        let ipc_server: Mutex<Option<IpcServer>> = Mutex::new(None);
-
         let config = match Config::create() {
-            Ok(config) => {
-                if config.enable_logging
-                    && let Err(err) = create_logger()
-                {
-                    eprintln!("[ERROR] could not create logger: {err:#}");
-                };
-
-                if config.is_config_watcher_enabled() {
-                    *config_watcher.lock().unwrap() = create_config_watcher()
-                        .inspect_err(|err| error!("could not start config watcher: {err:#}"))
-                        .ok()
-                }
-
-                if config.is_komorebi_integration_enabled() {
-                    *komorebi_integration.lock().unwrap() = KomorebiIntegration::new()
-                        .inspect_err(|err| error!("could not start komorebi integration: {err:#}"))
-                        .ok();
-                }
-
-                if config.is_theme_aware_enabled() {
-                    *theme_watcher.lock().unwrap() = ThemeWatcher::new()
-                        .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
-                        .ok();
-                }
-
-                if config.is_ipc_server_enabled() {
-                    *ipc_server.lock().unwrap() = ipc::socket_path()
-                        .and_then(|path| IpcServer::new(&path))
-                        .inspect_err(|err| error!("could not start ipc server: {err:#}"))
-                        .ok();
-                }
-
-                config
-            }
+            Ok(config) => config,
             Err(err) => {
-                error!("could not read config: {err:#}");
+                eprintln!("could not read config: {err:#}");
                 thread::spawn(move || {
                     display_error_box(format!("could not read config: {err:#}"), None);
                 });
@@ -158,12 +117,6 @@ impl AppState {
                 Config::default()
             }
         };
-
-        let display_adapters_watcher: Mutex<Option<DisplayAdaptersWatcher>> = Mutex::new(
-            DisplayAdaptersWatcher::new()
-                .inspect_err(|err| error!("could not start display adapters watcher: {err:#}"))
-                .ok(),
-        );
 
         let render_factory: ID2D1Factory1 = unsafe {
             D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap_or_else(|err| {
@@ -190,13 +143,8 @@ impl AppState {
             initial_windows: Mutex::new(Vec::new()),
             active_window: Mutex::new(active_window),
             config: RwLock::new(config),
-            config_watcher,
             render_factory,
             directx_devices: RwLock::new(directx_devices_opt),
-            komorebi_integration,
-            theme_watcher,
-            display_adapters_watcher,
-            ipc_server,
         }
     }
 
@@ -211,6 +159,130 @@ impl AppState {
 
     pub fn get_directx_devices_mut(&self) -> RwLockWriteGuard<'_, Option<DirectXDevices>> {
         self.directx_devices.write().unwrap()
+    }
+}
+
+#[derive(Default)]
+pub struct BackgroundServices {
+    config_watcher: Option<ConfigWatcher>,
+    komorebi_integration: Option<KomorebiIntegration>,
+    theme_watcher: Option<ThemeWatcher>,
+    ipc_server: Option<IpcServer>,
+    #[allow(dead_code)]
+    display_adapters_watcher: Option<DisplayAdaptersWatcher>,
+}
+
+unsafe impl Send for BackgroundServices {}
+unsafe impl Sync for BackgroundServices {}
+
+impl BackgroundServices {
+    fn new() -> Self {
+        let mut config_watcher = None;
+        let mut komorebi_integration = None;
+        let mut theme_watcher = None;
+        let mut ipc_server = None;
+
+        let config = APP_STATE.config.read().unwrap();
+
+        if config.enable_logging
+            && let Err(err) = create_logger()
+        {
+            eprintln!("[ERROR] could not create logger: {err:#}");
+        };
+
+        if config.is_config_watcher_enabled() {
+            config_watcher = create_config_watcher()
+                .inspect_err(|err| error!("could not start config watcher: {err:#}"))
+                .ok()
+        }
+
+        if config.is_komorebi_integration_enabled() {
+            komorebi_integration = KomorebiIntegration::new()
+                .inspect_err(|err| error!("could not start komorebi integration: {err:#}"))
+                .ok();
+        }
+
+        if config.is_theme_aware_enabled() {
+            theme_watcher = ThemeWatcher::new()
+                .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
+                .ok();
+        }
+
+        if config.is_ipc_server_enabled() {
+            ipc_server = ipc::socket_path()
+                .and_then(|path| IpcServer::new(&path))
+                .inspect_err(|err| error!("could not start ipc server: {err:#}"))
+                .ok();
+        }
+
+        let display_adapters_watcher = DisplayAdaptersWatcher::new()
+            .inspect_err(|err| error!("could not start display adapters watcher: {err:#}"))
+            .ok();
+
+        Self {
+            config_watcher,
+            komorebi_integration,
+            theme_watcher,
+            ipc_server,
+            display_adapters_watcher,
+        }
+    }
+
+    pub fn reload(&mut self, config: &Config) {
+        // We take and destructure so that the compiler complains if we add a new
+        // struct field and forget to add it to the reload logic
+        let Self {
+            mut config_watcher,
+            mut komorebi_integration,
+            mut theme_watcher,
+            mut ipc_server,
+            display_adapters_watcher,
+        } = std::mem::take(self);
+
+        if config.is_config_watcher_enabled() && config_watcher.is_none() {
+            config_watcher = create_config_watcher()
+                .inspect_err(|err| error!("could not start config watcher: {err:#}"))
+                .ok();
+        } else if !config.is_config_watcher_enabled() && config_watcher.is_some() {
+            config_watcher = None;
+        }
+
+        if config.is_komorebi_integration_enabled() && komorebi_integration.is_none() {
+            komorebi_integration = KomorebiIntegration::new()
+                .inspect_err(|err| error!("could not start komorebi integration: {err:#}"))
+                .ok();
+        } else if !config.is_komorebi_integration_enabled() && komorebi_integration.is_some() {
+            komorebi_integration = None;
+        }
+
+        if config.is_theme_aware_enabled() && theme_watcher.is_none() {
+            theme_watcher = ThemeWatcher::new()
+                .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
+                .ok();
+        } else if !config.is_theme_aware_enabled() && theme_watcher.is_some() {
+            theme_watcher = None;
+        }
+
+        if config.is_ipc_server_enabled() && ipc_server.is_none() {
+            ipc_server = ipc::socket_path()
+                .and_then(|path| IpcServer::new(&path))
+                .inspect_err(|err| error!("could not start ipc server: {err:#}"))
+                .ok();
+        } else if !config.is_ipc_server_enabled() && ipc_server.is_some() {
+            ipc_server = None;
+        }
+
+        *self = Self {
+            config_watcher,
+            komorebi_integration,
+            theme_watcher,
+            ipc_server,
+            display_adapters_watcher,
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        *self = Self::default();
     }
 }
 
