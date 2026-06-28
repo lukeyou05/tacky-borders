@@ -174,9 +174,9 @@ unsafe impl Sync for BackgroundServices {}
 
 impl BackgroundServices {
     fn new() -> Self {
-        let mut config_watcher: Option<ConfigWatcher> = None;
-        let mut komorebi_integration: Option<KomorebiIntegration> = None;
-        let mut theme_watcher: Option<ThemeWatcher> = None;
+        let mut config_watcher = None;
+        let mut komorebi_integration = None;
+        let mut theme_watcher = None;
 
         let config = APP_STATE.config.read().unwrap();
 
@@ -204,12 +204,53 @@ impl BackgroundServices {
                 .ok();
         }
 
-        let display_adapters_watcher: Option<DisplayAdaptersWatcher> =
-            DisplayAdaptersWatcher::new()
-                .inspect_err(|err| error!("could not start display adapters watcher: {err:#}"))
-                .ok();
+        let display_adapters_watcher = DisplayAdaptersWatcher::new()
+            .inspect_err(|err| error!("could not start display adapters watcher: {err:#}"))
+            .ok();
 
         Self {
+            config_watcher,
+            komorebi_integration,
+            theme_watcher,
+            display_adapters_watcher,
+        }
+    }
+
+    pub fn reload(&mut self, config: &Config) {
+        // We take and destructure so that the compiler complains if we add a new
+        // struct field and forget to add it to the reload logic
+        let Self {
+            mut config_watcher,
+            mut komorebi_integration,
+            mut theme_watcher,
+            display_adapters_watcher,
+        } = std::mem::take(self);
+
+        if config.is_config_watcher_enabled() && config_watcher.is_none() {
+            config_watcher = create_config_watcher()
+                .inspect_err(|err| error!("could not start config watcher: {err:#}"))
+                .ok();
+        } else if !config.is_config_watcher_enabled() && config_watcher.is_some() {
+            config_watcher = None;
+        }
+
+        if config.is_komorebi_integration_enabled() && komorebi_integration.is_none() {
+            komorebi_integration = KomorebiIntegration::new()
+                .inspect_err(|err| error!("could not start komorebi integration: {err:#}"))
+                .ok();
+        } else if !config.is_komorebi_integration_enabled() && komorebi_integration.is_some() {
+            komorebi_integration = None;
+        }
+
+        if config.is_theme_aware_enabled() && theme_watcher.is_none() {
+            theme_watcher = ThemeWatcher::new()
+                .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
+                .ok();
+        } else if !config.is_theme_aware_enabled() && theme_watcher.is_some() {
+            theme_watcher = None;
+        }
+
+        *self = Self {
             config_watcher,
             komorebi_integration,
             theme_watcher,
