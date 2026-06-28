@@ -7,7 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 use crate::auto_start::{is_autostart_enabled, toggle_autostart};
 use crate::config::Config;
 use crate::utils::LogIfErr;
-use crate::{APP_STATE, destroy_borders, reload_borders};
+use crate::{BG_SERVICES, destroy_borders, reload_borders};
 
 pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon> {
     let icon = match Icon::from_resource(1, Some((64, 64))) {
@@ -74,10 +74,7 @@ pub fn create_tray_icon(hwineventhook: HWINEVENTHOOK) -> anyhow::Result<TrayIcon
                 .context("could not unhook win event")
                 .log_if_err();
 
-            // Set to None to call their Drop impls
-            *APP_STATE.config_watcher.lock().unwrap() = None;
-            *APP_STATE.komorebi_integration.lock().unwrap() = None;
-            *APP_STATE.display_adapters_watcher.lock().unwrap() = None;
+            BG_SERVICES.lock().unwrap().shutdown();
 
             unsafe { PostQuitMessage(0) };
         }

@@ -6,7 +6,7 @@ use crate::render_backend::RenderBackendConfig;
 use crate::theme::ThemeWatcher;
 use crate::utils::{OwnedHANDLE, get_adjusted_radius, get_window_corner_preference};
 use crate::{
-    APP_STATE, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
+    APP_STATE, BG_SERVICES, DirectXDevices, IS_WINDOWS_11, create_config_watcher, display_error_box,
     reload_borders,
 };
 use anyhow::{Context, anyhow};
@@ -263,45 +263,39 @@ impl Config {
         let new_config = match Self::create() {
             Ok(config) => {
                 {
-                    let mut config_watcher_opt = APP_STATE.config_watcher.lock().unwrap();
+                    let mut services = BG_SERVICES.lock().unwrap();
 
-                    if config.is_config_watcher_enabled() && config_watcher_opt.is_none() {
-                        *config_watcher_opt = create_config_watcher()
+                    if config.is_config_watcher_enabled() && services.config_watcher.is_none() {
+                        services.config_watcher = create_config_watcher()
                             .inspect_err(|err| error!("could not start config watcher: {err:#}"))
                             .ok();
-                    } else if !config.is_config_watcher_enabled() && config_watcher_opt.is_some() {
-                        *config_watcher_opt = None;
+                    } else if !config.is_config_watcher_enabled()
+                        && services.config_watcher.is_some()
+                    {
+                        services.config_watcher = None;
                     }
-                }
-
-                {
-                    let mut komorebi_integration_opt =
-                        APP_STATE.komorebi_integration.lock().unwrap();
 
                     if config.is_komorebi_integration_enabled()
-                        && komorebi_integration_opt.is_none()
+                        && services.komorebi_integration.is_none()
                     {
-                        *komorebi_integration_opt = KomorebiIntegration::new()
+                        services.komorebi_integration = KomorebiIntegration::new()
                             .inspect_err(|err| {
                                 error!("could not start komorebi integration: {err:#}")
                             })
                             .ok();
                     } else if !config.is_komorebi_integration_enabled()
-                        && komorebi_integration_opt.is_some()
+                        && services.komorebi_integration.is_some()
                     {
-                        *komorebi_integration_opt = None;
+                        services.komorebi_integration = None;
                     }
-                }
 
-                {
-                    let mut theme_watcher_opt = APP_STATE.theme_watcher.lock().unwrap();
-
-                    if config.is_theme_aware_enabled() && theme_watcher_opt.is_none() {
-                        *theme_watcher_opt = ThemeWatcher::new()
+                    if config.is_theme_aware_enabled() && services.theme_watcher.is_none() {
+                        services.theme_watcher = ThemeWatcher::new()
                             .inspect_err(|err| error!("could not start theme watcher: {err:#}"))
                             .ok();
-                    } else if !config.is_theme_aware_enabled() && theme_watcher_opt.is_some() {
-                        *theme_watcher_opt = None;
+                    } else if !config.is_theme_aware_enabled() && services.theme_watcher.is_some()
+                    {
+                        services.theme_watcher = None;
                     }
                 }
 

@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use crate::APP_STATE;
+use crate::{APP_STATE, BG_SERVICES};
 use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::config::{RadiusConfig, WindowRule, ZOrderMode};
@@ -220,8 +220,8 @@ impl WindowBorder {
         }
 
         {
-            let komorebi_integration_opt = APP_STATE.komorebi_integration.lock().unwrap();
-            if let Some(komorebi_integration) = komorebi_integration_opt.as_ref() {
+            let services = BG_SERVICES.lock().unwrap();
+            if let Some(komorebi_integration) = services.komorebi_integration.as_ref() {
                 let self_focus_state = komorebi_integration
                     .focus_state
                     .lock()
@@ -1035,8 +1035,8 @@ impl WindowBorder {
                 }
 
                 let window_kind = {
-                    let komorebi_integration_opt = APP_STATE.komorebi_integration.lock().unwrap();
-                    let Some(komorebi_integration) = komorebi_integration_opt.as_ref() else {
+                    let services = BG_SERVICES.lock().unwrap();
+                    let Some(komorebi_integration) = services.komorebi_integration.as_ref() else {
                         return LRESULT(0);
                     };
                     let focus_state = komorebi_integration.focus_state.lock().unwrap();
