@@ -86,7 +86,7 @@ static IS_WINDOWS_11: LazyLock<bool> = LazyLock::new(|| {
 });
 pub static APP_STATE: LazyLock<AppState> = LazyLock::new(AppState::new);
 pub static BG_SERVICES: LazyLock<Mutex<BackgroundServices>> =
-    LazyLock::new(|| Mutex::new(BackgroundServices::new()));
+    LazyLock::new(|| Mutex::new(BackgroundServices::new(&APP_STATE.config.read().unwrap())));
 
 pub struct AppState {
     borders: Mutex<HashMap<isize, isize>>,
@@ -173,12 +173,10 @@ unsafe impl Send for BackgroundServices {}
 unsafe impl Sync for BackgroundServices {}
 
 impl BackgroundServices {
-    fn new() -> Self {
+    fn new(config: &Config) -> Self {
         let mut config_watcher = None;
         let mut komorebi_integration = None;
         let mut theme_watcher = None;
-
-        let config = APP_STATE.config.read().unwrap();
 
         if config.enable_logging
             && let Err(err) = create_logger()
