@@ -11,8 +11,10 @@ use anyhow::Context;
 use std::io::{BufRead, BufReader, Write};
 use std::process::ExitCode;
 use std::sync::LazyLock;
+use tacky_borders::colors::ColorBrushConfig;
+use tacky_borders::config::WidthConfig;
 use tacky_borders::iocp::UnixStream;
-use tacky_borders::ipc::socket_path;
+use tacky_borders::ipc::{IpcCommand, socket_path};
 use tacky_borders::sys_tray_icon::create_tray_icon;
 use tacky_borders::utils::{
     LogIfErr, imm_disable_ime, is_numeric, set_process_dpi_awareness_context,
@@ -144,14 +146,12 @@ fn run_cli(args: &[String]) -> anyhow::Result<()> {
                 anyhow::bail!("set-color requires at least one of --active or --inactive");
             }
 
-            let mut command = serde_json::json!({ "cmd": "set_color", "focused": focused });
-            if let Some(color) = active {
-                command["active"] = parse_color_arg(&color);
-            }
-            if let Some(color) = inactive {
-                command["inactive"] = parse_color_arg(&color);
-            }
-            command.to_string()
+            let command = IpcCommand::SetColor {
+                active: active.map(|color| parse_color_arg(&color)).transpose()?,
+                inactive: inactive.map(|color| parse_color_arg(&color)).transpose()?,
+                focused,
+            };
+            serde_json::to_string(&command)?
         }
         "set-width" | "set_width" => {
             let mut focused = false;
@@ -173,11 +173,14 @@ fn run_cli(args: &[String]) -> anyhow::Result<()> {
                 .parse()
                 .context("width must be a number")?;
 
-            serde_json::json!({ "cmd": "set_width", "width": width, "focused": focused })
-                .to_string()
+            let command = IpcCommand::SetWidth {
+                width: WidthConfig::new(width),
+                focused,
+            };
+            serde_json::to_string(&command)?
         }
-        "reload" => serde_json::json!({ "cmd": "reload" }).to_string(),
-        "get-state" | "get_state" => serde_json::json!({ "cmd": "get_state" }).to_string(),
+        "reload" => serde_json::to_string(&IpcCommand::Reload)?,
+        "get-state" | "get_state" => serde_json::to_string(&IpcCommand::GetState)?,
         "msg" => args
             .get(1)
             .context("missing json argument after 'msg'")?
@@ -219,8 +222,9 @@ fn send_command(command_json: &str) -> anyhow::Result<String> {
     Ok(response)
 }
 
-fn parse_color_arg(s: &str) -> serde_json::Value {
-    // from_str() works with JSON objects (e.g. gradients);
-    // fall back to Value::String() for plain strings (e.g. hex codes)
-    serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
+fn parse_color_arg(s: &str) -> anyhow::Result<ColorBrushConfig> {
+    // Try parsing as JSON object first (e.g. gradients), but fallback to treating
+    // it as a string (e.g. hex codes) which need to be wrapped in double quotes.
+    let color = serde_json::from_str(s).or_else(|_| serde_json::from_str(&format!("\"{s}\"")))?;
+    Ok(color)
 }

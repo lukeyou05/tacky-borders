@@ -1,5 +1,5 @@
 use anyhow::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -17,13 +17,11 @@ use crate::utils::{
     remove_file_if_exists,
 };
 
-/// Payload send to borders through `WM_APP_SET_COLORS`.
 pub struct IpcSetColorsPayload {
     pub active_color: Option<ColorBrushConfig>,
     pub inactive_color: Option<ColorBrushConfig>,
 }
 
-/// Payload send to borders through `WM_APP_SET_WIDTH`.
 pub struct IpcSetWidthPayload {
     pub width_config: WidthConfig,
 }
@@ -140,9 +138,9 @@ fn handle_client(stream: UnixStream) -> anyhow::Result<()> {
 /// All commands that can be sent through the IPC mechanism. When serialized,
 /// the enum variant is in snake case and denoted with "cmd".
 /// Example JSON format: {"cmd":"set_color","active":<color>,"inactive":<color>}
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
-enum IpcCommand {
+pub enum IpcCommand {
     SetColor {
         #[serde(default)]
         active: Option<ColorBrushConfig>,
@@ -154,7 +152,6 @@ enum IpcCommand {
     },
     SetWidth {
         width: WidthConfig,
-        /// When true, only the currently focused window's border is updated.
         #[serde(default)]
         focused: bool,
     },
@@ -205,7 +202,6 @@ fn process_command(raw: &str) -> String {
     }
 }
 
-/// Applies new colors to borders at runtime.
 fn apply_colors(
     active: Option<ColorBrushConfig>,
     inactive: Option<ColorBrushConfig>,

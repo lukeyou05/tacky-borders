@@ -144,11 +144,15 @@ pub enum MatchStrategy {
     Regex,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(transparent)]
 pub struct WidthConfig(f32);
 
 impl WidthConfig {
+    pub fn new(width: f32) -> Self {
+        Self(width)
+    }
+
     /// Returns a DPI-adjusted raw width value
     pub fn to_width(&self, dpi: f32) -> i32 {
         (self.0 as f32 * dpi / 96.0).round() as i32
@@ -159,11 +163,15 @@ impl WidthConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(transparent)]
 pub struct OffsetConfig(i32);
 
 impl OffsetConfig {
+    pub fn new(offset: i32) -> Self {
+        Self(offset)
+    }
+
     /// Returns a DPI-adjusted raw offset value
     pub fn to_offset(&self, dpi: f32) -> i32 {
         (self.0 as f32 * dpi / 96.0).round() as i32
@@ -174,7 +182,7 @@ impl OffsetConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum RadiusConfig {
     #[default]
     Auto,
