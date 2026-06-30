@@ -7,7 +7,8 @@
 extern crate log;
 extern crate sp_log;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::process::ExitCode;
 use std::sync::LazyLock;
@@ -17,8 +18,7 @@ use tacky_borders::iocp::UnixStream;
 use tacky_borders::ipc::{IpcCommand, socket_path};
 use tacky_borders::sys_tray_icon::create_tray_icon;
 use tacky_borders::utils::{
-    LogIfErr, imm_disable_ime, is_numeric, set_process_dpi_awareness_context,
-    spawn_window_state_poller,
+    LogIfErr, imm_disable_ime, set_process_dpi_awareness_context, spawn_window_state_poller,
 };
 use tacky_borders::{
     APP_STATE, attach_console, create_borders_for_existing_windows, is_unwanted_instance,
@@ -30,12 +30,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     // When invoked with arguments, act as an IPC client for a running instance
     // instead of starting as the border daemon itself.
     if !args.is_empty() {
-        return match run_cli(&args) {
+        let args = pico_args::Arguments::from_vec(args);
+        return match run_cli(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 // eprintln because the logger isn't initialized in client mode
@@ -114,83 +115,57 @@ OPTIONS for set-color:
   '{\"colors\":[\"#ffffff\",\"#000000\"],\"direction\":\"90deg\"}'
 ";
 
-fn run_cli(args: &[String]) -> anyhow::Result<()> {
+fn run_cli(mut args: pico_args::Arguments) -> anyhow::Result<()> {
     // Console is disabled by default in release mode so we need to attach it
     let _ = attach_console();
 
-    let command_json = match args[0].as_str() {
-        "set-color" | "set_color" => {
-            let mut active: Option<String> = None;
-            let mut inactive: Option<String> = None;
-            let mut focused = false;
+    // Help flags have higher priority and should be handled separately
+    if args.contains(["-h", "--help"]) {
+        print!("{HELP_TEXT}");
+        return Ok(());
+    }
 
-            let mut iter = args[1..].iter();
-            while let Some(flag) = iter.next() {
-                match flag.as_str() {
-                    "--active" | "-a" => {
-                        active = Some(iter.next().context("missing value after --active")?.clone())
-                    }
-                    "--inactive" | "-i" => {
-                        inactive = Some(
-                            iter.next()
-                                .context("missing value after --inactive")?
-                                .clone(),
-                        )
-                    }
-                    "--focused" | "-f" => focused = true,
-                    other => anyhow::bail!("unknown flag '{other}'; see 'tacky-borders help'"),
-                }
-            }
+    let command_json = match args
+        .subcommand()?
+        .ok_or(anyhow!("missing subcommand"))?
+        .as_str()
+    {
+        "set-color" | "set_color" => {
+            let active = args.opt_value_from_fn(["-a", "--active"], parse_color_arg)?;
+            let inactive = args.opt_value_from_fn(["-i", "--inactive"], parse_color_arg)?;
 
             if active.is_none() && inactive.is_none() {
                 anyhow::bail!("set-color requires at least one of --active or --inactive");
             }
 
             let command = IpcCommand::SetColor {
-                active: active.map(|color| parse_color_arg(&color)).transpose()?,
-                inactive: inactive.map(|color| parse_color_arg(&color)).transpose()?,
-                focused,
+                active,
+                inactive,
+                focused: args.contains(["-f", "--focused"]),
             };
             serde_json::to_string(&command)?
         }
         "set-width" | "set_width" => {
-            let mut focused = false;
-            let mut width_str: Option<&str> = None;
-
-            let mut iter = args[1..].iter();
-            while let Some(arg) = iter.next() {
-                match arg.as_str() {
-                    "--focused" | "-f" => focused = true,
-                    other if other.starts_with('-') && !is_numeric(other) => {
-                        anyhow::bail!("unknown flag '{other}'; see 'tacky-borders help'")
-                    }
-                    other => width_str = Some(other),
-                }
-            }
-
-            let width: f32 = width_str
-                .context("set-width requires a width value")?
-                .parse()
-                .context("width must be a number")?;
-
             let command = IpcCommand::SetWidth {
-                width: WidthConfig::new(width),
-                focused,
+                width: args.free_from_fn(parse_width_arg)?,
+                focused: args.contains(["-f", "--focused"]),
             };
             serde_json::to_string(&command)?
         }
         "reload" => serde_json::to_string(&IpcCommand::Reload)?,
         "get-state" | "get_state" => serde_json::to_string(&IpcCommand::GetState)?,
-        "msg" => args
-            .get(1)
-            .context("missing json argument after 'msg'")?
-            .clone(),
-        "help" | "--help" | "-h" => {
+        "msg" => args.free_from_str()?,
+        "help" => {
             print!("{HELP_TEXT}");
             return Ok(());
         }
         other => anyhow::bail!("unknown command '{other}'; see 'tacky-borders help'"),
     };
+
+    let remaining = args.finish();
+    if !remaining.is_empty() {
+        anyhow::bail!("unknown arguments: {:?}", remaining);
+    }
 
     let response = send_command(&command_json)?;
     println!("{}", response.trim_end());
@@ -227,4 +202,9 @@ fn parse_color_arg(s: &str) -> anyhow::Result<ColorBrushConfig> {
     // it as a string (e.g. hex codes) which need to be wrapped in double quotes.
     let color = serde_json::from_str(s).or_else(|_| serde_json::from_str(&format!("\"{s}\"")))?;
     Ok(color)
+}
+
+fn parse_width_arg(s: &str) -> anyhow::Result<WidthConfig> {
+    let width: f32 = s.parse().context("width must be a number")?;
+    Ok(WidthConfig::new(width))
 }

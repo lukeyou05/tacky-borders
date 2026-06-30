@@ -909,10 +909,6 @@ pub fn remove_file_if_exists(file_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn is_numeric(s: &str) -> bool {
-    str::parse::<f64>(s).is_ok()
-}
-
 // Bezier curve algorithm together with @0xJWLabs
 const SUBDIVISION_PRECISION: f32 = 0.0001; // Precision for binary subdivision
 const SUBDIVISION_MAX_ITERATIONS: u32 = 10; // Maximum number of iterations for binary subdivision
