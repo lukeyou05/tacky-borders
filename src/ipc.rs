@@ -1,6 +1,7 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::any::type_name;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,13 +18,28 @@ use crate::utils::{
     remove_file_if_exists,
 };
 
+trait IpcPayload: Clone {
+    /// The message to post to the message queue for this payload
+    const WND_MSG: u32;
+}
+
+#[derive(Clone)]
 pub struct IpcSetColorsPayload {
     pub active_color: Option<ColorBrushConfig>,
     pub inactive_color: Option<ColorBrushConfig>,
 }
 
+impl IpcPayload for IpcSetColorsPayload {
+    const WND_MSG: u32 = WM_APP_SET_COLORS;
+}
+
+#[derive(Clone)]
 pub struct IpcSetWidthPayload {
     pub width_config: WidthConfig,
+}
+
+impl IpcPayload for IpcSetWidthPayload {
+    const WND_MSG: u32 = WM_APP_SET_WIDTH;
 }
 
 pub fn socket_path() -> anyhow::Result<PathBuf> {
@@ -202,29 +218,13 @@ fn process_command(raw: &str) -> String {
     }
 }
 
-fn apply_colors(
-    active: Option<ColorBrushConfig>,
-    inactive: Option<ColorBrushConfig>,
-    focused_only: bool,
-) {
+fn broadcast_payload<T: IpcPayload>(payload: &T, focused_only: bool) {
     let border_hwnds: Vec<HWND> = if focused_only {
         let active_tracking = HWND(*APP_STATE.active_window.lock().unwrap() as _);
         get_border_for_window(active_tracking)
             .map(|hwnd| vec![hwnd])
             .unwrap_or_default()
     } else {
-        // Update the in-memory global config so newly created borders pick up
-        // the colors too.  The config file is never written.
-        {
-            let mut config = APP_STATE.config.write().unwrap();
-            if let Some(ref color) = active {
-                config.global.active_color = color.clone();
-            }
-            if let Some(ref color) = inactive {
-                config.global.inactive_color = color.clone();
-            }
-        }
-
         APP_STATE
             .borders
             .lock()
@@ -237,55 +237,52 @@ fn apply_colors(
     // Each border window gets its own heap-allocated payload so that ownership
     // is unambiguous: the wnd_proc reclaims it with Box::from_raw.
     for border_hwnd in border_hwnds {
-        let payload = Box::new(IpcSetColorsPayload {
-            active_color: active.clone(),
-            inactive_color: inactive.clone(),
-        });
-        let payload_ptr = Box::into_raw(payload);
+        let payload_box = Box::new(payload.clone());
+        let payload_ptr = Box::into_raw(payload_box);
 
         if let Err(err) = post_message_w(
             Some(border_hwnd),
-            WM_APP_SET_COLORS,
+            T::WND_MSG,
             WPARAM(0),
             LPARAM(payload_ptr as isize),
         ) {
             // PostMessage failed — reclaim the payload so it isn't leaked
             drop(unsafe { Box::from_raw(payload_ptr) });
-            error!("could not post WM_APP_SET_COLORS to {border_hwnd:?}: {err:#}");
+            error!(
+                "could not post {} to {border_hwnd:?}: {err:#}",
+                type_name::<T>().rsplit("::").next().unwrap_or("unknown")
+            );
         }
     }
 }
 
-fn apply_width(width_config: WidthConfig, focused_only: bool) {
-    let border_hwnds: Vec<HWND> = if focused_only {
-        let active_tracking = HWND(*APP_STATE.active_window.lock().unwrap() as _);
-        get_border_for_window(active_tracking)
-            .map(|hwnd| vec![hwnd])
-            .unwrap_or_default()
-    } else {
-        APP_STATE.config.write().unwrap().global.border_width = width_config;
-
-        APP_STATE
-            .borders
-            .lock()
-            .unwrap()
-            .values()
-            .map(|hwnd_isize| HWND(*hwnd_isize as _))
-            .collect()
-    };
-
-    for border_hwnd in border_hwnds {
-        let payload = Box::new(IpcSetWidthPayload { width_config });
-        let payload_ptr = Box::into_raw(payload);
-
-        if let Err(err) = post_message_w(
-            Some(border_hwnd),
-            WM_APP_SET_WIDTH,
-            WPARAM(0),
-            LPARAM(payload_ptr as isize),
-        ) {
-            drop(unsafe { Box::from_raw(payload_ptr) });
-            error!("could not post WM_APP_SET_WIDTH to {border_hwnd:?}: {err:#}");
+fn apply_colors(
+    active: Option<ColorBrushConfig>,
+    inactive: Option<ColorBrushConfig>,
+    focused_only: bool,
+) {
+    if !focused_only {
+        // Update the in-memory global config so newly created borders pick up
+        // the colors too.  The config file is never written.
+        let mut config = APP_STATE.config.write().unwrap();
+        if let Some(ref color) = active {
+            config.global.active_color = color.clone();
+        }
+        if let Some(ref color) = inactive {
+            config.global.inactive_color = color.clone();
         }
     }
+    let payload = IpcSetColorsPayload {
+        active_color: active,
+        inactive_color: inactive,
+    };
+    broadcast_payload(&payload, focused_only);
+}
+
+fn apply_width(width_config: WidthConfig, focused_only: bool) {
+    if !focused_only {
+        APP_STATE.config.write().unwrap().global.border_width = width_config;
+    }
+    let payload = IpcSetWidthPayload { width_config };
+    broadcast_payload(&payload, focused_only);
 }
