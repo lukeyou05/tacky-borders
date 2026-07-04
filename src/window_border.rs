@@ -353,6 +353,11 @@ impl WindowBorder {
             .unminimize_delay
             .unwrap_or(global.unminimize_delay);
 
+        // Handle edge case where window is arranged at start
+        if is_window_arranged(self.tracking_window) {
+            self.sync_border_radius();
+        }
+
         Ok(())
     }
 
