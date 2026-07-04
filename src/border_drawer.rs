@@ -27,6 +27,8 @@ use crate::window_border::WindowState;
 pub struct BorderDrawer {
     pub border_width: i32,
     pub border_offset: i32,
+    // This is WriteLockable so it doesn't accidentally change when the tracking window is in
+    // the snapped/arranged state where the borders are supposed to remain square
     pub border_radius: WriteLockable<f32>,
     // TODO: maybe get rid of render_rect; it would make sense to have the WindowBorder struct
     // calculate the coordinates for the border, and then delegate the rendering here

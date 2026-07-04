@@ -5,12 +5,14 @@ extern crate sp_log;
 pub mod anim_timer;
 pub mod animations;
 pub mod auto_start;
+pub mod border_config;
 pub mod border_drawer;
 pub mod colors;
 pub mod config;
 pub mod effects;
 pub mod event_hook;
 pub mod iocp;
+pub mod ipc;
 pub mod komorebi;
 pub mod render_backend;
 pub mod sys_tray_icon;
@@ -20,6 +22,7 @@ pub mod window_border;
 
 use anyhow::{Context, anyhow};
 use config::{Config, ConfigWatcher, EnableMode, config_watcher_callback};
+use ipc::IpcServer;
 use komorebi::KomorebiIntegration;
 use render_backend::RenderBackendConfig;
 use sp_log::{ColorChoice, CombinedLogger, FileLogger, LevelFilter, TermLogger, TerminalMode};
@@ -53,6 +56,7 @@ use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_UNSPECIFIED, IDXGIAdapter,
     IDXGIDevice, IDXGIFactory6, IDXGIFactory7,
 };
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
 use windows::Win32::System::Threading::{
@@ -165,6 +169,7 @@ pub struct BackgroundServices {
     config_watcher: Option<ConfigWatcher>,
     komorebi_integration: Option<KomorebiIntegration>,
     theme_watcher: Option<ThemeWatcher>,
+    ipc_server: Option<IpcServer>,
     #[allow(dead_code)]
     display_adapters_watcher: Option<DisplayAdaptersWatcher>,
 }
@@ -177,6 +182,7 @@ impl BackgroundServices {
         let mut config_watcher = None;
         let mut komorebi_integration = None;
         let mut theme_watcher = None;
+        let mut ipc_server = None;
 
         if config.enable_logging
             && let Err(err) = create_logger()
@@ -202,6 +208,13 @@ impl BackgroundServices {
                 .ok();
         }
 
+        if config.is_ipc_server_enabled() {
+            ipc_server = ipc::socket_path()
+                .and_then(|path| IpcServer::new(&path))
+                .inspect_err(|err| error!("could not start ipc server: {err:#}"))
+                .ok();
+        }
+
         let display_adapters_watcher = DisplayAdaptersWatcher::new()
             .inspect_err(|err| error!("could not start display adapters watcher: {err:#}"))
             .ok();
@@ -210,6 +223,7 @@ impl BackgroundServices {
             config_watcher,
             komorebi_integration,
             theme_watcher,
+            ipc_server,
             display_adapters_watcher,
         }
     }
@@ -221,6 +235,7 @@ impl BackgroundServices {
             mut config_watcher,
             mut komorebi_integration,
             mut theme_watcher,
+            mut ipc_server,
             display_adapters_watcher,
         } = std::mem::take(self);
 
@@ -248,10 +263,20 @@ impl BackgroundServices {
             theme_watcher = None;
         }
 
+        if config.is_ipc_server_enabled() && ipc_server.is_none() {
+            ipc_server = ipc::socket_path()
+                .and_then(|path| IpcServer::new(&path))
+                .inspect_err(|err| error!("could not start ipc server: {err:#}"))
+                .ok();
+        } else if !config.is_ipc_server_enabled() && ipc_server.is_some() {
+            ipc_server = None;
+        }
+
         *self = Self {
             config_watcher,
             komorebi_integration,
             theme_watcher,
+            ipc_server,
             display_adapters_watcher,
         }
     }
@@ -517,6 +542,11 @@ pub fn create_logger() -> anyhow::Result<()> {
         ),
     ])?;
 
+    Ok(())
+}
+
+pub fn attach_parent_console() -> WindowsCompatibleResult<()> {
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }?;
     Ok(())
 }
 

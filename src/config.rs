@@ -29,6 +29,7 @@ use windows::core::PCWSTR;
 
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
+/// The config.yaml definition
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -36,6 +37,8 @@ pub struct Config {
     pub watch_config_changes: bool,
     #[serde(default = "serde_default_bool::<true>")]
     pub enable_logging: bool,
+    #[serde(default = "serde_default_bool::<true>")]
+    pub enable_ipc_server: bool,
     #[serde(default)]
     #[serde(alias = "rendering_backend")]
     pub render_backend: RenderBackendConfig,
@@ -46,12 +49,12 @@ pub struct Config {
 }
 
 // Show borders even if the config.yaml is completely empty
-// NOTE: this is just for serde and is intentionally kept separate from the Default trait
-// because I still want the width and offset zeroed out when I call Config::default()
+// NOTE: This is intentionally kept separate from the Default trait because I want the
+// width/offset zeroed out when config deserialization fails and falls back to Config::default()
 fn serde_default_global() -> Global {
     Global {
-        border_width: serde_default_f32::<4>(),
-        border_offset: serde_default_i32::<-1>(),
+        border_width: WidthConfig::serde_default(),
+        border_offset: OffsetConfig::serde_default(),
         ..Default::default()
     }
 }
@@ -59,10 +62,10 @@ fn serde_default_global() -> Global {
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Global {
-    #[serde(default = "serde_default_f32::<4>")]
-    pub border_width: f32,
-    #[serde(default = "serde_default_i32::<-1>")]
-    pub border_offset: i32,
+    #[serde(default = "WidthConfig::serde_default")]
+    pub border_width: WidthConfig,
+    #[serde(default = "OffsetConfig::serde_default")]
+    pub border_offset: OffsetConfig,
     #[serde(default)]
     pub border_radius: RadiusConfig,
     #[serde(default)]
@@ -111,8 +114,8 @@ pub struct WindowRule {
     pub kind: Option<MatchKind>,
     pub name: Option<String>,
     pub strategy: Option<MatchStrategy>,
-    pub border_width: Option<f32>,
-    pub border_offset: Option<i32>,
+    pub border_width: Option<WidthConfig>,
+    pub border_offset: Option<OffsetConfig>,
     pub border_radius: Option<RadiusConfig>,
     pub border_z_order: Option<ZOrderMode>,
     pub follow_native_border: Option<bool>,
@@ -142,7 +145,46 @@ pub enum MatchStrategy {
     Regex,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct WidthConfig(f32);
+
+impl WidthConfig {
+    pub fn new(width: f32) -> Self {
+        Self(width)
+    }
+
+    // TODO: Maybe rename this and other to_x methods to to_raw or smth idk
+    /// Returns a DPI-adjusted raw width value
+    pub fn to_width(&self, dpi: f32) -> i32 {
+        (self.0 as f32 * dpi / 96.0).round() as i32
+    }
+
+    fn serde_default() -> Self {
+        Self(4.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct OffsetConfig(i32);
+
+impl OffsetConfig {
+    pub fn new(offset: i32) -> Self {
+        Self(offset)
+    }
+
+    /// Returns a DPI-adjusted raw offset value
+    pub fn to_offset(&self, dpi: f32) -> i32 {
+        (self.0 as f32 * dpi / 96.0).round() as i32
+    }
+
+    fn serde_default() -> Self {
+        Self(-1)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum RadiusConfig {
     #[default]
     Auto,
@@ -323,6 +365,10 @@ impl Config {
 
     fn is_color_theme_aware(config: &ColorBrushConfig) -> bool {
         matches!(config, ColorBrushConfig::ThemeAware(_))
+    }
+
+    pub fn is_ipc_server_enabled(&self) -> bool {
+        self.enable_ipc_server
     }
 }
 

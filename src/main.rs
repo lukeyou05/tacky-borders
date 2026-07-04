@@ -7,14 +7,21 @@
 extern crate log;
 extern crate sp_log;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
+use std::ffi::OsString;
+use std::io::{BufRead, BufReader, Write};
+use std::process::ExitCode;
 use std::sync::LazyLock;
+use tacky_borders::colors::ColorBrushConfig;
+use tacky_borders::config::{OffsetConfig, RadiusConfig, WidthConfig};
+use tacky_borders::iocp::UnixStream;
+use tacky_borders::ipc::{IpcCommand, socket_path};
 use tacky_borders::sys_tray_icon::create_tray_icon;
 use tacky_borders::utils::{
     LogIfErr, imm_disable_ime, set_process_dpi_awareness_context, spawn_window_state_poller,
 };
 use tacky_borders::{
-    APP_STATE, create_borders_for_existing_windows, is_unwanted_instance,
+    APP_STATE, attach_parent_console, create_borders_for_existing_windows, is_unwanted_instance,
     register_border_window_class, set_event_hook,
 };
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
@@ -22,7 +29,28 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, MSG, TranslateMessage,
 };
 
-fn main() {
+fn main() -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+
+    // When invoked with arguments, act as an IPC client for a running instance
+    // instead of starting as the border daemon itself.
+    if !args.is_empty() {
+        let args = pico_args::Arguments::from_vec(args);
+        return match run_cli(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                // eprintln because the logger isn't initialized in client mode
+                eprintln!("error: {err:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    run_daemon();
+    ExitCode::SUCCESS
+}
+
+fn run_daemon() {
     if is_unwanted_instance() {
         return;
     }
@@ -63,4 +91,171 @@ fn main() {
     }
 
     info!("exiting tacky-borders");
+}
+
+const HELP_TEXT: &str = "\
+tacky-borders - customizable borders for Windows 11 and 10
+
+USAGE:
+  tacky-borders.exe                start the border daemon
+  tacky-borders.exe <command>      send a command to a running instance
+
+COMMANDS:
+  set-color [OPTIONS]              change border color
+  set-width <width> [OPTIONS]      change border width
+  set-offset <offset> [OPTIONS]    change border offset
+  set-radius <radius> [OPTIONS]    change border radius
+  reload                           reload config.yaml and recreate borders
+  get-state                        print runtime state as json
+  msg <json>                       send a raw json command
+  help                             show this help
+
+OPTIONS:
+  -h, --help                show this help
+
+OPTIONS for set-color:
+  -a, --active   <color>    set the active (focused) border color
+  -i, --inactive <color>    set the inactive (unfocused) border color
+  <color> is a hex string like \"#RRGGBB\" or \"#RRGGBBAA\", \"accent\", or a JSON gradient object:
+    '{\"colors\":[\"#ffffff\",\"#000000\"],\"direction\":\"90deg\"}'
+
+OPTIONS for set-color, set-width, set-offset, set-radius:
+  -f, --focused             only update the currently focused window's border;
+                            all other borders are left unchanged
+";
+
+fn run_cli(mut args: pico_args::Arguments) -> anyhow::Result<()> {
+    // Console is disabled by default in release mode so we need to attach it
+    let _ = attach_parent_console();
+
+    // Help flags have higher priority and should be handled separately
+    if args.contains(["-h", "--help"]) {
+        print!("{HELP_TEXT}");
+        return Ok(());
+    }
+
+    let command_json = match args
+        .subcommand()?
+        .ok_or(anyhow!("missing subcommand"))?
+        .as_str()
+    {
+        "set-color" | "set_color" => {
+            let active = args.opt_value_from_fn(["-a", "--active"], parse_color_arg)?;
+            let inactive = args.opt_value_from_fn(["-i", "--inactive"], parse_color_arg)?;
+
+            if active.is_none() && inactive.is_none() {
+                anyhow::bail!("set-color requires at least one of --active or --inactive");
+            }
+
+            let command = IpcCommand::SetColor {
+                active,
+                inactive,
+                focused: args.contains(["-f", "--focused"]),
+            };
+            serde_json::to_string(&command)?
+        }
+        "set-width" | "set_width" => {
+            let command = IpcCommand::SetWidth {
+                width: args.free_from_fn(parse_width_arg)?,
+                focused: args.contains(["-f", "--focused"]),
+            };
+            serde_json::to_string(&command)?
+        }
+        "set-offset" | "set_offset" => {
+            let command = IpcCommand::SetOffset {
+                offset: args.free_from_fn(parse_offset_arg)?,
+                focused: args.contains(["-f", "--focused"]),
+            };
+            serde_json::to_string(&command)?
+        }
+        "set-radius" | "set_radius" => {
+            let command = IpcCommand::SetRadius {
+                radius: args.free_from_fn(parse_radius_arg)?,
+                focused: args.contains(["-f", "--focused"]),
+            };
+            serde_json::to_string(&command)?
+        }
+        "reload" => serde_json::to_string(&IpcCommand::Reload)?,
+        "get-state" | "get_state" => serde_json::to_string(&IpcCommand::GetState)?,
+        "msg" => args.free_from_str()?,
+        "help" => {
+            print!("{HELP_TEXT}");
+            return Ok(());
+        }
+        other => anyhow::bail!("unknown command '{other}'; see 'tacky-borders help'"),
+    };
+
+    let remaining = args.finish();
+    if !remaining.is_empty() {
+        anyhow::bail!("unknown arguments: {:?}", remaining);
+    }
+
+    let response = send_command(&command_json)?;
+    let trimmed = response.trim_end();
+    validate_response(trimmed)?;
+    println!("{trimmed}");
+
+    Ok(())
+}
+
+fn validate_response(response: &str) -> anyhow::Result<()> {
+    let value: serde_json::Value =
+        serde_json::from_str(response).context("could not parse ipc response")?;
+
+    if value.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        return Ok(());
+    }
+
+    let error = value
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ipc command failed");
+
+    anyhow::bail!("{error}")
+}
+
+fn send_command(command_json: &str) -> anyhow::Result<String> {
+    let socket_path = socket_path().context("could not get socket path")?;
+
+    let stream = UnixStream::connect(&socket_path).with_context(|| {
+        format!(
+            "could not connect to {}; is tacky-borders running with the ipc server enabled?",
+            socket_path.display()
+        )
+    })?;
+
+    let message = format!("{command_json}\n");
+    (&stream)
+        .write_all(message.as_bytes())
+        .context("could not send command")?;
+
+    let mut reader = BufReader::new(&stream);
+    let mut response = String::new();
+    reader
+        .read_line(&mut response)
+        .context("could not read response")?;
+
+    Ok(response)
+}
+
+fn parse_color_arg(s: &str) -> anyhow::Result<ColorBrushConfig> {
+    // Try parsing as JSON object first (e.g. gradients), but fallback to treating
+    // it as a string (e.g. hex codes) which need to be wrapped in double quotes.
+    let color = serde_json::from_str(s).or_else(|_| serde_json::from_str(&format!("\"{s}\"")))?;
+    Ok(color)
+}
+
+fn parse_width_arg(s: &str) -> anyhow::Result<WidthConfig> {
+    let width: f32 = s.parse()?;
+    Ok(WidthConfig::new(width))
+}
+
+fn parse_offset_arg(s: &str) -> anyhow::Result<OffsetConfig> {
+    let offset: i32 = s.parse()?;
+    Ok(OffsetConfig::new(offset))
+}
+
+fn parse_radius_arg(s: &str) -> anyhow::Result<RadiusConfig> {
+    let radius = serde_json::from_str(s).or_else(|_| serde_json::from_str(&format!("\"{s}\"")))?;
+    Ok(radius)
 }
