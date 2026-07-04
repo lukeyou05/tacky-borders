@@ -13,7 +13,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::ExitCode;
 use std::sync::LazyLock;
 use tacky_borders::colors::ColorBrushConfig;
-use tacky_borders::config::WidthConfig;
+use tacky_borders::config::{OffsetConfig, RadiusConfig, WidthConfig};
 use tacky_borders::iocp::UnixStream;
 use tacky_borders::ipc::{IpcCommand, socket_path};
 use tacky_borders::sys_tray_icon::create_tray_icon;
@@ -100,6 +100,8 @@ USAGE:
   tacky-borders                                       start the border daemon
   tacky-borders set-color [OPTIONS]                   change border color at runtime
   tacky-borders set-width <width> [--focused]         change border width at runtime
+  tacky-borders set-offset <offset> [--focused]       change border offset at runtime
+  tacky-borders set-radius <radius> [--focused]       change border radius at runtime
   tacky-borders reload                                reload config.yaml and recreate borders
   tacky-borders get-state                             print runtime state as json
   tacky-borders msg <json>                            send a raw json command
@@ -148,6 +150,20 @@ fn run_cli(mut args: pico_args::Arguments) -> anyhow::Result<()> {
         "set-width" | "set_width" => {
             let command = IpcCommand::SetWidth {
                 width: args.free_from_fn(parse_width_arg)?,
+                focused: args.contains(["-f", "--focused"]),
+            };
+            serde_json::to_string(&command)?
+        }
+        "set-offset" | "set_offset" => {
+            let command = IpcCommand::SetOffset {
+                offset: args.free_from_fn(parse_offset_arg)?,
+                focused: args.contains(["-f", "--focused"]),
+            };
+            serde_json::to_string(&command)?
+        }
+        "set-radius" | "set_radius" => {
+            let command = IpcCommand::SetRadius {
+                radius: args.free_from_fn(parse_radius_arg)?,
                 focused: args.contains(["-f", "--focused"]),
             };
             serde_json::to_string(&command)?
@@ -205,6 +221,16 @@ fn parse_color_arg(s: &str) -> anyhow::Result<ColorBrushConfig> {
 }
 
 fn parse_width_arg(s: &str) -> anyhow::Result<WidthConfig> {
-    let width: f32 = s.parse().context("width must be a number")?;
+    let width: f32 = s.parse()?;
     Ok(WidthConfig::new(width))
+}
+
+fn parse_offset_arg(s: &str) -> anyhow::Result<OffsetConfig> {
+    let offset: i32 = s.parse()?;
+    Ok(OffsetConfig::new(offset))
+}
+
+fn parse_radius_arg(s: &str) -> anyhow::Result<RadiusConfig> {
+    let radius = serde_json::from_str(s).or_else(|_| serde_json::from_str(&format!("\"{s}\"")))?;
+    Ok(radius)
 }

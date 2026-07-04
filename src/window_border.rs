@@ -34,18 +34,20 @@ use crate::animations::{AnimType, AnimVec};
 use crate::border_drawer::BorderDrawer;
 use crate::colors::ColorBrushConfig;
 use crate::config::{RadiusConfig, WindowRule, ZOrderMode};
-use crate::ipc::{IpcSetColorsPayload, IpcSetWidthPayload};
+use crate::ipc::{
+    IpcPayload, IpcSetColorsPayload, IpcSetOffsetPayload, IpcSetRadiusPayload, IpcSetWidthPayload,
+};
 use crate::komorebi::WindowKind;
 use crate::render_backend::{RenderBackend, RenderBackendConfig};
 use crate::utils::{
     LogIfErr, OwnedHWND, ReentrancyBlocker, ReentrancyBlockerExt, StandaloneWindowsError,
     T_E_ERROR, T_E_REENTRANCY, T_E_UNINIT, ToWindowsResult, WM_APP_ANIMATE, WM_APP_FOREGROUND,
     WM_APP_HIDECLOAKED, WM_APP_KOMOREBI, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND,
-    WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SET_COLORS,
-    WM_APP_SET_WIDTH, WM_APP_SHOWUNCLOAKED, WindowsCompatibleError, WindowsCompatibleResult,
-    WindowsContext, are_rects_same_size, get_dpi_for_monitor, get_monitor_info, get_window_rule,
-    get_window_title, has_native_border, is_window, is_window_arranged, is_window_cloaked,
-    is_window_minimized, is_window_visible, loword, monitor_from_window, post_message_w,
+    WM_APP_MINIMIZESTART, WM_APP_RECREATE_DRAWER, WM_APP_REORDER, WM_APP_SHOWUNCLOAKED,
+    WindowsCompatibleError, WindowsCompatibleResult, WindowsContext, are_rects_same_size,
+    get_dpi_for_monitor, get_monitor_info, get_window_rule, get_window_title, has_native_border,
+    is_window, is_window_arranged, is_window_cloaked, is_window_minimized, is_window_visible,
+    loword, monitor_from_window, post_message_w,
 };
 use crate::{APP_STATE, BG_SERVICES};
 
@@ -683,22 +685,11 @@ impl WindowBorder {
 
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
         let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
-        let radius_config = window_rule
-            .border_radius
-            .as_ref()
-            .unwrap_or(&global.border_radius);
 
         self.border_drawer.border_width = width_config.to_width(new_dpi as f32);
         self.border_drawer.border_offset = offset_config.to_offset(new_dpi as f32);
-        let new_radius = radius_config.to_radius(
-            self.border_drawer.border_width,
-            new_dpi,
-            self.tracking_window,
-        );
-        self.border_drawer
-            .border_radius
-            .set(new_radius)
-            .unwrap_or_else(|err| debug!("border_radius: {err:#}")); // non-critical, so debug
+        self.current_dpi = new_dpi;
+        self.sync_border_radius();
     }
 
     fn needs_renderer_resize(&self) -> anyhow::Result<bool> {
@@ -763,8 +754,14 @@ impl WindowBorder {
         Ok(is_updated)
     }
 
-    // Overrides the border radius to be square when the tracking window is arranged (snapped)
-    fn sync_radius_for_snapped_state(&mut self) -> bool {
+    /// Syncs the border's radius based on the tracking window's state (snapped/arranged or not),
+    /// the cached radius config, and other current border parameters.
+    ///
+    /// Returns a bool indicating whether the radius was updated.
+    //
+    // TODO: Make it harder to directly set self.border_drawer.border_radius in other parts of
+    // the code (we should use this function instead)
+    fn sync_border_radius(&mut self) -> bool {
         let mut is_updated = false;
 
         // RadiusConfig::Custom(-1.0) is also checked for legacy reasons
@@ -773,29 +770,32 @@ impl WindowBorder {
             RadiusConfig::Auto | RadiusConfig::Custom(-1.0)
         );
         let is_tracking_window_arranged = is_window_arranged(self.tracking_window);
-        let is_radius_locked = self.border_drawer.border_radius.is_locked();
 
-        if is_radius_config_auto && is_tracking_window_arranged && !is_radius_locked {
-            self.border_drawer
-                .border_radius
-                .set(0.0)
-                .unwrap_or_else(|err| debug!("border_radius: {err:#}")); // non-critical, so debug
+        if is_radius_config_auto && is_tracking_window_arranged {
+            if *self.border_drawer.border_radius.get() != 0.0 {
+                is_updated = self
+                    .border_drawer
+                    .border_radius
+                    .set(0.0)
+                    .inspect_err(|err| error!("could not set border_radius: {err:#}"))
+                    .is_ok();
+            }
             self.border_drawer.border_radius.lock_writes();
-
-            is_updated = true;
-        } else if !is_tracking_window_arranged && is_radius_locked {
+        } else {
             self.border_drawer.border_radius.unlock_writes();
             let radius = self.radius_config.to_radius(
                 self.border_drawer.border_width,
                 self.current_dpi,
                 self.tracking_window,
             );
-            self.border_drawer
-                .border_radius
-                .set(radius)
-                .unwrap_or_else(|err| debug!("border_radius: {err:#}")); // non-critical, so debug
-
-            is_updated = true;
+            if *self.border_drawer.border_radius.get() != radius {
+                is_updated = self
+                    .border_drawer
+                    .border_radius
+                    .set(radius)
+                    .inspect_err(|err| error!("could not set border_radius: {err:#}")) // err should be unreachable
+                    .is_ok();
+            }
         }
 
         is_updated
@@ -892,7 +892,7 @@ impl WindowBorder {
                         };
                 }
 
-                needs_render |= self.sync_radius_for_snapped_state();
+                needs_render |= self.sync_border_radius();
 
                 if needs_render {
                     self.render().log_if_err();
@@ -1150,8 +1150,8 @@ impl WindowBorder {
                     .log_if_err();
                 self.render().log_if_err();
             }
-            // This message is sent by the IPC server to apply new colors at runtime
-            WM_APP_SET_COLORS => {
+            // This message (and other "set" messages) are sent by the IPC server
+            IpcSetColorsPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetColorsPayload) };
 
                 if let Some(ref active_config) = payload.active_color {
@@ -1163,25 +1163,39 @@ impl WindowBorder {
 
                 self.render().log_if_err();
             }
-            // This message is sent by the IPC server to apply a new border width at runtime
-            WM_APP_SET_WIDTH => {
+            IpcSetWidthPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetWidthPayload) };
 
                 self.border_drawer.border_width =
                     payload.width_config.to_width(self.current_dpi as f32);
-                let new_radius = self.radius_config.to_radius(
-                    self.border_drawer.border_width,
-                    self.current_dpi,
-                    self.tracking_window,
-                );
-                self.border_drawer
-                    .border_radius
-                    .set(new_radius)
-                    .log_if_err();
+                self.sync_border_radius();
 
                 self.resize_renderer().log_if_err();
                 self.update_window_rect().log_if_err();
                 self.update_position(None).log_if_err();
+                self.render().log_if_err();
+            }
+            IpcSetOffsetPayload::WND_MSG => {
+                let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetOffsetPayload) };
+
+                let new_offset = payload.offset_config.to_offset(self.current_dpi as f32);
+                // TODO: Remove border_offset "dependency" from window_padding
+                self.window_padding =
+                    self.window_padding - self.border_drawer.border_offset + new_offset;
+                self.border_drawer.border_offset = new_offset;
+
+                self.resize_renderer().log_if_err();
+                self.update_window_rect().log_if_err();
+                self.update_position(None).log_if_err();
+                self.render().log_if_err();
+            }
+            IpcSetRadiusPayload::WND_MSG => {
+                let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetRadiusPayload) };
+
+                // TODO: Idk if I should keep cached radius_config tbh
+                self.radius_config = payload.radius_config;
+                self.sync_border_radius();
+
                 self.render().log_if_err();
             }
             WM_PAINT => {

@@ -11,14 +11,14 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 
 use crate::APP_STATE;
 use crate::colors::ColorBrushConfig;
-use crate::config::{Config, WidthConfig};
+use crate::config::{Config, OffsetConfig, RadiusConfig, WidthConfig};
 use crate::iocp::{UnixListener, UnixStream};
 use crate::utils::{
-    LogIfErr, WM_APP_SET_COLORS, WM_APP_SET_WIDTH, get_border_for_window, post_message_w,
-    remove_file_if_exists,
+    LogIfErr, WM_APP_SET_COLORS, WM_APP_SET_OFFSET, WM_APP_SET_RADIUS, WM_APP_SET_WIDTH,
+    get_border_for_window, post_message_w, remove_file_if_exists,
 };
 
-trait IpcPayload: Clone {
+pub trait IpcPayload: Clone {
     /// The message to post to the message queue for this payload
     const WND_MSG: u32;
 }
@@ -40,6 +40,24 @@ pub struct IpcSetWidthPayload {
 
 impl IpcPayload for IpcSetWidthPayload {
     const WND_MSG: u32 = WM_APP_SET_WIDTH;
+}
+
+#[derive(Clone)]
+pub struct IpcSetOffsetPayload {
+    pub offset_config: OffsetConfig,
+}
+
+impl IpcPayload for IpcSetOffsetPayload {
+    const WND_MSG: u32 = WM_APP_SET_OFFSET;
+}
+
+#[derive(Clone)]
+pub struct IpcSetRadiusPayload {
+    pub radius_config: RadiusConfig,
+}
+
+impl IpcPayload for IpcSetRadiusPayload {
+    const WND_MSG: u32 = WM_APP_SET_RADIUS;
 }
 
 pub fn socket_path() -> anyhow::Result<PathBuf> {
@@ -171,6 +189,16 @@ pub enum IpcCommand {
         #[serde(default)]
         focused: bool,
     },
+    SetOffset {
+        offset: OffsetConfig,
+        #[serde(default)]
+        focused: bool,
+    },
+    SetRadius {
+        radius: RadiusConfig,
+        #[serde(default)]
+        focused: bool,
+    },
     Reload,
     GetState,
 }
@@ -197,6 +225,14 @@ fn process_command(raw: &str) -> String {
         }
         IpcCommand::SetWidth { width, focused } => {
             apply_width(width, focused);
+            json!({"ok": true}).to_string()
+        }
+        IpcCommand::SetOffset { offset, focused } => {
+            apply_offset(offset, focused);
+            json!({"ok": true}).to_string()
+        }
+        IpcCommand::SetRadius { radius, focused } => {
+            apply_radius(radius, focused);
             json!({"ok": true}).to_string()
         }
         IpcCommand::Reload => {
@@ -261,6 +297,7 @@ fn apply_colors(
     inactive: Option<ColorBrushConfig>,
     focused_only: bool,
 ) {
+    // TODO: Update focused window's window rule if focused_only
     if !focused_only {
         // Update the in-memory global config so newly created borders pick up
         // the colors too.  The config file is never written.
@@ -284,5 +321,21 @@ fn apply_width(width_config: WidthConfig, focused_only: bool) {
         APP_STATE.config.write().unwrap().global.border_width = width_config;
     }
     let payload = IpcSetWidthPayload { width_config };
+    broadcast_payload(&payload, focused_only);
+}
+
+fn apply_offset(offset_config: OffsetConfig, focused_only: bool) {
+    if !focused_only {
+        APP_STATE.config.write().unwrap().global.border_offset = offset_config;
+    }
+    let payload = IpcSetOffsetPayload { offset_config };
+    broadcast_payload(&payload, focused_only);
+}
+
+fn apply_radius(radius_config: RadiusConfig, focused_only: bool) {
+    if !focused_only {
+        APP_STATE.config.write().unwrap().global.border_radius = radius_config;
+    }
+    let payload = IpcSetRadiusPayload { radius_config };
     broadcast_payload(&payload, focused_only);
 }
