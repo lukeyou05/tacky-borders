@@ -94,27 +94,32 @@ fn run_daemon() {
 }
 
 const HELP_TEXT: &str = "\
-tacky-borders - start or control a running instance
+tacky-borders - customizable borders for Windows 11 and 10
 
 USAGE:
-  tacky-borders                                       start the border daemon
-  tacky-borders set-color [OPTIONS]                   change border color at runtime
-  tacky-borders set-width <width> [--focused]         change border width at runtime
-  tacky-borders set-offset <offset> [--focused]       change border offset at runtime
-  tacky-borders set-radius <radius> [--focused]       change border radius at runtime
-  tacky-borders reload                                reload config.yaml and recreate borders
-  tacky-borders get-state                             print runtime state as json
-  tacky-borders msg <json>                            send a raw json command
-  tacky-borders help                                  show this help
+  tacky-borders.exe                start the border daemon
+  tacky-borders.exe <command>      send a command to a running instance
+
+COMMANDS:
+  set-color [OPTIONS]              change border color
+  set-width <width> [OPTIONS]      change border width
+  set-offset <offset> [OPTIONS]    change border offset
+  set-radius <radius> [OPTIONS]    change border radius
+  reload                           reload config.yaml and recreate borders
+  get-state                        print runtime state as json
+  msg <json>                       send a raw json command
+  help                             show this help
 
 OPTIONS for set-color:
   -a, --active   <color>    set the active (focused) border color
   -i, --inactive <color>    set the inactive (unfocused) border color
+
+  <color> is a hex string like \"#RRGGBB\" or \"#RRGGBBAA\", \"accent\", or a JSON gradient object:
+    '{\"colors\":[\"#ffffff\",\"#000000\"],\"direction\":\"90deg\"}'
+
+OPTIONS for set-color, set-width, set-offset, set-radius:
   -f, --focused             only update the currently focused window's border;
                             all other borders are left unchanged
-
-<color> is a hex string like \"#RRGGBB\" or \"#RRGGBBAA\", \"accent\", or a JSON gradient object:
-  '{\"colors\":[\"#ffffff\",\"#000000\"],\"direction\":\"90deg\"}'
 ";
 
 fn run_cli(mut args: pico_args::Arguments) -> anyhow::Result<()> {
@@ -184,9 +189,27 @@ fn run_cli(mut args: pico_args::Arguments) -> anyhow::Result<()> {
     }
 
     let response = send_command(&command_json)?;
-    println!("{}", response.trim_end());
+    let trimmed = response.trim_end();
+    validate_response(trimmed)?;
+    println!("{trimmed}");
 
     Ok(())
+}
+
+fn validate_response(response: &str) -> anyhow::Result<()> {
+    let value: serde_json::Value =
+        serde_json::from_str(response).context("could not parse ipc response")?;
+
+    if value.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        return Ok(());
+    }
+
+    let error = value
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ipc command failed");
+
+    anyhow::bail!("{error}")
 }
 
 fn send_command(command_json: &str) -> anyhow::Result<String> {

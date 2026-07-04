@@ -241,13 +241,31 @@ fn process_command(raw: &str) -> String {
             json!({"ok": true}).to_string()
         }
         IpcCommand::GetState => {
-            let config = APP_STATE.config.read().unwrap();
+            let (active_color, inactive_color, border_width, border_offset, border_radius) = {
+                let config = APP_STATE.config.read().unwrap();
+                (
+                    config.global.active_color.clone(),
+                    config.global.inactive_color.clone(),
+                    config.global.border_width,
+                    config.global.border_offset,
+                    config.global.border_radius,
+                )
+            };
+            let active_window = {
+                let isize = *APP_STATE.active_window.lock().unwrap();
+                format!("{isize:#x}") // format as hex
+            };
+            let border_count = APP_STATE.borders.lock().unwrap().len();
+
             json!({
                 "ok": true,
-                "active_window": *APP_STATE.active_window.lock().unwrap(),
-                "border_count": APP_STATE.borders.lock().unwrap().len(),
-                "active_color": config.global.active_color,
-                "inactive_color": config.global.inactive_color,
+                "active_window": active_window,
+                "border_count": border_count,
+                "active_color": active_color,
+                "inactive_color": inactive_color,
+                "border_width": border_width,
+                "border_offset": border_offset,
+                "border_radius": border_radius,
             })
             .to_string()
         }
