@@ -93,6 +93,7 @@ pub struct WindowBorder {
     last_reorder_time: Option<time::Instant>,
     is_debouncing_reorder: bool,
     consecutive_reorders: u64,
+    arranged_override_active: bool, // radius override for arranged/snapped tracking window
 }
 
 impl WindowBorder {
@@ -118,6 +119,7 @@ impl WindowBorder {
             last_reorder_time: None,
             is_debouncing_reorder: false,
             consecutive_reorders: 0,
+            arranged_override_active: false,
         });
 
         this.create_window()
@@ -781,6 +783,7 @@ impl WindowBorder {
                     .is_ok();
             }
             self.border_drawer.border_radius.lock_writes();
+            self.arranged_override_active = true;
         } else {
             self.border_drawer.border_radius.unlock_writes();
             let radius = self.radius_config.to_radius(
@@ -796,6 +799,7 @@ impl WindowBorder {
                     .inspect_err(|err| error!("could not set border_radius: {err:#}")) // err should be unreachable
                     .is_ok();
             }
+            self.arranged_override_active = false;
         }
 
         is_updated
@@ -892,7 +896,14 @@ impl WindowBorder {
                         };
                 }
 
-                needs_render |= self.sync_border_radius();
+                // TODO: Maybe it's time to get rid of the -1.0 = Auto thing
+                if matches!(
+                    self.radius_config,
+                    RadiusConfig::Auto | RadiusConfig::Custom(-1.0)
+                ) && is_window_arranged(self.tracking_window) != self.arranged_override_active
+                {
+                    needs_render |= self.sync_border_radius();
+                }
 
                 if needs_render {
                     self.render().log_if_err();

@@ -153,7 +153,7 @@ impl WidthConfig {
         Self(width)
     }
 
-    // TODO: Maybe add like a trait or smth idk and call it ToRaw with to_raw method instead of to_width
+    // TODO: Maybe rename this and other to_x methods to to_raw or smth idk
     /// Returns a DPI-adjusted raw width value
     pub fn to_width(&self, dpi: f32) -> i32 {
         (self.0 as f32 * dpi / 96.0).round() as i32
