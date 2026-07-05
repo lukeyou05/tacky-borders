@@ -70,6 +70,7 @@ global:
   #         active_color: "#ffffff"
   #         OR
   #         active_color: "accent"
+  #       The supported hex formats are: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
   #   - Gradient: Define colors and direction
   #       Example:
   #         active_color:
