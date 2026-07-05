@@ -690,6 +690,8 @@ impl WindowBorder {
         let config = APP_STATE.config.read().unwrap();
         let global = &config.global;
 
+        // TODO: Cache these values and update them when an IPC command changes it.
+        // That way, we don't undo an IPC command when we rescale the border.
         let width_config = window_rule.border_width.unwrap_or(global.border_width);
         let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
 
@@ -1208,7 +1210,6 @@ impl WindowBorder {
             IpcSetRadiusPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetRadiusPayload) };
 
-                // TODO: Idk if I should keep cached radius_config tbh
                 self.radius_config = payload.radius_config;
                 self.sync_border_radius();
 

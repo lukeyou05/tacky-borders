@@ -21,7 +21,7 @@ use tacky_borders::utils::{
     LogIfErr, imm_disable_ime, set_process_dpi_awareness_context, spawn_window_state_poller,
 };
 use tacky_borders::{
-    APP_STATE, attach_console, create_borders_for_existing_windows, is_unwanted_instance,
+    APP_STATE, attach_parent_console, create_borders_for_existing_windows, is_unwanted_instance,
     register_border_window_class, set_event_hook,
 };
 use windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2;
@@ -110,10 +110,12 @@ COMMANDS:
   msg <json>                       send a raw json command
   help                             show this help
 
+OPTIONS:
+  -h, --help                show this help
+
 OPTIONS for set-color:
   -a, --active   <color>    set the active (focused) border color
   -i, --inactive <color>    set the inactive (unfocused) border color
-
   <color> is a hex string like \"#RRGGBB\" or \"#RRGGBBAA\", \"accent\", or a JSON gradient object:
     '{\"colors\":[\"#ffffff\",\"#000000\"],\"direction\":\"90deg\"}'
 
@@ -124,7 +126,7 @@ OPTIONS for set-color, set-width, set-offset, set-radius:
 
 fn run_cli(mut args: pico_args::Arguments) -> anyhow::Result<()> {
     // Console is disabled by default in release mode so we need to attach it
-    let _ = attach_console();
+    let _ = attach_parent_console();
 
     // Help flags have higher priority and should be handled separately
     if args.contains(["-h", "--help"]) {

@@ -315,7 +315,6 @@ fn apply_colors(
     inactive: Option<ColorBrushConfig>,
     focused_only: bool,
 ) {
-    // TODO: Update focused window's window rule if focused_only
     if !focused_only {
         // Update the in-memory global config so newly created borders pick up
         // the colors too.  The config file is never written.

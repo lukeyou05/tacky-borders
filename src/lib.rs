@@ -544,7 +544,7 @@ pub fn create_logger() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn attach_console() -> WindowsCompatibleResult<()> {
+pub fn attach_parent_console() -> WindowsCompatibleResult<()> {
     unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }?;
     Ok(())
 }
