@@ -502,8 +502,20 @@ impl WindowBorder {
         bottom_color.set_opacity(0.0).log_if_err();
     }
 
+    /// Updates the cached color config and reinitializes the corresponding brush.
     // TODO: I also update color brushes in WM_APP_KOMOREBI; maybe unify the logic.
-    fn update_color_brush(&mut self, is_active: bool, config: &ColorBrushConfig) {
+    fn update_color_brush(&mut self, is_active: bool, config: ColorBrushConfig) {
+        let config = match is_active {
+            true => {
+                self.config.active_color = config;
+                &self.config.active_color
+            }
+            false => {
+                self.config.inactive_color = config;
+                &self.config.inactive_color
+            }
+        };
+
         let brush = match is_active {
             true => &mut self.border_drawer.active_color,
             false => &mut self.border_drawer.inactive_color,
@@ -527,10 +539,6 @@ impl WindowBorder {
             transform: old_transform,
         };
 
-        let brush = match is_active {
-            true => &mut self.border_drawer.active_color,
-            false => &mut self.border_drawer.inactive_color,
-        };
         brush
             .init_brush(renderer, &self.window_rect, &brush_properties)
             .log_if_err();
@@ -1077,12 +1085,10 @@ impl WindowBorder {
             IpcSetColorsPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetColorsPayload) };
 
-                if let Some(ref active_config) = payload.active_color {
-                    self.config.active_color = active_config.clone();
+                if let Some(active_config) = payload.active_color {
                     self.update_color_brush(true, active_config);
                 }
-                if let Some(ref inactive_config) = payload.inactive_color {
-                    self.config.inactive_color = inactive_config.clone();
+                if let Some(inactive_config) = payload.inactive_color {
                     self.update_color_brush(false, inactive_config);
                 }
 
