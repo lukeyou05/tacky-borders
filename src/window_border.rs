@@ -31,9 +31,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 use crate::animations::{AnimType, AnimVec};
+use crate::border_config::BorderConfig;
 use crate::border_drawer::BorderDrawer;
 use crate::colors::ColorBrushConfig;
-use crate::config::{RadiusConfig, WindowRule, ZOrderMode};
+use crate::config::{WindowRule, ZOrderMode};
 use crate::ipc::{
     IpcPayload, IpcSetColorsPayload, IpcSetOffsetPayload, IpcSetRadiusPayload, IpcSetWidthPayload,
 };
@@ -81,14 +82,7 @@ pub struct WindowBorder {
     current_monitor: HMONITOR,
     current_dpi: u32,
     border_drawer: BorderDrawer,
-    // ---- cached config values ----
-    render_backend_config: RenderBackendConfig,
-    radius_config: RadiusConfig,
-    border_z_order: ZOrderMode,
-    follow_native_border: bool,
-    initialize_delay: u64,
-    unminimize_delay: u64,
-    // ------------------------------
+    config: BorderConfig, // cached config values
     is_paused: bool,
     last_reorder_time: Option<time::Instant>,
     is_debouncing_reorder: bool,
@@ -109,12 +103,7 @@ impl WindowBorder {
             current_monitor: Default::default(),
             current_dpi: Default::default(),
             border_drawer: Default::default(),
-            render_backend_config: Default::default(),
-            radius_config: Default::default(),
-            border_z_order: Default::default(),
-            follow_native_border: Default::default(),
-            initialize_delay: Default::default(),
-            unminimize_delay: Default::default(),
+            config: Default::default(),
             is_paused: Default::default(),
             last_reorder_time: None,
             is_debouncing_reorder: false,
@@ -167,7 +156,7 @@ impl WindowBorder {
         self.load_from_config(window_rule, self.current_dpi)?;
 
         // Delay the border while the tracking window is in its creation animation
-        thread::sleep(time::Duration::from_millis(self.initialize_delay));
+        thread::sleep(time::Duration::from_millis(self.config.initialize_delay));
 
         unsafe {
             // Make the window transparent (stole the code from PowerToys; dunno how it works).
@@ -197,7 +186,7 @@ impl WindowBorder {
     }
 
     fn init_border(&mut self) -> anyhow::Result<()> {
-        self.update_color(Some(self.initialize_delay));
+        self.update_color(Some(self.config.initialize_delay));
         self.update_window_rect().log_if_err();
         if self.should_show_border() {
             self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
@@ -255,103 +244,27 @@ impl WindowBorder {
         Ok(())
     }
 
-    // TODO: Bake this into WindowBorder::new() somehow to make the code more maintanable
-    // (so I don't forget to add a line here when a new struct field is added)
     pub fn load_from_config(&mut self, window_rule: WindowRule, dpi: u32) -> anyhow::Result<()> {
-        let config = APP_STATE.config.read().unwrap();
-        let global = &config.global;
-
-        let width_config = window_rule.border_width.unwrap_or(global.border_width);
-        let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
-        let radius_config = window_rule
-            .border_radius
-            .as_ref()
-            .unwrap_or(&global.border_radius);
-        let active_color_config = window_rule
-            .active_color
-            .as_ref()
-            .unwrap_or(&global.active_color);
-        let inactive_color_config = window_rule
-            .inactive_color
-            .as_ref()
-            .unwrap_or(&global.inactive_color);
-        let animations_config = window_rule
-            .animations
-            .as_ref()
-            .unwrap_or(&global.animations);
-        let effects_config = window_rule.effects.as_ref().unwrap_or(&global.effects);
-
-        self.render_backend_config = config.render_backend;
-        self.radius_config = *radius_config;
-
-        // Adjust the border parameters based on the window/monitor dpi
-        let border_width = width_config.to_width(dpi as f32);
-        let border_offset = offset_config.to_offset(dpi as f32);
-        let border_radius = radius_config.to_radius(border_width, dpi, self.tracking_window);
-        let active_color = active_color_config.to_color_brush(true);
-        let inactive_color = inactive_color_config.to_color_brush(false);
-
-        let animations = animations_config.to_animations();
-        let effects = effects_config.to_effects();
-
-        self.border_drawer.configure_appearance(
-            border_width,
-            border_offset,
-            border_radius,
-            active_color,
-            inactive_color,
-            animations,
-            effects,
-        );
-
-        // This padding is used to adjust the border window such that the border and its effects
-        // don't get clipped. However, effects are not supported by the Legacy render backend, so
-        // we'll just set the padding to border_offset if that's what's being used.
-        self.window_padding = match config.render_backend {
-            RenderBackendConfig::V2 => {
-                let max_active_padding = self
-                    .border_drawer
-                    .effects
-                    .active
-                    .iter()
-                    .map(|params| params.required_padding())
-                    .max()
-                    .unwrap_or(0);
-                let max_inactive_padding = self
-                    .border_drawer
-                    .effects
-                    .inactive
-                    .iter()
-                    .map(|params| params.required_padding())
-                    .max()
-                    .unwrap_or(0);
-
-                i32::max(max_active_padding, max_inactive_padding) + border_offset
-            }
-            RenderBackendConfig::Legacy => border_offset,
-        };
-
-        self.border_z_order = window_rule.border_z_order.unwrap_or(global.border_z_order);
-        self.follow_native_border = window_rule
-            .follow_native_border
-            .unwrap_or(global.follow_native_border);
-
-        // If the tracking window is part of the initial windows list (meaning it was already open when
-        // tacky-borders was launched), then there should be no initialize delay.
-        self.initialize_delay = match APP_STATE
+        let app_config = APP_STATE.config.read().unwrap();
+        let is_initial_window = APP_STATE
             .initial_windows
             .lock()
             .unwrap()
-            .contains(&(self.tracking_window.0 as isize))
-        {
-            true => 0,
-            false => window_rule
-                .initialize_delay
-                .unwrap_or(global.initialize_delay),
-        };
-        self.unminimize_delay = window_rule
-            .unminimize_delay
-            .unwrap_or(global.unminimize_delay);
+            .contains(&(self.tracking_window.0 as isize));
+
+        self.config = BorderConfig::resolve(
+            &window_rule,
+            &app_config.global,
+            app_config.render_backend,
+            is_initial_window,
+        );
+        self.config
+            .apply_appearance(&mut self.border_drawer, dpi, self.tracking_window);
+
+        let border_offset = self.config.offset_at(dpi);
+        self.window_padding = self
+            .config
+            .window_padding(&self.border_drawer, border_offset);
 
         // Handle edge case where window is arranged at start
         if is_window_arranged(self.tracking_window) {
@@ -389,7 +302,7 @@ impl WindowBorder {
     }
 
     fn calculate_target_renderer_size(&self) -> WindowsCompatibleResult<D2D_SIZE_U> {
-        match self.render_backend_config {
+        match self.config.render_backend {
             RenderBackendConfig::V2 => self.calculate_target_v2_renderer_size(),
             RenderBackendConfig::Legacy => Ok(self.calculate_target_legacy_renderer_size()),
         }
@@ -406,7 +319,7 @@ impl WindowBorder {
                 renderer_size.height,
                 self.border_window.0,
                 &self.window_rect,
-                APP_STATE.config.read().unwrap().render_backend,
+                self.config.render_backend,
             )
             .windows_context("could not initialize border drawer")?;
 
@@ -470,7 +383,7 @@ impl WindowBorder {
     }
 
     fn should_show_border(&self) -> bool {
-        (!self.follow_native_border || has_native_border(self.tracking_window))
+        (!self.config.follow_native_border || has_native_border(self.tracking_window))
             && is_window_visible(self.tracking_window)
             && !is_window_cloaked(self.tracking_window)
             && !is_window_minimized(self.tracking_window)
@@ -514,7 +427,7 @@ impl WindowBorder {
                 | SWP_NOREDRAW
                 | other_flags.unwrap_or_default();
 
-            let hwndinsertafter = match self.border_z_order {
+            let hwndinsertafter = match self.config.z_order {
                 ZOrderMode::AboveWindow => {
                     // Get the hwnd above the tracking hwnd so we can place the border window in between
                     let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
@@ -686,17 +599,15 @@ impl WindowBorder {
     }
 
     fn rescale_border(&mut self, new_dpi: u32) {
-        let window_rule = get_window_rule(self.tracking_window);
-        let config = APP_STATE.config.read().unwrap();
-        let global = &config.global;
+        let new_offset = self.config.offset_at(new_dpi);
+        self.window_padding = BorderConfig::adjust_padding_for_offset_change(
+            self.window_padding,
+            self.border_drawer.border_offset,
+            new_offset,
+        );
 
-        // TODO: Cache these values and update them when an IPC command changes it.
-        // That way, we don't undo an IPC command when we rescale the border.
-        let width_config = window_rule.border_width.unwrap_or(global.border_width);
-        let offset_config = window_rule.border_offset.unwrap_or(global.border_offset);
-
-        self.border_drawer.border_width = width_config.to_width(new_dpi as f32);
-        self.border_drawer.border_offset = offset_config.to_offset(new_dpi as f32);
+        self.border_drawer.border_width = self.config.width_at(new_dpi);
+        self.border_drawer.border_offset = new_offset;
         self.current_dpi = new_dpi;
         self.sync_border_radius();
     }
@@ -773,11 +684,7 @@ impl WindowBorder {
     fn sync_border_radius(&mut self) -> bool {
         let mut is_updated = false;
 
-        // RadiusConfig::Custom(-1.0) is also checked for legacy reasons
-        let is_radius_config_auto = matches!(
-            self.radius_config,
-            RadiusConfig::Auto | RadiusConfig::Custom(-1.0)
-        );
+        let is_radius_config_auto = self.config.is_radius_auto();
         let is_tracking_window_arranged = is_window_arranged(self.tracking_window);
 
         if is_radius_config_auto && is_tracking_window_arranged {
@@ -793,7 +700,7 @@ impl WindowBorder {
             self.arranged_override_active = true;
         } else {
             self.border_drawer.border_radius.unlock_writes();
-            let radius = self.radius_config.to_radius(
+            let radius = self.config.radius_at(
                 self.border_drawer.border_width,
                 self.current_dpi,
                 self.tracking_window,
@@ -879,6 +786,7 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
+                // TODO: Maybe call update_window_rect after rescale_border_and_resize_renderer_if_needed
                 let prev_rect = self.window_rect;
                 self.update_window_rect().log_if_err();
 
@@ -903,11 +811,8 @@ impl WindowBorder {
                         };
                 }
 
-                // TODO: Maybe it's time to get rid of the -1.0 = Auto thing
-                if matches!(
-                    self.radius_config,
-                    RadiusConfig::Auto | RadiusConfig::Custom(-1.0)
-                ) && is_window_arranged(self.tracking_window) != self.arranged_override_active
+                if self.config.is_radius_auto()
+                    && is_window_arranged(self.tracking_window) != self.arranged_override_active
                 {
                     needs_render |= self.sync_border_radius();
                 }
@@ -1049,10 +954,10 @@ impl WindowBorder {
                 }
 
                 // Keep the border hidden while the tracking window is in its unminimize animation
-                thread::sleep(time::Duration::from_millis(self.unminimize_delay));
+                thread::sleep(time::Duration::from_millis(self.config.unminimize_delay));
 
                 if self.should_show_border() {
-                    self.update_color(Some(self.unminimize_delay));
+                    self.update_color(Some(self.config.unminimize_delay));
                     self.update_window_rect().log_if_err();
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
@@ -1173,9 +1078,11 @@ impl WindowBorder {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetColorsPayload) };
 
                 if let Some(ref active_config) = payload.active_color {
+                    self.config.active_color = active_config.clone();
                     self.update_color_brush(true, active_config);
                 }
                 if let Some(ref inactive_config) = payload.inactive_color {
+                    self.config.inactive_color = inactive_config.clone();
                     self.update_color_brush(false, inactive_config);
                 }
 
@@ -1184,8 +1091,8 @@ impl WindowBorder {
             IpcSetWidthPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetWidthPayload) };
 
-                self.border_drawer.border_width =
-                    payload.width_config.to_width(self.current_dpi as f32);
+                self.config.width = payload.width_config;
+                self.border_drawer.border_width = self.config.width_at(self.current_dpi);
                 self.sync_border_radius();
 
                 self.resize_renderer().log_if_err();
@@ -1196,10 +1103,13 @@ impl WindowBorder {
             IpcSetOffsetPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetOffsetPayload) };
 
-                let new_offset = payload.offset_config.to_offset(self.current_dpi as f32);
-                // TODO: Remove border_offset "dependency" from window_padding
-                self.window_padding =
-                    self.window_padding - self.border_drawer.border_offset + new_offset;
+                self.config.offset = payload.offset_config;
+                let new_offset = self.config.offset_at(self.current_dpi);
+                self.window_padding = BorderConfig::adjust_padding_for_offset_change(
+                    self.window_padding,
+                    self.border_drawer.border_offset,
+                    new_offset,
+                );
                 self.border_drawer.border_offset = new_offset;
 
                 self.resize_renderer().log_if_err();
@@ -1210,7 +1120,7 @@ impl WindowBorder {
             IpcSetRadiusPayload::WND_MSG => {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetRadiusPayload) };
 
-                self.radius_config = payload.radius_config;
+                self.config.radius = payload.radius_config;
                 self.sync_border_radius();
 
                 self.render().log_if_err();
@@ -1254,6 +1164,8 @@ impl WindowBorder {
                     self.current_dpi = new_dpi;
                     debug!("dpi has changed! new dpi: {new_dpi}");
 
+                    // TODO: Maybe call update_window_rect and update_position, though they get
+                    // handled on location change anyways
                     self.rescale_border(new_dpi);
                     self.resize_renderer().log_if_err();
                     self.render().log_if_err();
@@ -1314,7 +1226,7 @@ impl WindowBorder {
     }
 
     fn handle_reorder(&mut self) {
-        match self.border_z_order {
+        match self.config.z_order {
             ZOrderMode::AboveWindow => {
                 // When the tracking window reorders its contents, it may change the z-order. So,
                 // we first check whether the border is still above the tracking window, and if

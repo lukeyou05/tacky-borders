@@ -5,6 +5,7 @@ extern crate sp_log;
 pub mod anim_timer;
 pub mod animations;
 pub mod auto_start;
+pub mod border_config;
 pub mod border_drawer;
 pub mod colors;
 pub mod config;
