@@ -7,6 +7,7 @@ use crate::config::{Global, OffsetConfig, RadiusConfig, WidthConfig, WindowRule,
 use crate::effects::EffectsConfig;
 use crate::render_backend::RenderBackendConfig;
 
+/// Resolved border parameters built from the config.yaml
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct BorderConfig {
     pub render_backend: RenderBackendConfig,

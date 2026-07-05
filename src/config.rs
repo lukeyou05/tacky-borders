@@ -29,6 +29,7 @@ use windows::core::PCWSTR;
 
 const DEFAULT_CONFIG: &str = include_str!("resources/config.yaml");
 
+/// The config.yaml definition
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
