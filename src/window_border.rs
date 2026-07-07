@@ -5,7 +5,7 @@ use std::time;
 use windows::Win32::Foundation::{
     COLORREF, D2DERR_RECREATE_TARGET, FALSE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
 };
-use windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U;
+use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D_SIZE_U};
 use windows::Win32::Graphics::Direct2D::{D2D1_BRUSH_PROPERTIES, ID2D1RenderTarget};
 use windows::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -73,15 +73,15 @@ impl WindowState {
 
 #[derive(Debug)]
 pub struct WindowBorder {
-    // TODO: Maybe rename these to border_hwnd and tracking_hwnd
     pub border_window: OwnedHWND,
     pub tracking_window: HWND,
     window_state: WindowState,
     window_rect: RECT,
-    window_padding: i32,
+    border_offset: i32,
+    border_padding: i32, // padding to accommodate things like shadow/glow effects
     current_monitor: HMONITOR,
     current_dpi: u32,
-    border_drawer: BorderDrawer,
+    drawer: BorderDrawer,
     config: BorderConfig, // cached config values
     is_paused: bool,
     last_reorder_time: Option<time::Instant>,
@@ -99,10 +99,11 @@ impl WindowBorder {
             tracking_window,
             window_state: Default::default(),
             window_rect: Default::default(),
-            window_padding: Default::default(),
+            border_offset: Default::default(),
+            border_padding: Default::default(),
             current_monitor: Default::default(),
             current_dpi: Default::default(),
-            border_drawer: Default::default(),
+            drawer: Default::default(),
             config: Default::default(),
             is_paused: Default::default(),
             last_reorder_time: None,
@@ -199,8 +200,7 @@ impl WindowBorder {
             self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
             self.render().log_if_err();
 
-            self.border_drawer
-                .set_anims_timer_if_needed(self.border_window.0);
+            self.drawer.set_anims_timer_if_needed(self.border_window.0);
         }
 
         // Handle the edge case where the tracking window is already minimized
@@ -258,13 +258,12 @@ impl WindowBorder {
             app_config.render_backend,
             is_initial_window,
         );
-        self.config
-            .apply_appearance(&mut self.border_drawer, dpi, self.tracking_window);
+        self.drawer
+            .configure_appearance(&self.config, dpi, self.tracking_window);
 
-        let border_offset = self.config.offset_at(dpi);
-        self.window_padding = self
-            .config
-            .window_padding(&self.border_drawer, border_offset);
+        self.border_offset = self.config.offset_at(dpi);
+        self.border_padding = self.config.border_padding(&self.drawer);
+        self.current_dpi = dpi;
 
         // Handle edge case where window is arranged at start
         if is_window_arranged(self.tracking_window) {
@@ -282,12 +281,15 @@ impl WindowBorder {
         let monitor_width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
         let monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
 
-        let border_width = self.border_drawer.border_width;
-        let window_padding = self.window_padding;
+        let stroke_width = self.drawer.stroke_width;
+        let border_offset = self.border_offset;
+        let border_padding = self.border_padding;
 
         Ok(D2D_SIZE_U {
-            width: (monitor_width as i32 + ((border_width + window_padding) * 2)) as u32,
-            height: (monitor_height as i32 + ((border_width + window_padding) * 2)) as u32,
+            width: (monitor_width as i32 + ((stroke_width + border_offset + border_padding) * 2))
+                .max(1) as u32,
+            height: (monitor_height as i32 + ((stroke_width + border_offset + border_padding) * 2))
+                .max(1) as u32, // size must be at least 1 otherwise resize/init renderer fails
         })
     }
 
@@ -313,12 +315,12 @@ impl WindowBorder {
             .calculate_target_renderer_size()
             .windows_context("could not calculate target renderer size")?;
 
-        self.border_drawer
+        self.drawer
             .init(
                 renderer_size.width,
                 renderer_size.height,
                 self.border_window.0,
-                &self.window_rect,
+                self.compute_border_bounds(),
                 self.config.render_backend,
             )
             .windows_context("could not initialize border drawer")?;
@@ -340,7 +342,7 @@ impl WindowBorder {
     }
 
     fn needs_drawer_recreation(&self) -> WindowsCompatibleResult<bool> {
-        match self.border_drawer.render_backend {
+        match self.drawer.render_backend {
             // With the V2 backend, we use the stored adapter LUID to check whether our backend is
             // still using the primary display adapter.
             RenderBackend::V2(ref backend) => {
@@ -408,7 +410,7 @@ impl WindowBorder {
             return Err(e);
         }
 
-        let adjustment = self.border_drawer.border_width + self.window_padding;
+        let adjustment = self.drawer.stroke_width + self.border_offset + self.border_padding;
         // Make space for the border + padding
         self.window_rect.top -= adjustment;
         self.window_rect.left -= adjustment;
@@ -471,7 +473,7 @@ impl WindowBorder {
         );
 
         match self
-            .border_drawer
+            .drawer
             .animations
             .get_current(self.window_state)
             .contains_type(AnimType::Fade)
@@ -479,7 +481,7 @@ impl WindowBorder {
             false => self.update_brush_opacities(),
             true if check_delay == Some(0) => {
                 self.update_brush_opacities();
-                self.border_drawer
+                self.drawer
                     .animations
                     .update_fade_progress(self.window_state)
             }
@@ -490,12 +492,12 @@ impl WindowBorder {
     fn update_brush_opacities(&mut self) {
         let (top_color, bottom_color) = match self.window_state {
             WindowState::Active => (
-                &mut self.border_drawer.active_color,
-                &mut self.border_drawer.inactive_color,
+                &mut self.drawer.active_color,
+                &mut self.drawer.inactive_color,
             ),
             WindowState::Inactive => (
-                &mut self.border_drawer.inactive_color,
-                &mut self.border_drawer.active_color,
+                &mut self.drawer.inactive_color,
+                &mut self.drawer.active_color,
             ),
         };
         top_color.set_opacity(1.0).log_if_err();
@@ -516,9 +518,11 @@ impl WindowBorder {
             }
         };
 
+        let bounds = self.compute_border_bounds();
+
         let brush = match is_active {
-            true => &mut self.border_drawer.active_color,
-            false => &mut self.border_drawer.inactive_color,
+            true => &mut self.drawer.active_color,
+            false => &mut self.drawer.inactive_color,
         };
 
         let old_opacity = brush.get_opacity().unwrap_or_default();
@@ -526,7 +530,7 @@ impl WindowBorder {
 
         *brush = config.to_color_brush(is_active);
 
-        let renderer: &ID2D1RenderTarget = match self.border_drawer.render_backend {
+        let renderer: &ID2D1RenderTarget = match self.drawer.render_backend {
             RenderBackend::V2(ref backend) => &backend.d2d_context,
             RenderBackend::Legacy(ref backend) => &backend.render_target,
             RenderBackend::None => {
@@ -540,7 +544,7 @@ impl WindowBorder {
         };
 
         brush
-            .init_brush(renderer, &self.window_rect, &brush_properties)
+            .init_brush(renderer, &bounds, &brush_properties)
             .log_if_err();
     }
 
@@ -574,7 +578,7 @@ impl WindowBorder {
             return Err(WindowsCompatibleError::Standalone(
                 StandaloneWindowsError::new(
                     T_E_ERROR,
-                    format!("self.render() failed; exiting thread: {err:#}"),
+                    format!("a directx operation failed; exiting thread: {err:#}"),
                 ),
             ));
         }
@@ -582,15 +586,28 @@ impl WindowBorder {
         Ok(())
     }
 
+    /// Computes the rect to pass into BorderDrawer::render()
+    fn compute_border_bounds(&self) -> D2D_RECT_F {
+        let window_rect = self.window_rect;
+        let border_padding = self.border_padding as f32;
+
+        D2D_RECT_F {
+            left: border_padding,
+            top: border_padding,
+            right: (window_rect.right - window_rect.left) as f32 - border_padding,
+            bottom: (window_rect.bottom - window_rect.top) as f32 - border_padding,
+        }
+    }
+
     fn raw_render(&mut self) -> WindowsCompatibleResult<()> {
         // The legacy renderer's size requires an update everytime self.window_rect updates
-        if let RenderBackend::Legacy(ref backend) = self.border_drawer.render_backend {
+        if let RenderBackend::Legacy(ref backend) = self.drawer.render_backend {
             let renderer_size = self.calculate_target_legacy_renderer_size();
             backend.resize(renderer_size.width, renderer_size.height)?;
         }
+        let bounds = self.compute_border_bounds();
 
-        self.border_drawer
-            .render(&self.window_rect, self.window_padding, self.window_state)
+        self.drawer.render(bounds, self.window_state)
     }
 
     pub fn render(&mut self) -> WindowsCompatibleResult<()> {
@@ -607,15 +624,8 @@ impl WindowBorder {
     }
 
     fn rescale_border(&mut self, new_dpi: u32) {
-        let new_offset = self.config.offset_at(new_dpi);
-        self.window_padding = BorderConfig::adjust_padding_for_offset_change(
-            self.window_padding,
-            self.border_drawer.border_offset,
-            new_offset,
-        );
-
-        self.border_drawer.border_width = self.config.width_at(new_dpi);
-        self.border_drawer.border_offset = new_offset;
+        self.drawer.stroke_width = self.config.width_at(new_dpi);
+        self.border_offset = self.config.offset_at(new_dpi);
         self.current_dpi = new_dpi;
         self.sync_border_radius();
     }
@@ -625,7 +635,7 @@ impl WindowBorder {
             .calculate_target_renderer_size()
             .context("could not calculate target renderer size")?;
         let actual_renderer_size = self
-            .border_drawer
+            .drawer
             .render_backend
             .get_pixel_size()
             .context("could not get actual renderer size")?;
@@ -637,7 +647,7 @@ impl WindowBorder {
         let renderer_size = self
             .calculate_target_renderer_size()
             .windows_context("could not calculate target renderer size")?;
-        self.border_drawer
+        self.drawer
             .resize_renderer(renderer_size.width, renderer_size.height)
             .windows_context("could not update renderer")
     }
@@ -687,7 +697,7 @@ impl WindowBorder {
     ///
     /// Returns a bool indicating whether the radius was updated.
     //
-    // TODO: Make it harder to directly set self.border_drawer.border_radius in other parts of
+    // TODO: Make it harder to directly set self.drawer.corner_radius in other parts of
     // the code (we should use this function instead)
     fn sync_border_radius(&mut self) -> bool {
         let mut is_updated = false;
@@ -696,29 +706,29 @@ impl WindowBorder {
         let is_tracking_window_arranged = is_window_arranged(self.tracking_window);
 
         if is_radius_config_auto && is_tracking_window_arranged {
-            if *self.border_drawer.border_radius.get() != 0.0 {
+            if *self.drawer.corner_radius.get() != 0.0 {
                 is_updated = self
-                    .border_drawer
-                    .border_radius
+                    .drawer
+                    .corner_radius
                     .set(0.0)
-                    .inspect_err(|err| error!("could not set border_radius: {err:#}"))
+                    .inspect_err(|err| error!("could not set corner_radius: {err:#}"))
                     .is_ok();
             }
-            self.border_drawer.border_radius.lock_writes();
+            self.drawer.corner_radius.lock_writes();
             self.arranged_override_active = true;
         } else {
-            self.border_drawer.border_radius.unlock_writes();
+            self.drawer.corner_radius.unlock_writes();
             let radius = self.config.radius_at(
-                self.border_drawer.border_width,
+                self.drawer.stroke_width,
                 self.current_dpi,
                 self.tracking_window,
             );
-            if *self.border_drawer.border_radius.get() != radius {
+            if *self.drawer.corner_radius.get() != radius {
                 is_updated = self
-                    .border_drawer
-                    .border_radius
+                    .drawer
+                    .corner_radius
                     .set(radius)
-                    .inspect_err(|err| error!("could not set border_radius: {err:#}")) // err should be unreachable
+                    .inspect_err(|err| error!("could not set corner_radius: {err:#}")) // err should be unreachable
                     .is_ok();
             }
             self.arranged_override_active = false;
@@ -729,7 +739,7 @@ impl WindowBorder {
 
     fn cleanup_and_queue_exit(&mut self) {
         self.is_paused = true;
-        self.border_drawer.destroy_anims_timer();
+        self.drawer.destroy_anims_timer();
         unsafe { PostQuitMessage(0) };
     }
 
@@ -789,7 +799,7 @@ impl WindowBorder {
                 // doing so would prevent us from handling the transition back to a regular window.
                 if !self.should_show_border() {
                     self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
-                    self.border_drawer.destroy_anims_timer();
+                    self.drawer.destroy_anims_timer();
 
                     return LRESULT(0);
                 }
@@ -829,8 +839,7 @@ impl WindowBorder {
                     self.render().log_if_err();
                 }
 
-                self.border_drawer
-                    .set_anims_timer_if_needed(self.border_window.0);
+                self.drawer.set_anims_timer_if_needed(self.border_window.0);
             }
             // EVENT_OBJECT_REORDER
             WM_APP_REORDER => {
@@ -923,8 +932,7 @@ impl WindowBorder {
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
 
-                    self.border_drawer
-                        .set_anims_timer_if_needed(self.border_window.0);
+                    self.drawer.set_anims_timer_if_needed(self.border_window.0);
                 }
 
                 self.is_paused = false;
@@ -932,7 +940,7 @@ impl WindowBorder {
             // EVENT_OBJECT_HIDE / EVENT_OBJECT_CLOAKED
             WM_APP_HIDECLOAKED => {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
-                self.border_drawer.destroy_anims_timer();
+                self.drawer.destroy_anims_timer();
                 self.is_paused = true;
             }
             // EVENT_OBJECT_MINIMIZESTART
@@ -940,16 +948,10 @@ impl WindowBorder {
                 self.update_position(Some(SWP_HIDEWINDOW)).log_if_err();
 
                 // Needed for the fade animation to work correctly when window is unminimized
-                self.border_drawer
-                    .active_color
-                    .set_opacity(0.0)
-                    .log_if_err();
-                self.border_drawer
-                    .inactive_color
-                    .set_opacity(0.0)
-                    .log_if_err();
+                self.drawer.active_color.set_opacity(0.0).log_if_err();
+                self.drawer.inactive_color.set_opacity(0.0).log_if_err();
 
-                self.border_drawer.destroy_anims_timer();
+                self.drawer.destroy_anims_timer();
                 self.is_paused = true;
             }
             // EVENT_SYSTEM_MINIMIZEEND
@@ -970,8 +972,7 @@ impl WindowBorder {
                     self.update_position(Some(SWP_SHOWWINDOW)).log_if_err();
                     self.render().log_if_err();
 
-                    self.border_drawer
-                        .set_anims_timer_if_needed(self.border_window.0);
+                    self.drawer.set_anims_timer_if_needed(self.border_window.0);
                 }
 
                 self.is_paused = false;
@@ -981,9 +982,8 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                self.border_drawer
-                    .animate(&self.window_rect, self.window_padding, self.window_state)
-                    .log_if_err();
+                let bounds = self.compute_border_bounds();
+                self.drawer.animate(bounds, self.window_state).log_if_err();
             }
             WM_APP_KOMOREBI => {
                 let window_rule = get_window_rule(self.tracking_window);
@@ -1029,18 +1029,10 @@ impl WindowBorder {
                     .as_ref()
                     .unwrap_or(&global.komorebi_colors);
 
-                let old_opacity = self
-                    .border_drawer
-                    .active_color
-                    .get_opacity()
-                    .unwrap_or_default();
-                let old_transform = self
-                    .border_drawer
-                    .active_color
-                    .get_transform()
-                    .unwrap_or_default();
+                let old_opacity = self.drawer.active_color.get_opacity().unwrap_or_default();
+                let old_transform = self.drawer.active_color.get_transform().unwrap_or_default();
 
-                self.border_drawer.active_color = match window_kind {
+                self.drawer.active_color = match window_kind {
                     WindowKind::Single => active_color_config.to_color_brush(true),
                     WindowKind::Stack => komorebi_colors_config
                         .stack_color
@@ -1063,7 +1055,8 @@ impl WindowBorder {
                     }
                 };
 
-                let renderer: &ID2D1RenderTarget = match self.border_drawer.render_backend {
+                let bounds = self.compute_border_bounds();
+                let renderer: &ID2D1RenderTarget = match self.drawer.render_backend {
                     RenderBackend::V2(ref backend) => &backend.d2d_context,
                     RenderBackend::Legacy(ref backend) => &backend.render_target,
                     RenderBackend::None => {
@@ -1075,9 +1068,9 @@ impl WindowBorder {
                     opacity: old_opacity,
                     transform: old_transform,
                 };
-                self.border_drawer
+                self.drawer
                     .active_color
-                    .init_brush(renderer, &self.window_rect, &brush_properties)
+                    .init_brush(renderer, &bounds, &brush_properties)
                     .log_if_err();
                 self.render().log_if_err();
             }
@@ -1098,7 +1091,7 @@ impl WindowBorder {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetWidthPayload) };
 
                 self.config.width = payload.width_config;
-                self.border_drawer.border_width = self.config.width_at(self.current_dpi);
+                self.drawer.stroke_width = self.config.width_at(self.current_dpi);
                 self.sync_border_radius();
 
                 self.resize_renderer().log_if_err();
@@ -1110,13 +1103,7 @@ impl WindowBorder {
                 let payload = unsafe { Box::from_raw(lparam.0 as *mut IpcSetOffsetPayload) };
 
                 self.config.offset = payload.offset_config;
-                let new_offset = self.config.offset_at(self.current_dpi);
-                self.window_padding = BorderConfig::adjust_padding_for_offset_change(
-                    self.window_padding,
-                    self.border_drawer.border_offset,
-                    new_offset,
-                );
-                self.border_drawer.border_offset = new_offset;
+                self.border_offset = self.config.offset_at(self.current_dpi);
 
                 self.resize_renderer().log_if_err();
                 self.update_window_rect().log_if_err();
@@ -1206,11 +1193,11 @@ impl WindowBorder {
             WM_POWERBROADCAST => match wparam.0 as u32 {
                 PBT_APMSUSPEND => {
                     debug!("system is suspending; uninitializing border drawer");
-                    self.border_drawer.destroy_anims_timer();
-                    self.border_drawer.uninit();
+                    self.drawer.destroy_anims_timer();
+                    self.drawer.uninit();
                 }
                 PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC
-                    if matches!(self.border_drawer.render_backend, RenderBackend::None) =>
+                    if matches!(self.drawer.render_backend, RenderBackend::None) =>
                 {
                     debug!("system is resuming; reinitializing border drawer");
                     if let Err(err) = self.init_drawer() {

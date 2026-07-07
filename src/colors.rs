@@ -2,8 +2,8 @@ use anyhow::{Context, anyhow};
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
-use windows::Win32::Foundation::{FALSE, RECT};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_GRADIENT_STOP};
+use windows::Win32::Foundation::FALSE;
+use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F, D2D1_GRADIENT_STOP};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget,
@@ -171,7 +171,7 @@ impl ColorBrush {
     pub fn init_brush(
         &mut self,
         renderer: &ID2D1RenderTarget,
-        window_rect: &RECT,
+        bounds: &D2D_RECT_F,
         brush_properties: &D2D1_BRUSH_PROPERTIES,
     ) -> WindowsCompatibleResult<()> {
         match self {
@@ -184,21 +184,7 @@ impl ColorBrush {
                 Ok(())
             },
             ColorBrush::Gradient(gradient) => unsafe {
-                let width = (window_rect.right - window_rect.left) as f32;
-                let height = (window_rect.bottom - window_rect.top) as f32;
-
-                // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
-                // convert it into coordinates in terms of the screen's pixels
-                let gradient_properties = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                    startPoint: Vector2 {
-                        X: gradient.direction.start[0] * width,
-                        Y: gradient.direction.start[1] * height,
-                    },
-                    endPoint: Vector2 {
-                        X: gradient.direction.end[0] * width,
-                        Y: gradient.direction.end[1] * height,
-                    },
-                };
+                let gradient_properties = gradient.linear_gradient_properties(bounds);
 
                 let gradient_stop_collection = renderer.CreateGradientStopCollection(
                     &gradient.gradient_stops,
@@ -316,25 +302,33 @@ impl ColorBrush {
 }
 
 impl GradientBrush {
-    pub fn update_start_end_points(&self, window_rect: &RECT) {
-        let width = (window_rect.right - window_rect.left) as f32;
-        let height = (window_rect.bottom - window_rect.top) as f32;
+    /// Converts normalized gradient direction coordinates into bitmap-space start/end points.
+    fn linear_gradient_properties(
+        &self,
+        bounds: &D2D_RECT_F,
+    ) -> D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+        let width = bounds.right - bounds.left;
+        let height = bounds.bottom - bounds.top;
 
-        // The direction/GradientCoordinates only range from 0.0 to 1.0, but we need to
-        // convert it into coordinates in terms of pixels
-        let start_point = Vector2 {
-            X: self.direction.start[0] * width,
-            Y: self.direction.start[1] * height,
-        };
-        let end_point = Vector2 {
-            X: self.direction.end[0] * width,
-            Y: self.direction.end[1] * height,
-        };
+        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+            startPoint: Vector2 {
+                X: bounds.left + (self.direction.start[0] * width),
+                Y: bounds.top + (self.direction.start[1] * height),
+            },
+            endPoint: Vector2 {
+                X: bounds.left + (self.direction.end[0] * width),
+                Y: bounds.top + (self.direction.end[1] * height),
+            },
+        }
+    }
+
+    pub fn update_start_end_points(&self, bounds: &D2D_RECT_F) {
+        let gradient_properties = self.linear_gradient_properties(bounds);
 
         if let Some(ref id2d1_brush) = self.brush {
             unsafe {
-                id2d1_brush.SetStartPoint(start_point);
-                id2d1_brush.SetEndPoint(end_point)
+                id2d1_brush.SetStartPoint(gradient_properties.startPoint);
+                id2d1_brush.SetEndPoint(gradient_properties.endPoint)
             };
         }
     }

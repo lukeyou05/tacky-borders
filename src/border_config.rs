@@ -89,25 +89,11 @@ impl BorderConfig {
         matches!(self.radius, RadiusConfig::Auto | RadiusConfig::Custom(-1.0))
     }
 
-    pub fn apply_appearance(&self, drawer: &mut BorderDrawer, dpi: u32, tracking_window: HWND) {
-        let border_width = self.width_at(dpi);
-        let border_offset = self.offset_at(dpi);
-        let border_radius = self.radius_at(border_width, dpi, tracking_window);
-
-        drawer.configure_appearance(
-            border_width,
-            border_offset,
-            border_radius,
-            self.active_color.to_color_brush(true),
-            self.inactive_color.to_color_brush(false),
-            self.animations.to_animations(),
-            self.effects.to_effects(),
-        );
-    }
-
     /// This padding is used to adjust the border window such that the border and its effects
     /// don't get clipped.
-    pub fn window_padding(&self, drawer: &BorderDrawer, border_offset: i32) -> i32 {
+    //
+    // TODO: Maybe scale effects and padding according to DPI
+    pub fn border_padding(&self, drawer: &BorderDrawer) -> i32 {
         // Effects are not supported by the Legacy render backend, so we'll just ignore them
         // in that case.
         match self.render_backend {
@@ -127,18 +113,9 @@ impl BorderConfig {
                     .max()
                     .unwrap_or(0);
 
-                i32::max(max_active_padding, max_inactive_padding) + border_offset
+                i32::max(max_active_padding, max_inactive_padding)
             }
-            RenderBackendConfig::Legacy => border_offset,
+            RenderBackendConfig::Legacy => 0,
         }
-    }
-
-    // TODO: Remove border_offset "dependency" from window_padding
-    pub fn adjust_padding_for_offset_change(
-        window_padding: i32,
-        old_offset: i32,
-        new_offset: i32,
-    ) -> i32 {
-        window_padding - old_offset + new_offset
     }
 }

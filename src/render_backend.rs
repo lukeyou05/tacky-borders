@@ -36,6 +36,8 @@ pub const TARGET_BITMAP_PROPS: D2D1_BITMAP_PROPERTIES1 = D2D1_BITMAP_PROPERTIES1
         format: DXGI_FORMAT_B8G8R8A8_UNORM,
         alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
     },
+    // TODO: Test scaling using these dpiX dpiY instead of manually scaling stroke width myself.
+    // If I remember correctly, using these could lead to blurry edges, but I want to try again.
     dpiX: 96.0,
     dpiY: 96.0,
     colorContext: ManuallyDrop::new(None),

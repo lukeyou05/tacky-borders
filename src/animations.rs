@@ -1,7 +1,8 @@
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 
 use windows_numerics::{Matrix3x2, Vector2};
 
@@ -60,7 +61,7 @@ pub struct Animations {
 impl Animations {
     pub fn animate_spiral(
         &mut self,
-        window_rect: &RECT,
+        bounds: &D2D_RECT_F,
         active_color: &ColorBrush,
         inactive_color: &ColorBrush,
         anim_elapsed: &time::Duration,
@@ -81,15 +82,15 @@ impl Animations {
 
         let y_coord = anim_params.easing_fn.as_ref()(self.spiral_progress);
 
-        // Calculate the center point of the window
-        let center_x = (window_rect.right - window_rect.left) / 2;
-        let center_y = (window_rect.bottom - window_rect.top) / 2;
+        // Calculate the center point of the bounds
+        let center_x = bounds.left + ((bounds.right - bounds.left) / 2.0);
+        let center_y = bounds.top + ((bounds.bottom - bounds.top) / 2.0);
 
         let transform = Matrix3x2::rotation_around(
             360.0 * y_coord,
             Vector2 {
-                X: center_x as f32,
-                Y: center_y as f32,
+                X: center_x,
+                Y: center_y,
             },
         );
 
