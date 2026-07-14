@@ -813,15 +813,7 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                // TODO: Maybe call update_window_rect after rescale_border_and_resize_renderer_if_needed
-                let prev_rect = self.window_rect;
-                self.update_window_rect().log_if_err();
-
-                let update_pos_flags =
-                    (!is_window_visible(self.border_window.0)).then_some(SWP_SHOWWINDOW);
-                self.update_position(update_pos_flags).log_if_err();
-
-                let mut needs_render = !are_rects_same_size(&self.window_rect, &prev_rect);
+                let mut needs_render = false;
 
                 let new_monitor = monitor_from_window(self.tracking_window);
                 if new_monitor != self.current_monitor {
@@ -838,11 +830,21 @@ impl WindowBorder {
                         };
                 }
 
+                // If radius config is Auto, sync radius when the snap/arranged state changes
+                // so that the border is square when arranged, and restored to normal after.
                 if self.config.is_radius_auto()
                     && is_window_arranged(self.tracking_window) != self.arranged_override_active
                 {
                     needs_render |= self.sync_border_radius();
                 }
+
+                let prev_rect = self.window_rect;
+                self.update_window_rect().log_if_err();
+                needs_render |= !are_rects_same_size(&self.window_rect, &prev_rect);
+
+                let update_pos_flags =
+                    (!is_window_visible(self.border_window.0)).then_some(SWP_SHOWWINDOW);
+                self.update_position(update_pos_flags).log_if_err();
 
                 if needs_render {
                     self.render().log_if_err();
