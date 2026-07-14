@@ -626,8 +626,17 @@ impl WindowBorder {
     fn rescale_border(&mut self, new_dpi: u32) {
         self.drawer.stroke_width = self.config.width_at(new_dpi);
         self.border_offset = self.config.offset_at(new_dpi);
+        self.drawer.effects = self.config.effects.to_effects(new_dpi);
+        self.border_padding = self.config.border_padding(&self.drawer);
         self.current_dpi = new_dpi;
         self.sync_border_radius();
+
+        if self.drawer.render_backend.supports_effects() {
+            self.drawer
+                .effects
+                .init_command_lists_if_enabled(&self.drawer.render_backend)
+                .log_if_err();
+        }
     }
 
     fn needs_renderer_resize(&self) -> anyhow::Result<bool> {

@@ -49,7 +49,7 @@ impl BorderDrawer {
         self.active_color = config.active_color.to_color_brush(true);
         self.inactive_color = config.inactive_color.to_color_brush(false);
         self.animations = config.animations.to_animations();
-        self.effects = config.effects.to_effects();
+        self.effects = config.effects.to_effects(dpi);
     }
 
     pub fn init(

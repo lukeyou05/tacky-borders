@@ -36,19 +36,18 @@ pub struct EffectsConfig {
 }
 
 impl EffectsConfig {
-    pub fn to_effects(&self) -> Effects {
+    pub fn to_effects(&self, dpi: u32) -> Effects {
         if self.enabled {
             Effects {
                 active: self
                     .active
                     .iter()
-                    .map(|config| config.to_effect_params())
+                    .map(|config| config.to_effect_params(dpi))
                     .collect(),
                 inactive: self
                     .inactive
-                    .clone()
                     .iter()
-                    .map(|config| config.to_effect_params())
+                    .map(|config| config.to_effect_params(dpi))
                     .collect(),
                 ..Default::default()
             }
@@ -130,6 +129,9 @@ impl Effects {
 
                                 // If spread > 0, apply morphology dilation before blur
                                 // This preserves corner shapes while expanding the glow
+                                //
+                                // TODO: Find more efficient method of rendering spread (maybe
+                                // just expand border_outer_rect in BorderDrawer::render())
                                 if effect_params.spread > 0.0 {
                                     let morphology_effect = d2d_context
                                         .CreateEffect(&CLSID_D2D1Morphology)
@@ -293,7 +295,7 @@ impl Effects {
                                     false,
                                 );
 
-                                // Apply blur using config's std_dev as-is
+                                // Apply blur using param's std_dev
                                 blur_effect
                                     .SetValue(
                                         D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0 as u32,
@@ -471,20 +473,23 @@ pub struct EffectParamsConfig {
 }
 
 impl EffectParamsConfig {
-    pub fn to_effect_params(&self) -> EffectParams {
+    pub fn to_effect_params(&self, dpi: u32) -> EffectParams {
+        const BASE_DPI: f32 = 96.0;
+        let scale = dpi as f32 / BASE_DPI;
+
         EffectParams {
             effect_type: self.effect_type,
             opacity: self.opacity,
-            std_dev: self.std_dev,
-            spread: self.spread,
-            translation: self.translation,
+            std_dev: self.std_dev * scale,
+            spread: self.spread * scale,
+            translation: Translation {
+                x: self.translation.x * scale,
+                y: self.translation.y * scale,
+            },
         }
     }
 }
 
-// Technically we don't need this since EffectParams and EffectParamsConfig have the same fields,
-// but I'll keep it just so it's consistent with the other config structs. This means
-// to_effect_params() basically acts like clone(), and cloning is something we need to do anyways.
 #[derive(Debug, Clone)]
 pub struct EffectParams {
     pub effect_type: EffectType,

@@ -90,9 +90,7 @@ impl BorderConfig {
     }
 
     /// This padding is used to adjust the border window such that the border and its effects
-    /// don't get clipped.
-    //
-    // TODO: Maybe scale effects and padding according to DPI
+    /// don't get clipped. Effect params (and thus padding) are expected to already be DPI-scaled.
     pub fn border_padding(&self, drawer: &BorderDrawer) -> i32 {
         // Effects are not supported by the Legacy render backend, so we'll just ignore them
         // in that case.
