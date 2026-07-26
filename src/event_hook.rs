@@ -107,6 +107,7 @@ pub fn handle_foreground_event(best_hwnd_guess: HWND, other_hwnd_guess: HWND) {
     *APP_STATE.active_window.lock().unwrap() = new_active_hwnd.0 as isize;
 
     // Send foreground messages to all the border windows
+    // TODO: I think only the previous focused and new focused actually need the message
     for (key, val) in APP_STATE.borders.lock().unwrap().iter() {
         let border_window = HWND(*val as _);
         // Some apps can become foreground even if they're not visible, so we also have to check

@@ -505,7 +505,6 @@ impl WindowBorder {
     }
 
     /// Updates the cached color config and reinitializes the corresponding brush.
-    // TODO: I also update color brushes in WM_APP_KOMOREBI; maybe unify the logic.
     fn update_color_brush(&mut self, is_active: bool, config: ColorBrushConfig) {
         let config = match is_active {
             true => {
@@ -1026,63 +1025,43 @@ impl WindowBorder {
                         })
                 };
 
-                // Ignore Unfocused window kind
+                // Ignore Unfocused window kind because we already have inactive_color for that
                 if window_kind == WindowKind::Unfocused {
                     return LRESULT(0);
                 }
 
-                let active_color_config = window_rule
+                // Komorebi's Single window kind just corresponds to a normal active window
+                let single_color_config = window_rule
                     .active_color
                     .as_ref()
-                    .unwrap_or(&global.active_color);
+                    .unwrap_or(&global.active_color)
+                    .clone();
                 let komorebi_colors_config = window_rule
                     .komorebi_colors
                     .as_ref()
                     .unwrap_or(&global.komorebi_colors);
 
-                let old_opacity = self.drawer.active_color.get_opacity().unwrap_or_default();
-                let old_transform = self.drawer.active_color.get_transform().unwrap_or_default();
-
-                self.drawer.active_color = match window_kind {
-                    WindowKind::Single => active_color_config.to_color_brush(true),
+                let active_color_config = match window_kind {
+                    WindowKind::Single => single_color_config,
                     WindowKind::Stack => komorebi_colors_config
                         .stack_color
-                        .as_ref()
-                        .unwrap_or(active_color_config)
-                        .to_color_brush(true),
+                        .clone()
+                        .unwrap_or(single_color_config),
                     WindowKind::Monocle => komorebi_colors_config
                         .monocle_color
-                        .as_ref()
-                        .unwrap_or(active_color_config)
-                        .to_color_brush(true),
+                        .clone()
+                        .unwrap_or(single_color_config),
                     WindowKind::Floating => komorebi_colors_config
                         .floating_color
-                        .as_ref()
-                        .unwrap_or(active_color_config)
-                        .to_color_brush(true),
+                        .clone()
+                        .unwrap_or(single_color_config),
                     WindowKind::Unfocused => {
                         debug!("what."); // It shouldn't be possible to reach this match branch
                         return LRESULT(0);
                     }
                 };
 
-                let bounds = self.compute_border_bounds();
-                let renderer: &ID2D1RenderTarget = match self.drawer.render_backend {
-                    RenderBackend::V2(ref backend) => &backend.d2d_context,
-                    RenderBackend::Legacy(ref backend) => &backend.render_target,
-                    RenderBackend::None => {
-                        error!("render backend is None");
-                        return LRESULT(0);
-                    }
-                };
-                let brush_properties = D2D1_BRUSH_PROPERTIES {
-                    opacity: old_opacity,
-                    transform: old_transform,
-                };
-                self.drawer
-                    .active_color
-                    .init_brush(renderer, &bounds, &brush_properties)
-                    .log_if_err();
+                self.update_color_brush(true, active_color_config);
                 self.render().log_if_err();
             }
             // This message (and other "set" messages) are sent by the IPC server
