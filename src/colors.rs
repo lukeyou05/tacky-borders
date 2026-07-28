@@ -2,18 +2,17 @@ use anyhow::{Context, anyhow};
 use core::f32;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
-use windows::Win32::Foundation::FALSE;
 use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F, D2D1_GRADIENT_STOP};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, ID2D1Brush, ID2D1LinearGradientBrush, ID2D1RenderTarget,
     ID2D1SolidColorBrush,
 };
-use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
-use windows::core::BOOL;
 use windows_numerics::{Matrix3x2, Vector2};
 
-use crate::LogIfErr;
+use winreg::RegKey;
+use winreg::enums::HKEY_CURRENT_USER;
+
 use crate::theme::is_light_theme;
 use crate::utils::WindowsCompatibleResult;
 
@@ -335,32 +334,34 @@ impl GradientBrush {
 }
 
 fn get_accent_color(is_active_color: bool) -> D2D1_COLOR_F {
-    let mut pcr_colorization: u32 = 0;
-    let mut pf_opaqueblend: BOOL = FALSE;
+    const DWM_SUBKEY: &str = r"SOFTWARE\Microsoft\Windows\DWM";
+    const ACCENT_COLOR_VALUE: &str = "AccentColor";
 
-    // DwmGetColorizationColor gets the accent color and places it into 'pcr_colorization'
-    unsafe { DwmGetColorizationColor(&mut pcr_colorization, &mut pf_opaqueblend) }
-        .context("could not retrieve windows accent color")
-        .log_if_err();
-
-    // Bit-shift the retrieved color to separate out the rgb components
-    let accent_red = ((pcr_colorization & 0x00FF0000) >> 16) as f32 / 255.0;
-    let accent_green = ((pcr_colorization & 0x0000FF00) >> 8) as f32 / 255.0;
-    let accent_blue = (pcr_colorization & 0x000000FF) as f32 / 255.0;
-    let accent_avg = (accent_red + accent_green + accent_blue) / 3.0;
+    let raw = match RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(DWM_SUBKEY)
+        .and_then(|key| key.get_value::<u32, _>(ACCENT_COLOR_VALUE))
+    {
+        Ok(val) => {
+            // AccentColor is stored in 0xAABBGGRR (BGR) order.
+            let b = ((val & 0x00FF0000) >> 16) as f32 / 255.0;
+            let g = ((val & 0x0000FF00) >> 8) as f32 / 255.0;
+            let r = (val & 0x000000FF) as f32 / 255.0;
+            D2D1_COLOR_F { r, g, b, a: 1.0 }
+        }
+        Err(e) => {
+            error!("could not read AccentColor from registry: {e}");
+            D2D1_COLOR_F::default()
+        }
+    };
 
     if is_active_color {
-        D2D1_COLOR_F {
-            r: accent_red,
-            g: accent_green,
-            b: accent_blue,
-            a: 1.0,
-        }
+        raw
     } else {
+        let avg = (raw.r + raw.g + raw.b) / 3.0;
         D2D1_COLOR_F {
-            r: accent_avg / 1.5 + accent_red / 10.0,
-            g: accent_avg / 1.5 + accent_green / 10.0,
-            b: accent_avg / 1.5 + accent_blue / 10.0,
+            r: avg / 1.5 + raw.r / 10.0,
+            g: avg / 1.5 + raw.g / 10.0,
+            b: avg / 1.5 + raw.b / 10.0,
             a: 1.0,
         }
     }
