@@ -12,8 +12,8 @@ use crate::APP_STATE;
 use crate::utils::{
     LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
     WM_APP_REORDER, destroy_border_for_window, get_border_for_window, get_foreground_window,
-    hide_border_for_window, is_window_visible, post_message_w, send_notify_message_w,
-    show_border_for_window,
+    has_filtered_style, hide_border_for_window, is_window_visible, post_message_w,
+    send_notify_message_w, show_border_for_window,
 };
 
 pub extern "system" fn process_win_event(
@@ -43,19 +43,20 @@ pub extern "system" fn process_win_event(
             }
         }
         EVENT_OBJECT_REORDER => {
-            // Ignore OBJIDs not needed for window Z-order handling.
-            if _id_object != OBJID_CLIENT.0 {
+            // Tool and no-activate windows (such as IME candidate windows) emit reorder events
+            // whenever their contents change. Only the border belonging to the window reported
+            // by the event can be affected; broadcasting this to every border makes the border
+            // fight unrelated popups and causes visible flicker.
+            if _id_object != OBJID_CLIENT.0 || has_filtered_style(_hwnd) {
                 return;
             }
 
-            // Send reorder messages to all the border windows
-            for value in APP_STATE.borders.lock().unwrap().values() {
-                let border_window = HWND(*value as _);
-                if is_window_visible(border_window) {
-                    post_message_w(Some(border_window), WM_APP_REORDER, WPARAM(0), LPARAM(0))
-                        .context("EVENT_OBJECT_REORDER")
-                        .log_if_err();
-                }
+            if let Some(border_window) = get_border_for_window(_hwnd)
+                && is_window_visible(border_window)
+            {
+                post_message_w(Some(border_window), WM_APP_REORDER, WPARAM(0), LPARAM(0))
+                    .context("EVENT_OBJECT_REORDER")
+                    .log_if_err();
             }
         }
         // Neither the HWND passed by this event nor the one returned by GetForegroundWindow() are
@@ -100,11 +101,21 @@ pub extern "system" fn process_win_event(
 }
 
 pub fn handle_foreground_event(best_hwnd_guess: HWND, other_hwnd_guess: HWND) {
-    let new_active_hwnd = match !best_hwnd_guess.is_invalid() {
-        true => best_hwnd_guess,
-        false => other_hwnd_guess,
-    };
-    *APP_STATE.active_window.lock().unwrap() = new_active_hwnd.0 as isize;
+    let mut active_window = APP_STATE.active_window.lock().unwrap();
+    let current_active_hwnd = HWND(*active_window as _);
+    let new_active_hwnd = [best_hwnd_guess, other_hwnd_guess]
+        .into_iter()
+        .find(|hwnd| !hwnd.is_invalid() && !has_filtered_style(*hwnd))
+        .unwrap_or(current_active_hwnd);
+
+    // WinEvent can report the same foreground window repeatedly, notably while an IME updates
+    // its candidate popup. Avoid needlessly re-rendering every border in that case.
+    if new_active_hwnd.is_invalid() || new_active_hwnd == current_active_hwnd {
+        return;
+    }
+
+    *active_window = new_active_hwnd.0 as isize;
+    drop(active_window);
 
     // Send foreground messages to all the border windows
     // TODO: I think only the previous focused and new focused actually need the message
