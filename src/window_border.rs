@@ -20,13 +20,13 @@ use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
     GW_HWNDNEXT, GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
-    HWND_NOTOPMOST, HWND_TOPMOST, KillTimer, LWA_ALPHA, PBT_APMRESUMEAUTOMATIC,
-    PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PostQuitMessage, SET_WINDOW_POS_FLAGS,
-    SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING,
-    SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW,
-    SetWindowPos, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY,
-    WM_PAINT, WM_POWERBROADCAST, WM_TIMER, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED,
-    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    HWND_TOPMOST, KillTimer, LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
+    SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, WM_CREATE,
+    WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY, WM_PAINT, WM_POWERBROADCAST,
+    WM_TIMER, WM_WINDOWPOSCHANGED, WM_WINDOWPOSCHANGING, WS_DISABLED, WS_EX_LAYERED,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -425,43 +425,26 @@ impl WindowBorder {
                 | SWP_NOACTIVATE
                 | SWP_NOREDRAW
                 | other_flags.unwrap_or_default();
-            let is_active =
-                *APP_STATE.active_window.lock().unwrap() == self.tracking_window.0 as isize;
 
             let hwndinsertafter = match self.config.z_order {
+                ZOrderMode::AboveWindow if self.is_tracking_active() => {
+                    // Keep the active border topmost so transient owned popups (IME candidate
+                    // windows) raised above the tracking window can't push it below it.
+                    HWND_TOPMOST
+                }
                 ZOrderMode::AboveWindow => {
-                    if is_active {
-                        // Keep the active border topmost so transient owned popups (IME candidate
-                        // windows) raised above the tracking window can't push it below it.
-                        HWND_TOPMOST
-                    } else {
-                        // Place inactive borders directly above their tracking window.
-                        let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
-
-                        // If the window directly above the tracking window is already the border
-                        // itself, we have what we want and there's no need to change the z-order
-                        // (plus it results in an error if we try it).
-                        if hwnd_above_tracking == Ok(self.border_window.0) {
-                            swp_flags |= SWP_NOZORDER;
-                            HWND_NOTOPMOST
-                        } else {
-                            self.tracking_window
-                        }
+                    // Place inactive borders directly above their tracking window.
+                    let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
+                    if hwnd_above_tracking == Ok(self.border_window.0) {
+                        // The border is already directly above the tracking window.
+                        swp_flags |= SWP_NOZORDER;
                     }
+
+                    self.tracking_window
                 }
                 ZOrderMode::BelowWindow => self.tracking_window,
             };
 
-            self.set_window_pos(hwndinsertafter, swp_flags)
-        }
-    }
-
-    fn set_window_pos(
-        &mut self,
-        hwndinsertafter: HWND,
-        swp_flags: SET_WINDOW_POS_FLAGS,
-    ) -> anyhow::Result<()> {
-        unsafe {
             if let Err(e) = SetWindowPos(
                 self.border_window.0,
                 Some(hwndinsertafter),
@@ -481,6 +464,10 @@ impl WindowBorder {
         }
 
         Ok(())
+    }
+
+    fn is_tracking_active(&self) -> bool {
+        *APP_STATE.active_window.lock().unwrap() == self.tracking_window.0 as isize
     }
 
     fn update_color(&mut self, check_delay: Option<u64>) {
@@ -1198,7 +1185,7 @@ impl WindowBorder {
     fn handle_reorder(&mut self) {
         // Active borders are kept topmost, so they're always above their tracking window. Only
         // inactive borders need to re-check their position here.
-        let is_active = *APP_STATE.active_window.lock().unwrap() == self.tracking_window.0 as isize;
+        let is_active = self.is_tracking_active();
 
         match self.config.z_order {
             ZOrderMode::AboveWindow => {
