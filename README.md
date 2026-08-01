@@ -63,6 +63,9 @@ watch_config_changes: True
 # NOTE: Changes require an application restart to take effect.
 enable_logging: True
 
+# enable_ipc_server: Handle runtime IPC commands sent through the CLI.
+enable_ipc_server: True
+
 # rendering_backend: Type of renderer. Supported values:
 #   - V2: A more complex, feature-rich renderer. Available in v1.2.0 and above.
 #   - Legacy: A simpler, more limited renderer. Available in v0.1.0 and above.
@@ -125,6 +128,7 @@ global:
   #         active_color: "#ffffff"
   #         OR
   #         active_color: "accent"
+  #       The supported hex formats are: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
   #   - Gradient: Define colors and direction
   #       Example:
   #         active_color:
