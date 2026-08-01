@@ -19,8 +19,8 @@ use windows::Win32::Graphics::Gdi::{CreateRectRgn, HMONITOR, ValidateRect};
 use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
-    GW_HWNDNEXT, GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
-    HWND_TOPMOST, KillTimer, LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    GW_HWNDNEXT, GW_HWNDPREV, GWLP_HWNDPARENT, GWLP_USERDATA, GetSystemMetrics, GetWindow,
+    GetWindowLongPtrW, KillTimer, LWA_ALPHA, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
     PBT_APMSUSPEND, PostQuitMessage, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW,
     SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING, SWP_NOZORDER, SWP_SHOWWINDOW,
     SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, WM_CREATE,
@@ -152,6 +152,20 @@ impl WindowBorder {
                 anyhow!("could not get dpi for {:?}: {}", self.current_monitor, err)
             })?;
         self.load_from_config(window_rule, self.current_dpi)?;
+
+        if self.config.z_order == ZOrderMode::AboveWindow {
+            // Make the border an owned window of the tracking window so the system keeps it
+            // above its owner. This stops IME candidate popups (which are also owned windows of
+            // the focused window) from repeatedly pushing the border below it, without needing to
+            // make the border topmost.
+            unsafe {
+                SetWindowLongPtrW(
+                    self.border_window.0,
+                    GWLP_HWNDPARENT,
+                    self.tracking_window.0 as isize,
+                )
+            };
+        }
 
         // Delay the border while the tracking window is in its creation animation
         thread::sleep(time::Duration::from_millis(self.config.initialize_delay));
@@ -427,13 +441,9 @@ impl WindowBorder {
                 | other_flags.unwrap_or_default();
 
             let hwndinsertafter = match self.config.z_order {
-                ZOrderMode::AboveWindow if self.is_tracking_active() => {
-                    // Keep the active border topmost so transient owned popups (IME candidate
-                    // windows) raised above the tracking window can't push it below it.
-                    HWND_TOPMOST
-                }
                 ZOrderMode::AboveWindow => {
-                    // Place inactive borders directly above their tracking window.
+                    // The border is owned by the tracking window, so the system keeps it above
+                    // its owner. Just place it directly above to be sure.
                     let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
                     if hwnd_above_tracking == Ok(self.border_window.0) {
                         // The border is already directly above the tracking window.
