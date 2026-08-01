@@ -4,16 +4,16 @@ use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CLIENT,
-    OBJID_CURSOR, OBJID_WINDOW,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART,
+    GetDesktopWindow, OBJID_CLIENT, OBJID_CURSOR, OBJID_WINDOW,
 };
 
 use crate::APP_STATE;
 use crate::utils::{
     LogIfErr, WM_APP_FOREGROUND, WM_APP_LOCATIONCHANGE, WM_APP_MINIMIZEEND, WM_APP_MINIMIZESTART,
     WM_APP_REORDER, destroy_border_for_window, get_border_for_window, get_foreground_window,
-    get_window_process_name, hide_border_for_window, is_window_visible, post_message_w,
-    send_notify_message_w, show_border_for_window,
+    hide_border_for_window, is_window_visible, post_message_w, send_notify_message_w,
+    show_border_for_window,
 };
 
 pub extern "system" fn process_win_event(
@@ -43,15 +43,11 @@ pub extern "system" fn process_win_event(
             }
         }
         EVENT_OBJECT_REORDER => {
-            // Rime's Weasel candidate window emits reorder events whenever its contents change.
-            // Ignore those content updates without suppressing reorder handling for other tool
-            // windows, which users can force-enable through window rules.
-            if _id_object != OBJID_CLIENT.0 {
-                return;
-            }
-            if get_window_process_name(_hwnd)
-                .is_ok_and(|name| name.eq_ignore_ascii_case("WeaselServer"))
-            {
+            // We only care about reorders of top-level windows, which surface as client-object
+            // reorder events on the desktop window. This filters out content reorders from
+            // individual windows, such as IME candidate popups that reorder their contents on
+            // every update.
+            if _id_object != OBJID_CLIENT.0 || _hwnd != unsafe { GetDesktopWindow() } {
                 return;
             }
 
