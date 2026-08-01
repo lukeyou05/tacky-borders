@@ -20,8 +20,8 @@ use windows::Win32::UI::HiDpi::MDT_DEFAULT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DBT_DEVNODES_CHANGED, DefWindowProcW,
     GW_HWNDNEXT, GW_HWNDPREV, GWLP_USERDATA, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
-    HWND_TOP, KillTimer, LWA_ALPHA, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
-    PBT_APMSUSPEND, PM_REMOVE, PeekMessageW, PostQuitMessage, SET_WINDOW_POS_FLAGS,
+    HWND_NOTOPMOST, HWND_TOPMOST, KillTimer, LWA_ALPHA, PBT_APMRESUMEAUTOMATIC,
+    PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PostQuitMessage, SET_WINDOW_POS_FLAGS,
     SM_CXVIRTUALSCREEN, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOSENDCHANGING,
     SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW,
     SetWindowPos, WM_CREATE, WM_DEVICECHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCDESTROY,
@@ -53,6 +53,7 @@ use crate::utils::{
 use crate::{APP_STATE, BG_SERVICES};
 
 const REORDER_TIMER_ID: usize = 0;
+const REORDER_DEBOUNCE_DELAY_MS: u32 = 30;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum WindowState {
@@ -84,9 +85,7 @@ pub struct WindowBorder {
     drawer: BorderDrawer,
     config: BorderConfig, // cached config values
     is_paused: bool,
-    last_reorder_time: Option<time::Instant>,
-    is_debouncing_reorder: bool,
-    consecutive_reorders: u64,
+    is_reorder_timer_pending: bool,
     arranged_override_active: bool, // radius override for arranged/snapped tracking window
 }
 
@@ -106,9 +105,7 @@ impl WindowBorder {
             drawer: Default::default(),
             config: Default::default(),
             is_paused: Default::default(),
-            last_reorder_time: None,
-            is_debouncing_reorder: false,
-            consecutive_reorders: 0,
+            is_reorder_timer_pending: false,
             arranged_override_active: false,
         });
 
@@ -428,23 +425,43 @@ impl WindowBorder {
                 | SWP_NOACTIVATE
                 | SWP_NOREDRAW
                 | other_flags.unwrap_or_default();
+            let is_active =
+                *APP_STATE.active_window.lock().unwrap() == self.tracking_window.0 as isize;
 
             let hwndinsertafter = match self.config.z_order {
                 ZOrderMode::AboveWindow => {
-                    // Get the hwnd above the tracking hwnd so we can place the border window in between
-                    let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
+                    if is_active {
+                        // Keep the active border topmost so transient owned popups (IME candidate
+                        // windows) raised above the tracking window can't push it below it.
+                        HWND_TOPMOST
+                    } else {
+                        // Place inactive borders directly above their tracking window.
+                        let hwnd_above_tracking = GetWindow(self.tracking_window, GW_HWNDPREV);
 
-                    // If hwnd_above_tracking is the window border itself, we have what we want and there's
-                    // no need to change the z-order (plus it results in an error if we try it).
-                    if hwnd_above_tracking == Ok(self.border_window.0) {
-                        swp_flags |= SWP_NOZORDER;
+                        // If the window directly above the tracking window is already the border
+                        // itself, we have what we want and there's no need to change the z-order
+                        // (plus it results in an error if we try it).
+                        if hwnd_above_tracking == Ok(self.border_window.0) {
+                            swp_flags |= SWP_NOZORDER;
+                            HWND_NOTOPMOST
+                        } else {
+                            self.tracking_window
+                        }
                     }
-
-                    hwnd_above_tracking.unwrap_or(HWND_TOP)
                 }
                 ZOrderMode::BelowWindow => self.tracking_window,
             };
 
+            self.set_window_pos(hwndinsertafter, swp_flags)
+        }
+    }
+
+    fn set_window_pos(
+        &mut self,
+        hwndinsertafter: HWND,
+        swp_flags: SET_WINDOW_POS_FLAGS,
+    ) -> anyhow::Result<()> {
+        unsafe {
             if let Err(e) = SetWindowPos(
                 self.border_window.0,
                 Some(hwndinsertafter),
@@ -859,58 +876,26 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
-                // Drain any pending WM_APP_REORDER messages from the queue
-                while unsafe {
-                    PeekMessageW(
-                        &mut MSG::default(),
-                        Some(self.border_window.0),
-                        WM_APP_REORDER,
-                        WM_APP_REORDER,
-                        PM_REMOVE,
-                    )
-                    .as_bool()
-                } {
-                    // Intentionally empty.
+                // Z-order churn (e.g. IME candidate updates) fires reorder events in bursts.
+                // Repositioning immediately on each one makes the border visibly flicker, so
+                // coalesce each burst into a single deferred reposition instead.
+                if !self.is_reorder_timer_pending {
+                    self.is_reorder_timer_pending = true;
+                    unsafe {
+                        SetTimer(
+                            Some(self.border_window.0),
+                            REORDER_TIMER_ID,
+                            REORDER_DEBOUNCE_DELAY_MS,
+                            None,
+                        )
+                    };
                 }
-
-                // Allows the immediate processing of some reorder messages, then debounces after
-                const NUM_REORDERS_BEFORE_DEBOUNCE: u64 = 8;
-                const DEBOUNCE_DELAY: time::Duration = time::Duration::from_millis(16);
-
-                if let Some(last_reorder_time) = self.last_reorder_time
-                    && let time_since_reorder = last_reorder_time.elapsed()
-                    && time_since_reorder < DEBOUNCE_DELAY
-                {
-                    self.consecutive_reorders += 1;
-                    if self.consecutive_reorders >= NUM_REORDERS_BEFORE_DEBOUNCE {
-                        if !self.is_debouncing_reorder {
-                            // Set a timer which fires a WM_TIMER message when it expires
-                            unsafe {
-                                SetTimer(
-                                    Some(self.border_window.0),
-                                    REORDER_TIMER_ID,
-                                    (DEBOUNCE_DELAY - time_since_reorder).as_millis() as u32,
-                                    None,
-                                )
-                            };
-                            self.is_debouncing_reorder = true;
-                        }
-
-                        return LRESULT(0);
-                    }
-                } else {
-                    self.consecutive_reorders = 0;
-                }
-
-                self.handle_reorder();
             }
             WM_TIMER => {
                 // WPARAM contains the nIDEvent used in SetTimer
                 if wparam.0 == REORDER_TIMER_ID {
                     unsafe { KillTimer(Some(window), REORDER_TIMER_ID) }.log_if_err();
-                    self.is_debouncing_reorder = false;
-                    self.consecutive_reorders = 0;
-
+                    self.is_reorder_timer_pending = false;
                     self.handle_reorder();
                 }
             }
@@ -922,6 +907,8 @@ impl WindowBorder {
                     return LRESULT(0);
                 }
 
+                // Places the active border at the topmost layer and inactive borders directly
+                // above their tracking window.
                 self.update_color(None);
                 self.update_position(None).log_if_err();
                 self.render().log_if_err();
@@ -1209,26 +1196,47 @@ impl WindowBorder {
     }
 
     fn handle_reorder(&mut self) {
+        // Active borders are kept topmost, so they're always above their tracking window. Only
+        // inactive borders need to re-check their position here.
+        let is_active = *APP_STATE.active_window.lock().unwrap() == self.tracking_window.0 as isize;
+
         match self.config.z_order {
             ZOrderMode::AboveWindow => {
-                // When the tracking window reorders its contents, it may change the z-order. So,
-                // we first check whether the border is still above the tracking window, and if
-                // not, we must update its position and place it back on top
-                if unsafe { GetWindow(self.tracking_window, GW_HWNDPREV) }
-                    != Ok(self.border_window.0)
-                {
+                if !is_active && !self.is_border_above_tracking() {
                     self.update_position(None).log_if_err();
                 }
             }
             ZOrderMode::BelowWindow => {
-                if unsafe { GetWindow(self.tracking_window, GW_HWNDNEXT) }
-                    != Ok(self.border_window.0)
-                {
+                if is_active && !self.is_border_below_tracking() {
                     self.update_position(None).log_if_err();
                 }
             }
         }
+    }
 
-        self.last_reorder_time = Some(time::Instant::now());
+    /// Whether the border is somewhere above the tracking window in the z-order. Transient
+    /// popups (tooltips, IME candidates, menus) can float between the two without the border
+    /// losing its spot above the tracking window, so those don't require repositioning.
+    fn is_border_above_tracking(&self) -> bool {
+        let mut window = self.tracking_window;
+        while let Ok(hwnd) = unsafe { GetWindow(window, GW_HWNDPREV) } {
+            if hwnd == self.border_window.0 {
+                return true;
+            }
+            window = hwnd;
+        }
+        false
+    }
+
+    /// Whether the border is somewhere below the tracking window in the z-order.
+    fn is_border_below_tracking(&self) -> bool {
+        let mut window = self.tracking_window;
+        while let Ok(hwnd) = unsafe { GetWindow(window, GW_HWNDNEXT) } {
+            if hwnd == self.border_window.0 {
+                return true;
+            }
+            window = hwnd;
+        }
+        false
     }
 }
