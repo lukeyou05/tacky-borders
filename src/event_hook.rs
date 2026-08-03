@@ -4,8 +4,8 @@ use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, OBJID_CLIENT,
-    OBJID_CURSOR, OBJID_WINDOW,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART,
+    GetDesktopWindow, OBJID_CLIENT, OBJID_CURSOR, OBJID_WINDOW,
 };
 
 use crate::APP_STATE;
@@ -43,12 +43,16 @@ pub extern "system" fn process_win_event(
             }
         }
         EVENT_OBJECT_REORDER => {
-            // Ignore OBJIDs not needed for window Z-order handling.
-            if _id_object != OBJID_CLIENT.0 {
+            // We only care about reorders of top-level windows, which surface as client-object
+            // reorder events on the desktop window. This filters out content reorders from
+            // individual windows, such as IME candidate popups that reorder their contents on
+            // every update.
+            if _id_object != OBJID_CLIENT.0 || _hwnd != unsafe { GetDesktopWindow() } {
                 return;
             }
 
-            // Send reorder messages to all the border windows
+            // The HWND for foreground-related reorder events does not reliably identify the
+            // foreground window, so all visible borders need to verify their Z-order.
             for value in APP_STATE.borders.lock().unwrap().values() {
                 let border_window = HWND(*value as _);
                 if is_window_visible(border_window) {
@@ -100,11 +104,21 @@ pub extern "system" fn process_win_event(
 }
 
 pub fn handle_foreground_event(best_hwnd_guess: HWND, other_hwnd_guess: HWND) {
+    let mut active_window = APP_STATE.active_window.lock().unwrap();
+    let current_active_hwnd = HWND(*active_window as _);
     let new_active_hwnd = match !best_hwnd_guess.is_invalid() {
         true => best_hwnd_guess,
         false => other_hwnd_guess,
     };
-    *APP_STATE.active_window.lock().unwrap() = new_active_hwnd.0 as isize;
+
+    // WinEvent can report the same foreground window repeatedly, notably while an IME updates
+    // its candidate popup. Avoid needlessly re-rendering every border in that case.
+    if new_active_hwnd.is_invalid() || new_active_hwnd == current_active_hwnd {
+        return;
+    }
+
+    *active_window = new_active_hwnd.0 as isize;
+    drop(active_window);
 
     // Send foreground messages to all the border windows
     // TODO: I think only the previous focused and new focused actually need the message
